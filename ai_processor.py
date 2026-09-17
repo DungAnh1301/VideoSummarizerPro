@@ -2123,6 +2123,10 @@ Return JSON only:
             "3. 'scoreboard_nameplate': ANY scoreboard overlay, match clock / timer, round counter (R1, R2), fighter name card, stats box, tale-of-the-tape graphic, or live point score display.\n"
             "4. 'hardcoded_subtitles': ANY burned-in source subtitles, captions, translated Chinese/English/Vietnamese text overlays, speech captions, or lyrics at the bottom or anywhere in the frame.\n"
             "5. 'blood_wound': ANY visible bleeding cuts, dripping blood, open wounds, blood smears on fighters' faces/lips/forehead/body/canvas/towels.\n\n"
+            "STRICT EXCLUSION RULES (NEVER DETECT OR BLUR):\n"
+            "- NEVER detect or report the top title header banner (e.g. Playlist or Series title at the top header). That is an intentional app title graphic.\n"
+            "- NEVER detect or report the center episode rank/badge overlay (e.g. 'No. 1', 'No. 2', 'No. 3', 'No. 4', 'No. 5' in the center). That is an intentional app badge.\n"
+            "- ONLY detect original TV station logos, broadcaster watermarks, source subtitles, and news crawlers from the underlying video footage.\n\n"
             "COORDINATE SYSTEM:\n"
             "- Coordinates MUST be normalized [ymin, xmin, ymax, xmax] from 0.0 to 1.0 relative to EACH 9:16 IMAGE.\n"
             "- ymin = top edge, xmin = left edge, ymax = bottom edge, xmax = right edge.\n"
@@ -2204,6 +2208,8 @@ Return JSON only:
                 "3. 'crawling_ticker_banner': Horizontal text crawl bar.\n"
                 "4. 'scoreboard_nameplate': Scoreboards, fighter nameplates, clocks.\n"
                 "5. 'blood_wound': Visible cuts, dripping blood, open wounds.\n\n"
+                "STRICT EXCLUSIONS (NEVER DETECT OR BLUR):\n"
+                "- NEVER flag top title header banner or center episode badge ('No. 1', 'No. 2', etc.). These are intentional app elements.\n\n"
                 "Return ONLY a JSON object: {\"detected_items\": [{\"label\": \"...\", \"intervals\": [[start_sec, end_sec]], \"box\": [ymin, xmin, ymax, xmax]}]}.\n"
                 'If nothing to blur, return: {"detected_items": []}.'
             )
@@ -2230,6 +2236,7 @@ Return JSON only:
                 "You are a strict compliance and video safety QC engineer for TikTok and Shorts.\n"
                 f"Inspect this {dur:.1f}s vertical 9:16 video grid.\n"
                 "Detect: 'watermark_logo', 'hardcoded_subtitles', 'crawling_ticker_banner', 'scoreboard_nameplate', 'blood_wound'.\n"
+                "STRICT EXCLUSIONS: NEVER detect top title banner or center episode badges ('No. 1', 'No. 2', etc.).\n"
                 "Return ONLY a JSON object: {\"detected_items\": [{\"label\": \"...\", \"intervals\": [[start_sec, end_sec]], \"box\": [ymin, xmin, ymax, xmax]}]}.\n"
                 'If nothing to blur, return: {"detected_items": []}.'
             )

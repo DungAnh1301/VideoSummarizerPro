@@ -1177,7 +1177,7 @@ class CompilationProcessor:
             stroke_width=3
         )
         badge_x = int((1080 - badge_w) / 2)
-        badge_y = int(post_options.get("clip_badge_y_pos", 1050))
+        badge_y = int(post_options.get("clip_badge_y_pos", 960))
 
         return top_banner_path, top_x, top_y, badge_banner_path, badge_x, badge_y
 
@@ -1286,6 +1286,9 @@ class CompilationProcessor:
 
         tolerance_ratio = float(post_options.get("compilation_duration_tolerance", 0.20))
         segment_videos = []
+        clip_overlays = []
+        current_timeline_t = 0.0
+        top_banner_info = None
 
         for idx, (item, allocated_d, total_clip_dur, (intro_end, outro_start)) in enumerate(
             zip(downloaded_items, allocated_durations, clip_durations, bounds_list), 1
@@ -1327,6 +1330,8 @@ class CompilationProcessor:
             # Tạo Title 2 tầng:
             # 1. Trên cùng: Tên Playlist
             # 2. Giữa màn hình: No. {r} : {Tên clip}
+            # LƯU Ý CHUẨN TÓM TẮT: Title Banner và Badge No. X KHÔNG gắn vào clip ở bước này.
+            # Chúng sẽ được overlay lên trên cùng SAU KHI ĐÃ XỬ LÝ AI QC để không bao giờ bị làm mờ nhầm.
             top_png, top_x, top_y, badge_png, badge_x, badge_y = cls.create_playlist_dual_banners(
                 playlist_title=playlist_title,
                 rank=r,
@@ -1334,6 +1339,9 @@ class CompilationProcessor:
                 work_dir=os.path.join(work_dir, f"top_{r}"),
                 post_options=post_options
             )
+
+            if top_banner_info is None and top_png and os.path.exists(top_png):
+                top_banner_info = {"path": top_png, "x": top_x, "y": top_y}
 
             seg_out = os.path.join(work_dir, f"segment_top_{r}.mp4")
 
@@ -1357,14 +1365,13 @@ class CompilationProcessor:
                 audio_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{effective_dur:.2f}[a_final]"
 
             if abs(speed - 1.0) >= 0.01:
-                v_speed_node = f"[vout]setpts={1.0 / speed:.6f}*PTS[v_sped];[v_sped]"
+                v_speed_node = f"[vout]setpts={1.0 / speed:.6f}*PTS,fps=30[v_final];"
             else:
-                v_speed_node = "[vout]"
+                v_speed_node = "[vout]fps=30[v_final];"
 
             filter_chain = (
                 f"{base_vf};"
-                f"{v_speed_node}[1:v]overlay={top_x}:{top_y}[v_top];"
-                f"[v_top][2:v]overlay={badge_x}:{badge_y},fps=30[v_final];"
+                f"{v_speed_node}"
                 f"{audio_chain}"
             )
 
@@ -1372,8 +1379,6 @@ class CompilationProcessor:
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}",
                 "-i", clip_video,
-                "-i", top_png,
-                "-i", badge_png,
                 "-filter_complex", filter_chain,
                 "-map", "[v_final]", "-map", "[a_final]",
                 "-t", f"{effective_dur:.2f}",
@@ -1385,13 +1390,22 @@ class CompilationProcessor:
                 seg_out
             ]
             run_ffmpeg_auto(cmd_seg, label=f"render_playlist_top_{r}", logger=logger)
-            if os.path.exists(seg_out):
+            if os.path.exists(seg_out) and os.path.getsize(seg_out) > 0:
                 segment_videos.append(seg_out)
+                clip_overlays.append({
+                    "rank": r,
+                    "path": badge_png,
+                    "x": badge_x,
+                    "y": badge_y,
+                    "start_t": current_timeline_t,
+                    "end_t": current_timeline_t + effective_dur
+                })
+                current_timeline_t += effective_dur
 
         if not segment_videos:
             raise RuntimeError("Không xuất được phân đoạn nào từ Playlist!")
 
-        # 5. Ghép tất cả các clip theo thứ tự No. N ➔ No. 1
+        # 5. Ghép tất cả các clip theo thứ tự No. N ➔ No. 1 thành timeline footage sạch 9:16
         os.makedirs(cls.OUTPUT_DIR, exist_ok=True)
         safe_name = re.sub(r'[\\/*?:"<>|]', "", playlist_title).strip().replace(" ", "_") or "Playlist_Top_Highlight"
         final_output = os.path.join(cls.OUTPUT_DIR, f"{safe_name}_{int(time.time())}.mp4")
@@ -1402,7 +1416,7 @@ class CompilationProcessor:
                 safe_sp = os.path.abspath(s_path).replace('\\', '/').replace("'", "'\\''")
                 f.write(f"file '{safe_sp}'\n")
 
-        merged_timeline_video = os.path.join(work_dir, "timeline_combined_916.mp4")
+        merged_timeline_video = os.path.join(work_dir, "timeline_clean_916.mp4")
         cmd_final = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "concat", "-safe", "0", "-i", final_concat_list,
@@ -1413,11 +1427,16 @@ class CompilationProcessor:
         else:
             subprocess.run(cmd_final, check=False)
 
+        # 6. Kiểm duyệt AI QC trên timeline và Lắp ráp Title/Badge lên trên cùng theo đúng chuẩn Tóm Tắt
         final_result = cls.apply_timeline_ai_qc_if_enabled(
             merged_video=merged_timeline_video,
             final_output=final_output,
             post_options=post_options,
             work_dir=work_dir,
+            overlay_specs={
+                "top_banner": top_banner_info,
+                "badges": clip_overlays
+            },
             job_id=job_id,
             progress_callback=progress_callback
         )
@@ -1433,6 +1452,7 @@ class CompilationProcessor:
         final_output: str,
         post_options: dict,
         work_dir: str,
+        overlay_specs: dict = None,
         job_id: str = "",
         progress_callback=None
     ) -> str:
@@ -1441,7 +1461,9 @@ class CompilationProcessor:
         Chỉ quét kiểm duyệt SAU KHI ĐÃ GỘP TOÀN BỘ CLIPS VÀO TIMELINE 9:16 HOÀN CHỈNH.
         - Quét 1 lần duy nhất cho toàn bộ video (không tìm tòi từng video một gây chậm).
         - Tỷ lệ 9:16 và zoom in (178%) đã áp dụng sẵn, logo ngoài viền đã bị crop mất tự nhiên.
-        - Bất kỳ logo/sub/banner nào còn sót trên màn hình 9:16 sẽ được xác định đúng tọa độ 100%, không bao giờ mất chỗ che.
+        - AI QC chỉ quét trên footage gốc sạch (chưa có Title Header hay Badge).
+        - Title Banner và Badge No. X luôn được overlay ĐÈ LÊN TRÊN CÙNG sau bộ lọc kính mờ QC.
+        - Có chốt chặn Safe Zone tuyệt đối không bao giờ làm mờ vùng Title (y < 0.25) và vùng Badge (y ~ 0.5).
         """
         from editor_processor import EditorProcessor
         enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
@@ -1450,6 +1472,8 @@ class CompilationProcessor:
         has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
 
         qc_applied = False
+        qc_filters_str = ""
+        final_v_lbl = "0:v"
         total_timeline_dur = DownloaderProcessor.probe_duration_sec(merged_video)
 
         if enable_gemini_qc and has_ai_service and os.path.exists(merged_video):
@@ -1497,29 +1521,101 @@ class CompilationProcessor:
                         watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
                             detected_items, qc_frames_dir, duration_sec=total_timeline_dur
                         )
-                        qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
-                            watermark_blurs, duration_sec=total_timeline_dur,
-                            curr_v_label="0:v", output_w=1080, output_h=1920,
-                            log_fn=logger.info
-                        )
 
-                        if qc_filters_str:
-                            clean_vf = qc_filters_str.lstrip(";")
-                            logger.info(f"🛡️ [AI QC TIMELINE APPLIED] Áp dụng kính mờ chuẩn Tóm Tắt lên video timeline hoàn chỉnh...")
-                            cmd_clean = [
-                                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                                "-i", merged_video,
-                                "-filter_complex", clean_vf,
-                                "-map", f"[{final_v_lbl}]", "-map", "0:a",
-                                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                                "-c:a", "copy",
-                                final_output
-                            ]
-                            run_ffmpeg_auto(cmd_clean, label="render_full_timeline_qc", logger=logger)
-                            if os.path.exists(final_output) and os.path.getsize(final_output) > 0:
-                                qc_applied = True
+                        # VÙNG AN TOÀN BẢO VỆ TUYỆT ĐỐI (SAFEGUARD):
+                        # Loại bỏ ngay lập tức bất kỳ box nào rơi vào vùng Title Header (y < 0.25)
+                        # hoặc vùng Badge No. X ở giữa (0.40 <= y <= 0.65)
+                        safe_blurs = []
+                        for item in (watermark_blurs or []):
+                            box = item.get("box", [0, 0, 0, 0])
+                            ymin, xmin, ymax, xmax = box
+                            if ymin < 0.25 and ymax < 0.32:
+                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Title Header của App)")
+                                continue
+                            if ymin >= 0.40 and ymax <= 0.65:
+                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Badge No. X của App)")
+                                continue
+                            safe_blurs.append(item)
+
+                        if safe_blurs:
+                            qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
+                                safe_blurs, duration_sec=total_timeline_dur,
+                                curr_v_label="0:v", output_w=1080, output_h=1920,
+                                log_fn=logger.info
+                            )
             except Exception as qc_err:
                 logger.warning(f"⚠️ [AI QC TIMELINE FULL] Bỏ qua quét AI timeline do lỗi: {qc_err}")
+
+        # LẮP RÁP HOÀN CHỈNH (FINAL ASSEMBLY THEO ĐÚNG TƯ DUY TÓM TẮT):
+        # Title Banner và Badge No. X LUÔN ĐƯỢC OVERLAY LÊN TRÊN CÙNG sau khi đã áp dụng kính mờ QC (nếu có).
+        if overlay_specs:
+            try:
+                top_spec = overlay_specs.get("top_banner") or {}
+                badges = overlay_specs.get("badges") or []
+
+                inputs = ["-i", merged_video]
+                filter_parts = []
+                curr_v = "0:v"
+
+                if qc_filters_str:
+                    filter_parts.append(qc_filters_str.lstrip(";"))
+                    curr_v = final_v_lbl
+
+                input_idx = 1
+                top_path = top_spec.get("path", "")
+                if top_path and os.path.exists(top_path):
+                    inputs.extend(["-i", top_path])
+                    tx = top_spec.get("x", 0)
+                    ty = top_spec.get("y", 160)
+                    filter_parts.append(f"[{curr_v}][{input_idx}:v]overlay={tx}:{ty}[v_top]")
+                    curr_v = "v_top"
+                    input_idx += 1
+
+                for b_entry in badges:
+                    bp = b_entry.get("path", "")
+                    if bp and os.path.exists(bp):
+                        inputs.extend(["-i", bp])
+                        bx = b_entry.get("x", 0)
+                        by = b_entry.get("y", 960)
+                        st = b_entry.get("start_t", 0.0)
+                        en = b_entry.get("end_t", 0.0)
+                        out_node = f"v_b_{input_idx}"
+                        filter_parts.append(f"[{curr_v}][{input_idx}:v]overlay={bx}:{by}:enable='between(t,{st:.2f},{en:.2f})'[{out_node}]")
+                        curr_v = out_node
+                        input_idx += 1
+
+                full_fc = ";".join(filter_parts)
+                cmd_final_assembly = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    *inputs,
+                    "-filter_complex", full_fc,
+                    "-map", f"[{curr_v}]", "-map", "0:a",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-c:a", "copy",
+                    final_output
+                ]
+                logger.info("🛡️ [TIMELINE FINAL ASSEMBLY] Lắp ráp Title & Badge đè lên trên video đã xử lý QC...")
+                run_ffmpeg_auto(cmd_final_assembly, label="render_full_timeline_assembly", logger=logger)
+                if os.path.exists(final_output) and os.path.getsize(final_output) > 0:
+                    qc_applied = True
+            except Exception as asm_err:
+                logger.warning(f"⚠️ [TIMELINE FINAL ASSEMBLY] Lỗi lắp ráp banner/badge: {asm_err}")
+
+        elif qc_filters_str:
+            clean_vf = qc_filters_str.lstrip(";")
+            logger.info("🛡️ [AI QC TIMELINE APPLIED] Áp dụng kính mờ chuẩn Tóm Tắt lên video timeline hoàn chỉnh...")
+            cmd_clean = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", merged_video,
+                "-filter_complex", clean_vf,
+                "-map", f"[{final_v_lbl}]", "-map", "0:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "copy",
+                final_output
+            ]
+            run_ffmpeg_auto(cmd_clean, label="render_full_timeline_qc", logger=logger)
+            if os.path.exists(final_output) and os.path.getsize(final_output) > 0:
+                qc_applied = True
 
         if not qc_applied:
             if os.path.exists(final_output):
