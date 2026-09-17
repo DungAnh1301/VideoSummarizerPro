@@ -1,0 +1,16 @@
+edge-tts
+pygame
+faster-whisper
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
+yt-dlp
+opencv-python
+scenedetect
+numpy
+gtts
+requests
+certifi
+selenium
+pillow
+youtube-transcript-api
+pyinstaller
