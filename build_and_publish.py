@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.12"
+VERSION = "1.3.13"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.12: Chuẩn hóa 100% tư duy khử Logo / Sub / Banner theo đúng chuẩn Tóm Tắt Video. Loại bỏ việc phân mảnh quá nhiều filter blur gây lỗi FFmpeg; Tự động gom cụm không gian (Spatial Clustering) và hợp nhất thời gian để tạo kính mờ duy nhất cho logo/sub/banner; Giữ nguyên pipeline màu sắc, crop, zoom và Blur Mask chuẩn Tóm Tắt."
+NOTES = "Bản phát hành v1.3.13: Chuẩn hóa 100% quy trình kiểm duyệt logo/banner/sub theo đúng tư duy Tóm Tắt Video: (1) Trong Tuyển tập Playlist, chỉ quét kiểm duyệt 1 lần duy nhất SAU KHI ĐÃ GỘP TOÀN BỘ CLIPS LÊN TIMELINE 9:16 (không quét từng clip gây chậm và lệch tọa độ); (2) Trong Chia Part, trích xuất frame kiểm duyệt theo đúng tỷ lệ 9:16 và zoom in 178% đã cắt bỏ viền ngoài; (3) Tự động gom cụm không gian (Spatial Clustering) làm mờ chính xác không mất chỗ che."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

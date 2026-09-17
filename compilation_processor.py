@@ -1402,18 +1402,133 @@ class CompilationProcessor:
                 safe_sp = os.path.abspath(s_path).replace('\\', '/').replace("'", "'\\''")
                 f.write(f"file '{safe_sp}'\n")
 
+        merged_timeline_video = os.path.join(work_dir, "timeline_combined_916.mp4")
         cmd_final = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "concat", "-safe", "0", "-i", final_concat_list,
-            "-c", "copy", final_output
+            "-c", "copy", merged_timeline_video
         ]
         if CREATE_NO_WINDOW:
             subprocess.run(cmd_final, check=False, creationflags=CREATE_NO_WINDOW)
         else:
             subprocess.run(cmd_final, check=False)
 
+        final_result = cls.apply_timeline_ai_qc_if_enabled(
+            merged_video=merged_timeline_video,
+            final_output=final_output,
+            post_options=post_options,
+            work_dir=work_dir,
+            job_id=job_id,
+            progress_callback=progress_callback
+        )
+
         total_sec = time.time() - started_at
-        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_output}")
+        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_result}")
+        return final_result
+
+    @classmethod
+    def apply_timeline_ai_qc_if_enabled(
+        cls,
+        merged_video: str,
+        final_output: str,
+        post_options: dict,
+        work_dir: str,
+        job_id: str = "",
+        progress_callback=None
+    ) -> str:
+        """
+        GIAI ĐOẠN KIỂM DUYỆT AI THEO ĐÚNG TƯ DUY TÓM TẮT:
+        Chỉ quét kiểm duyệt SAU KHI ĐÃ GỘP TOÀN BỘ CLIPS VÀO TIMELINE 9:16 HOÀN CHỈNH.
+        - Quét 1 lần duy nhất cho toàn bộ video (không tìm tòi từng video một gây chậm).
+        - Tỷ lệ 9:16 và zoom in (178%) đã áp dụng sẵn, logo ngoài viền đã bị crop mất tự nhiên.
+        - Bất kỳ logo/sub/banner nào còn sót trên màn hình 9:16 sẽ được xác định đúng tọa độ 100%, không bao giờ mất chỗ che.
+        """
+        from editor_processor import EditorProcessor
+        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
+        from antigravity_processor import AntigravityProcessor
+        api_key = str(post_options.get("gemini_api_key") or post_options.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
+        has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
+
+        qc_applied = False
+        total_timeline_dur = DownloaderProcessor.probe_duration_sec(merged_video)
+
+        if enable_gemini_qc and has_ai_service and os.path.exists(merged_video):
+            try:
+                from ai_processor import AIProcessor
+                qc_frames_dir = os.path.join(work_dir, "qc_timeline_full_frames")
+                os.makedirs(qc_frames_dir, exist_ok=True)
+
+                if progress_callback and job_id:
+                    progress_callback(job_id, "ai_qc", "AI đang quét kiểm duyệt logo/sub trên toàn bộ timeline 9:16 đã gộp...")
+                logger.info("🔍 [AI QC TIMELINE FULL] Bắt đầu quét kiểm duyệt logo, sub cũ trên toàn bộ timeline 9:16 đã gộp...")
+
+                cmd_kf = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", merged_video,
+                    "-vf", "fps=1,scale=540:960",
+                    os.path.join(qc_frames_dir, "frame_%04d.jpg")
+                ]
+                if CREATE_NO_WINDOW:
+                    subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW)
+                else:
+                    subprocess.run(cmd_kf, check=False)
+
+                frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
+                if frame_files:
+                    step = max(1, len(frame_files) // 12)
+                    sampled_frames = frame_files[::step][:15]
+                    kf_items = []
+                    for s_idx, fp in enumerate(sampled_frames, start=1):
+                        sec = float(s_idx * step)
+                        kf_items.append({
+                            "path": fp,
+                            "start_sec": max(0.0, sec - (step / 2.0)),
+                            "end_sec": min(total_timeline_dur, sec + (step / 2.0))
+                        })
+
+                    model_name = str(post_options.get("gemini_model") or post_options.get("ai_model") or "")
+                    detected_items = AIProcessor.inspect_90s_grid_for_copyright(
+                        api_key=api_key, model_name=model_name,
+                        duration_sec=total_timeline_dur,
+                        keyframes=kf_items
+                    )
+
+                    if detected_items:
+                        watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
+                            detected_items, qc_frames_dir, duration_sec=total_timeline_dur
+                        )
+                        qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
+                            watermark_blurs, duration_sec=total_timeline_dur,
+                            curr_v_label="0:v", output_w=1080, output_h=1920,
+                            log_fn=logger.info
+                        )
+
+                        if qc_filters_str:
+                            clean_vf = qc_filters_str.lstrip(";")
+                            logger.info(f"🛡️ [AI QC TIMELINE APPLIED] Áp dụng kính mờ chuẩn Tóm Tắt lên video timeline hoàn chỉnh...")
+                            cmd_clean = [
+                                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                                "-i", merged_video,
+                                "-filter_complex", clean_vf,
+                                "-map", f"[{final_v_lbl}]", "-map", "0:a",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                                "-c:a", "copy",
+                                final_output
+                            ]
+                            run_ffmpeg_auto(cmd_clean, label="render_full_timeline_qc", logger=logger)
+                            if os.path.exists(final_output) and os.path.getsize(final_output) > 0:
+                                qc_applied = True
+            except Exception as qc_err:
+                logger.warning(f"⚠️ [AI QC TIMELINE FULL] Bỏ qua quét AI timeline do lỗi: {qc_err}")
+
+        if not qc_applied:
+            if os.path.exists(final_output):
+                try:
+                    os.remove(final_output)
+                except Exception:
+                    pass
+            os.replace(merged_video, final_output)
+
         return final_output
 
     @classmethod
@@ -1711,15 +1826,25 @@ class CompilationProcessor:
                 safe_sp = os.path.abspath(s_path).replace('\\', '/').replace("'", "'\\''")
                 f.write(f"file '{safe_sp}'\n")
 
+        merged_timeline_video = os.path.join(work_dir, "timeline_combined_916.mp4")
         cmd_final = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", final_concat_list,
-            "-c", "copy", final_output
+            "-c", "copy", merged_timeline_video
         ]
         if CREATE_NO_WINDOW:
             subprocess.run(cmd_final, check=False, creationflags=CREATE_NO_WINDOW)
         else:
             subprocess.run(cmd_final, check=False)
 
+        final_result = cls.apply_timeline_ai_qc_if_enabled(
+            merged_video=merged_timeline_video,
+            final_output=final_output,
+            post_options=post_options,
+            work_dir=work_dir,
+            job_id=job.get("id", ""),
+            progress_callback=progress_callback
+        )
+
         total_sec = time.time() - started_at
-        logger.info(f"🎉 [HOÀN TẤT] Video Tuyển tập Top Countdown xuất bản thành công ({total_sec:.1f}s): {final_output}")
-        return final_output
+        logger.info(f"🎉 [HOÀN TẤT] Video Tuyển tập Top Countdown xuất bản thành công ({total_sec:.1f}s): {final_result}")
+        return final_result

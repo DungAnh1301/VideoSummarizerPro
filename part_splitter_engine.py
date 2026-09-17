@@ -646,11 +646,13 @@ class PartSplitterEngine:
                 qc_frames_dir = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
                 os.makedirs(qc_frames_dir, exist_ok=True)
 
-                # Trích xuất 1fps frame 540x960
+                # Trích xuất 1fps frame 540x960 theo đúng 100% tỷ lệ 9:16 và zoom in của Tóm Tắt Video
+                qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_1fps]")
                 cmd_kf = [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-i", raw_part,
-                    "-vf", "fps=1,scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2",
+                    "-filter_complex", f"[0:v]fps=1[v_1fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                    "-map", "[outkf]",
                     os.path.join(qc_frames_dir, "frame_%04d.jpg")
                 ]
                 _ff_run(cmd_kf, log_fn=None, timeout=60)
