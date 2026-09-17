@@ -827,6 +827,263 @@ class CompilationProcessor:
         return min(target_dur, rem_dur)
 
     @classmethod
+    def find_coherent_highlight_scene_window(
+        cls,
+        video_path: str,
+        target_dur: float,
+        min_start: float = 0.0,
+        max_end: float = 0.0,
+        youtube_url: str = "",
+        tolerance_ratio: float = 0.20
+    ) -> tuple[float, float]:
+        """
+        Tìm phân đoạn cảnh quay trọn vẹn, liền mạch và hấp dẫn nhất (Coherent Highlight Scene Window):
+        1. KHÔNG BAO GIỜ cắt đứt đoạn cảnh (Snap Scene Boundary):
+           - Điểm bắt đầu (start_t) và điểm kết thúc (end_t) luôn hít chặt vào ranh giới chuyển cảnh (Scene Cut)
+             hoặc điểm dừng câu thoại (Speech Silence Pause), bảo toàn trọn vẹn từng camera shot.
+        2. DUNG SAI LINH HOẠT +-20%:
+           - Khoảng thời lượng cho phép: [target_dur * (1 - tolerance), target_dur * (1 + tolerance)].
+           - Nếu toàn bộ clip sạch nằm trong biên độ +20%, giữ trọn vẹn 100% clip để nội dung liền mạch nhất.
+        3. CHỌN ĐOẠN NỘI DUNG TỐT NHẤT (Highlight / Climax Detection):
+           - Ưu tiên tối đa đoạn người xem xem lại nhiều nhất (YouTube Most Replayed Heatmap).
+           - Nếu không có Heatmap, phân tích năng lượng âm thanh (Audio Energy / Loudness Spikes) để bắt trúng đoạn cao trào, cãi vã, hành động hoặc kịch tính nhất.
+        """
+        if not video_path or not os.path.exists(video_path):
+            return max(0.0, min_start), max(5.0, target_dur)
+
+        total_dur = DownloaderProcessor.probe_duration_sec(video_path)
+        end_limit = min(total_dur, max_end) if max_end > 0 else total_dur
+        start_limit = max(0.0, min_start)
+        usable_dur = max(0.0, end_limit - start_limit)
+
+        if usable_dur <= 0:
+            return start_limit, max(5.0, target_dur)
+
+        min_dur = max(5.0, target_dur * (1.0 - tolerance_ratio))
+        max_dur = target_dur * (1.0 + tolerance_ratio)
+
+        # TRƯỜNG HỢP 1: Toàn bộ clip sạch ngắn hơn hoặc nằm vừa vặn trong biên độ +20%
+        # Giữ trọn vẹn toàn bộ clip, không cắt gọt bất kỳ giây nào để câu chuyện liền mạch 100%!
+        if usable_dur <= max_dur:
+            logger.info(
+                f"🌿 [COHERENT SCENE] Giữ trọn vẹn clip sạch ({usable_dur:.1f}s <= {max_dur:.1f}s) "
+                f"để bảo toàn 100% ngữ cảnh phân cảnh, không cắt vụn!"
+            )
+            return start_limit, usable_dur
+
+        # TRƯỜNG HỢP 2: Clip dài hơn nhiều so với hạn ngạch (cần trích xuất phân cảnh cao trào trọn vẹn)
+        # BƯỚC 1: Xác định tâm điểm cao trào (Climax Center)
+        climax_center_t = None
+
+        # 1.1. Thử lấy YouTube Most Replayed Heatmap
+        if youtube_url:
+            try:
+                from youtube_heatmap import get_youtube_heatmap
+                markers = get_youtube_heatmap(youtube_url)
+                if markers:
+                    valid_markers = [
+                        m for m in markers
+                        if start_limit <= float(m.get("start", 0)) <= end_limit
+                    ]
+                    if valid_markers:
+                        best_m = max(valid_markers, key=lambda x: float(x.get("score", 0.0)))
+                        m_start = float(best_m.get("start", 0.0))
+                        m_end = float(best_m.get("end", m_start))
+                        climax_center_t = (m_start + m_end) / 2.0
+                        logger.info(
+                            f"🔥 [HEATMAP CLIMAX] Bắt trúng tâm điểm người xem xem lại nhiều nhất (Most Replayed): "
+                            f"{climax_center_t:.1f}s (điểm số: {best_m.get('score', 0):.4f})"
+                        )
+            except Exception as hm_err:
+                logger.debug(f"Heatmap lookup error: {hm_err}")
+
+        # 1.2. Nếu chưa có Climax từ Heatmap, dò năng lượng âm thanh (Audio Spikes / Voice Energy)
+        if climax_center_t is None:
+            try:
+                best_loudness = -100.0
+                best_t = start_limit + usable_dur * 0.38
+                step = max(4.0, target_dur / 3.0)
+                probe_t = start_limit
+                sample_count = 0
+                while probe_t + step <= end_limit and sample_count < 8:
+                    cmd_vol = [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-ss", f"{probe_t:.2f}", "-t", f"{step:.2f}",
+                        "-i", video_path,
+                        "-af", "volumedetect",
+                        "-f", "null", "-"
+                    ]
+                    p_vol = subprocess.run(
+                        cmd_vol, capture_output=True, text=True,
+                        creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
+                    )
+                    mean_vol = -50.0
+                    for line in (p_vol.stderr or "").split("\n"):
+                        if "mean_volume:" in line:
+                            try:
+                                mean_vol = float(line.split("mean_volume:")[1].split("dB")[0].strip())
+                            except Exception:
+                                pass
+                    if mean_vol > best_loudness:
+                        best_loudness = mean_vol
+                        best_t = probe_t + (step / 2.0)
+                    probe_t += max(step, usable_dur / 8.0)
+                    sample_count += 1
+
+                climax_center_t = best_t
+                logger.info(f"🔊 [AUDIO CLIMAX] Bắt trúng cao trào hội thoại / âm thanh tại {climax_center_t:.1f}s ({best_loudness:.1f}dB)")
+            except Exception as vol_err:
+                logger.debug(f"Audio volume scan error: {vol_err}")
+
+        # Fallback an toàn nếu không dò được âm thanh: chọn 35% - 45% thời lượng
+        if climax_center_t is None:
+            climax_center_t = start_limit + usable_dur * 0.38
+
+        # BƯỚC 2: Quét ranh giới chuyển cảnh (Scene Cuts) trong dải [start_limit, end_limit]
+        scene_cuts = [start_limit]
+        try:
+            from scenedetect import SceneManager, open_video, AdaptiveDetector
+            s_vid = open_video(video_path)
+            fps = float(s_vid.frame_rate or 30.0)
+            sm = SceneManager()
+            sm.auto_downscale = True
+            sm.add_detector(AdaptiveDetector(adaptive_threshold=3.0, min_scene_len=max(1, int(fps * 0.5))))
+            sm.detect_scenes(video=s_vid, show_progress=False)
+            for sc in sm.get_scene_list(start_in_scene=True):
+                sec = float(sc[0].seconds if hasattr(sc[0], "seconds") else sc[0].get_seconds())
+                if start_limit + 0.5 <= sec <= end_limit - 0.5:
+                    scene_cuts.append(sec)
+        except Exception as sc_err:
+            logger.debug(f"PySceneDetect error: {sc_err}; fallback sang FFmpeg select scene...")
+            try:
+                cmd_sc = [
+                    "ffmpeg", "-hide_banner", "-ss", f"{start_limit:.2f}",
+                    "-t", f"{usable_dur:.2f}", "-i", video_path,
+                    "-vf", "select=gt(scene\\,0.22),metadata=print",
+                    "-f", "null", "-"
+                ]
+                p_sc = subprocess.run(
+                    cmd_sc, capture_output=True, text=True,
+                    creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
+                )
+                for x in re.findall(r"pts_time:([0-9.]+)", p_sc.stderr or ""):
+                    sec = round(start_limit + float(x), 2)
+                    if start_limit + 0.5 <= sec <= end_limit - 0.5:
+                        scene_cuts.append(sec)
+            except Exception:
+                pass
+
+        scene_cuts.append(end_limit)
+        scene_cuts = sorted(list(set(scene_cuts)))
+        logger.info(f"🎬 [SCENE CUTS] Nhận diện {len(scene_cuts)} ranh giới phân cảnh sạch trong '{os.path.basename(video_path)}'")
+
+        # BƯỚC 3: Quét khoảng lặng âm thanh (Speech Pauses)
+        silence_points = []
+        try:
+            cmd_sil = [
+                "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
+                "-ss", f"{start_limit:.2f}", "-t", f"{usable_dur:.2f}",
+                "-i", video_path,
+                "-af", "silencedetect=noise=-28dB:d=0.20",
+                "-f", "null", "-"
+            ]
+            p_sil = subprocess.run(
+                cmd_sil, capture_output=True, text=True,
+                creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
+            )
+            for line in (p_sil.stderr or "").split("\n"):
+                if "silence_end:" in line:
+                    m = re.search(r"silence_end:([\d\.]+)", line)
+                    if m:
+                        silence_points.append(start_limit + float(m.group(1)))
+                elif "silence_start:" in line:
+                    m = re.search(r"silence_start:([\d\.]+)", line)
+                    if m:
+                        silence_points.append(start_limit + float(m.group(1)))
+        except Exception:
+            pass
+
+        # BƯỚC 4: TỔ HỢP TÌM PHÂN ĐOẠN CẢNH TRỌN VẸN (COHERENT SCENE BLOCK)
+        candidate_blocks = []
+
+        # 4.1. Cặp ranh giới chuyển cảnh Scene Cut hoàn hảo (100% bảo toàn các shot camera bên trong)
+        for i in range(len(scene_cuts)):
+            s_cand = scene_cuts[i]
+            for j in range(i + 1, len(scene_cuts)):
+                e_cand = scene_cuts[j]
+                d_cand = e_cand - s_cand
+                if min_dur <= d_cand <= max_dur:
+                    candidate_blocks.append((s_cand, e_cand, "perfect_scene_cut"))
+                elif d_cand > max_dur:
+                    break
+
+        # 4.2. Cặp kết hợp giữa Scene Cut và Silence Point (ngắt câu tự nhiên)
+        if len(candidate_blocks) < 5 and silence_points:
+            all_anchors = sorted(list(set(scene_cuts + silence_points)))
+            for i in range(len(all_anchors)):
+                s_cand = all_anchors[i]
+                if s_cand < start_limit:
+                    continue
+                for j in range(i + 1, len(all_anchors)):
+                    e_cand = all_anchors[j]
+                    if e_cand > end_limit:
+                        break
+                    d_cand = e_cand - s_cand
+                    if min_dur <= d_cand <= max_dur:
+                        candidate_blocks.append((s_cand, e_cand, "scene_silence_combo"))
+                    elif d_cand > max_dur:
+                        break
+
+        # 4.3. Đánh giá và chọn block có điểm số cao nhất
+        if candidate_blocks:
+            def score_block(b):
+                s, e, b_type = b
+                d = e - s
+                mid = (s + e) / 2.0
+                dist_to_climax = abs(mid - climax_center_t)
+                climax_score = max(0.0, 100.0 - (dist_to_climax * 1.5))
+                if s <= climax_center_t <= e:
+                    climax_score += 60.0
+
+                type_score = 40.0 if b_type == "perfect_scene_cut" else 20.0
+                dur_penalty = abs(d - target_dur) * 0.8
+                return climax_score + type_score - dur_penalty
+
+            best_block = max(candidate_blocks, key=score_block)
+            chosen_start = best_block[0]
+            chosen_dur = best_block[1] - best_block[0]
+            b_type = best_block[2]
+            logger.info(
+                f"🎯 [COHERENT SCENE CHOSEN] Chọn phân cảnh trọn vẹn: [{chosen_start:.2f}s -> {chosen_start+chosen_dur:.2f}s] "
+                f"({chosen_dur:.1f}s / mục tiêu {target_dur:.1f}s, dung sai ±20%, dạng: {b_type}) "
+                f"khớp 100% ranh giới cảnh, bảo toàn nội dung câu chuyện!"
+            )
+            return chosen_start, chosen_dur
+
+        # 4.4. Fallback: căn cửa sổ target_dur quanh climax_center_t và hít vào ranh giới gần nhất
+        raw_start = max(start_limit, min(climax_center_t - (target_dur / 2.0), end_limit - target_dur))
+        raw_end = min(end_limit, raw_start + target_dur)
+
+        near_starts = [sc for sc in scene_cuts if abs(sc - raw_start) <= 4.0 and sc >= start_limit]
+        if near_starts:
+            raw_start = min(near_starts, key=lambda sc: abs(sc - raw_start))
+
+        near_ends = [sc for sc in scene_cuts if abs(sc - raw_end) <= 4.0 and sc <= end_limit and (sc - raw_start) >= min_dur]
+        if near_ends:
+            raw_end = min(near_ends, key=lambda sc: abs(sc - raw_end))
+        elif silence_points:
+            near_sils = [sp for sp in silence_points if abs(sp - raw_end) <= 3.0 and sp <= end_limit and (sp - raw_start) >= min_dur]
+            if near_sils:
+                raw_end = min(near_sils, key=lambda sp: abs(sp - raw_end))
+
+        final_dur = max(min_dur, min(max_dur, raw_end - raw_start))
+        logger.info(
+            f"🎯 [SNAPPED SCENE] Hít phân cảnh xung quanh cao trào: [{raw_start:.2f}s -> {raw_start+final_dur:.2f}s] "
+            f"({final_dur:.1f}s / mục tiêu {target_dur:.1f}s) bảo đảm liền mạch!"
+        )
+        return raw_start, final_dur
+
+    @classmethod
     def extract_clip_teasers(cls, ranked_items: list[dict], teaser_duration: float = 3.0, work_dir: str = "", post_options: dict = None) -> list[dict]:
         """
         Trích xuất 2-3s Highlight Teaser cho từng clip để làm mồi nhử trước mỗi No.X.
@@ -1298,30 +1555,29 @@ class CompilationProcessor:
             if not clip_video or not os.path.exists(clip_video):
                 continue
 
-            usable_dur = max(5.0, outro_start - intro_end)
-            # Chọn điểm bắt đầu thông minh: nếu clip dài hơn nhiều so với hạn ngạch cần cắt,
-            # lấy từ khoảng sau intro bumper để đảm bảo bắt trúng cao trào
-            if usable_dur > allocated_d + 5:
-                preferred_start = intro_end + max(1.0, (usable_dur - allocated_d) * 0.15)
-            else:
-                preferred_start = intro_end
+            # Lấy URL YouTube của clip để truy vấn Heatmap Most Replayed
+            item_url = item.get("url") or item.get("webpage_url") or ""
+            if not item_url and item.get("id"):
+                item_url = f"https://www.youtube.com/watch?v={item['id']}"
 
-            clean_start_t = cls.find_clean_clip_window(
-                clip_video, allocated_d, preferred_start=preferred_start,
-                min_start=intro_end, max_end=outro_start
+            # Tính thời lượng mục tiêu trong video gốc (tính cả bù trừ tốc độ speed)
+            source_target_d = allocated_d * speed if abs(speed - 1.0) >= 0.01 else allocated_d
+
+            # TRÍCH XUẤT PHÂN CẢNH TRỌN VẸN VÀ NỘI DUNG TỐT NHẤT (COHERENT HIGHLIGHT SCENE):
+            # 1. Hít chặt 100% vào Scene Cuts và Silence Pauses (không bao giờ cắt đứt đoạn cảnh/thoại).
+            # 2. Dung sai linh hoạt +-20% (không ép cứng số giây để người xem hiểu trọn vẹn ngữ cảnh).
+            # 3. Ưu tiên cao trào hấp dẫn nhất từ YouTube Heatmap (Most Replayed) hoặc Audio Energy.
+            clean_start_t, raw_cut_dur = cls.find_coherent_highlight_scene_window(
+                video_path=clip_video,
+                target_dur=source_target_d,
+                min_start=intro_end,
+                max_end=outro_start,
+                youtube_url=item_url,
+                tolerance_ratio=tolerance_ratio
             )
 
-            # Linh hoạt +-20% theo nhịp cao trào & điểm ngắt câu tự nhiên (không ép cứng thời lượng, không cắt vào outro)
-            effective_dur = cls.find_natural_clip_duration(
-                clip_video, allocated_d, total_clip_dur=outro_start, start_t=clean_start_t, tolerance_ratio=tolerance_ratio
-            )
-
-            # Tính thời lượng cắt từ video gốc dựa trên tốc độ speed và khống chế không tràn qua outro_start
-            max_avail_source = max(3.0, outro_start - clean_start_t)
-            raw_cut_dur = effective_dur * speed if abs(speed - 1.0) >= 0.01 else effective_dur
-            if raw_cut_dur > max_avail_source:
-                raw_cut_dur = max_avail_source
-                effective_dur = raw_cut_dur / speed if abs(speed - 1.0) >= 0.01 else raw_cut_dur
+            # Thời lượng clip thành phẩm sau khi áp dụng tốc độ speed
+            effective_dur = raw_cut_dur / speed if abs(speed - 1.0) >= 0.01 else raw_cut_dur
 
             if progress_callback:
                 speed_txt = f", speed {speed:.2f}x" if abs(speed - 1.0) >= 0.01 else ""

@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.14"
+VERSION = "1.3.15"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.14: Khắc phục triệt để lỗi AI QC làm mờ Title Header Playlist và Badge No. X: (1) Chuẩn hóa thứ tự dựng theo đúng 100% kiến trúc Tóm Tắt Video: Kiểm duyệt và làm mờ footage TRƯỚC, sau đó mới overlay Title Banner và Badge No. X LÊN TRÊN CÙNG (hoàn toàn tách biệt khỏi luồng kính mờ, đảm bảo chữ sắc nét 100%); (2) Thiết lập chốt chặn Safe Zone Guard tự động loại bỏ tuyệt đối bất kỳ box phát hiện nào rơi vào vùng Title Header (y < 0.25) hoặc vùng Badge No. X (y ~ 0.50); (3) Cập nhật System Prompt AI hướng dẫn Gemini tuyệt đối không báo cáo Title và Badge của ứng dụng."
+NOTES = "Bản phát hành v1.3.15: Nâng cấp thuật toán Cắt phân cảnh trọn vẹn và chọn lọc nội dung thông minh (Coherent Highlight Scene Extraction): (1) KHÔNG BAO GIỜ cắt đứt đoạn cảnh: Điểm bắt đầu và kết thúc hít chặt 100% vào ranh giới chuyển cảnh (Scene Cut bằng PySceneDetect) và điểm dừng câu thoại (Speech Silence Pause bằng silencedetect), bảo toàn trọn vẹn từng camera shot; (2) Dung sai linh hoạt +-20% (thay vì ép cứng số giây): Tự động mở rộng hoặc co ngắn để vừa khít phân cảnh hoàn chỉnh, nếu clip ngắn thì giữ trọn vẹn 100% không cắt vụn; (3) Chọn lọc nội dung tốt nhất để người xem dễ hiểu nhất: Bắt trúng tâm điểm cao trào kịch tính từ YouTube Most Replayed Heatmap và năng lượng âm thanh (Audio Energy)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
