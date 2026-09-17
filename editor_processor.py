@@ -2012,6 +2012,166 @@ class EditorProcessor:
         return refined_list
 
     @classmethod
+    def build_clustered_qc_filters(
+        cls,
+        watermark_blurs: list,
+        duration_sec: float,
+        curr_v_label: str = "vout",
+        output_w: int = 1080,
+        output_h: int = 1920,
+        red_to_gray_lut_path: str = "",
+        log_fn=None
+    ) -> tuple[str, str]:
+        """
+        Gom cụm không gian (Spatial Clustering) và hợp nhất thời gian theo chuẩn 100% của Tóm Tắt Video.
+        Đảm bảo không bao giờ sinh ra hàng chục filter gblur/split/overlay chồng chéo gây lỗi FFmpeg.
+        Trả về: (qc_filters_str, final_v_label)
+        """
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
+        if not watermark_blurs:
+            return "", curr_v_label
+
+        def _merge_time_intervals(ivs, max_gap=0.5):
+            if not ivs:
+                return []
+            sorted_ivs = sorted(ivs, key=lambda x: x[0])
+            merged = [sorted_ivs[0]]
+            for c_st, c_end in sorted_ivs[1:]:
+                p_st, p_end = merged[-1]
+                if c_st <= p_end + max_gap:
+                    merged[-1] = (p_st, max(p_end, c_end))
+                else:
+                    merged.append((c_st, c_end))
+            return merged
+
+        def _iou(b1, b2):
+            y1 = max(b1[0], b2[0])
+            x1 = max(b1[1], b2[1])
+            y2 = min(b1[2], b2[2])
+            x2 = min(b1[3], b2[3])
+            inter = max(0.0, y2 - y1) * max(0.0, x2 - x1)
+            a1 = max(0.0, b1[2] - b1[0]) * max(0.0, b1[3] - b1[1])
+            a2 = max(0.0, b2[2] - b2[0]) * max(0.0, b2[3] - b2[1])
+            union = a1 + a2 - inter
+            return (inter / union) if union > 0 else 0.0
+
+        def _should_cluster(cl, item):
+            b1, b2 = cl["box"], item["box"]
+            if _iou(b1, b2) >= 0.40:
+                return True
+            is_wide1 = (b1[3] - b1[1]) > 0.50
+            is_wide2 = (b2[3] - b2[1]) > 0.50
+            if is_wide1 and is_wide2:
+                v_inter = max(0.0, min(b1[2], b2[2]) - max(b1[0], b2[0]))
+                v_union = max(b1[2], b2[2]) - min(b1[0], b2[0])
+                if v_union > 0 and (v_inter / v_union) >= 0.50:
+                    return True
+            return False
+
+        blood_intervals = []
+        non_blood_items = []
+        for item in watermark_blurs:
+            lbl = str(item.get("label") or "").strip().lower()
+            st = max(0.0, float(item.get("start_sec", 0.0)))
+            en = min(float(duration_sec), float(item.get("end_sec", duration_sec)))
+            if en <= st:
+                continue
+            if "blood" in lbl:
+                blood_intervals.append((st, en))
+            else:
+                non_blood_items.append(item)
+
+        clustered_blurs = []
+        for item in non_blood_items:
+            lbl = str(item.get("label") or "watermark_logo").strip()
+            box = [round(float(v), 3) for v in item.get("box", [0, 0, 0, 0])]
+            if box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            st = max(0.0, float(item.get("start_sec", 0.0)))
+            en = min(float(duration_sec), float(item.get("end_sec", duration_sec)))
+            if en <= st:
+                continue
+
+            merged = False
+            for cl in clustered_blurs:
+                if _should_cluster(cl, {"label": lbl, "box": box, "st": st, "en": en}):
+                    cb = cl["box"]
+                    cl["box"] = [min(cb[0], box[0]), min(cb[1], box[1]), max(cb[2], box[2]), max(cb[3], box[3])]
+                    cl["intervals"].append((st, en))
+                    merged = True
+                    break
+            if not merged:
+                clustered_blurs.append({
+                    "label": lbl,
+                    "box": list(box),
+                    "intervals": [(st, en)],
+                })
+
+        pad_x = 4
+        pad_y = 4
+        blur_filter_spec = "gblur=sigma=6.0:steps=1"
+        clean_chain_filters = []
+        filter_seq = 0
+
+        merged_blood_intervals = _merge_time_intervals(blood_intervals, max_gap=0.3)
+        if merged_blood_intervals and red_to_gray_lut_path and os.path.exists(red_to_gray_lut_path):
+            blood_cond = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in merged_blood_intervals)
+            blood_enable_str = f":enable='{blood_cond}'" if blood_cond else ""
+            abs_lut = os.path.abspath(red_to_gray_lut_path).replace("\\", "/")
+            drv, rest = abs_lut.split(":", 1) if ":" in abs_lut else ("", abs_lut)
+            escaped_lut = f"{drv}\\:{rest}" if drv else abs_lut
+            filter_seq += 1
+            next_label = f"v_clean_{filter_seq}"
+            clean_chain_filters.append(
+                f"[{curr_v_label}]lut3d=file='{escaped_lut}'{blood_enable_str}[{next_label}]"
+            )
+            curr_v_label = next_label
+            _log(f"🩸 [BLOOD 3D LUT STREAM] Khử màu đỏ máu từng pixel (Zero Crop - Motion-Immune): Kích hoạt: {blood_cond}")
+
+        for item in clustered_blurs:
+            lbl = item["label"]
+            box = item["box"]
+            ymin, xmin, ymax, xmax = box
+
+            merged_intervals = _merge_time_intervals(item.get("intervals", []), max_gap=0.5)
+            if not merged_intervals:
+                continue
+
+            tot_blur_time = sum(e - s for s, e in merged_intervals)
+            if tot_blur_time >= duration_sec * 0.60:
+                enable_str = ""
+                cond = "toàn video"
+            else:
+                cond = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in merged_intervals)
+                enable_str = f":enable='{cond}'" if cond else ""
+
+            filter_seq += 1
+            next_label = f"v_clean_{filter_seq}"
+
+            bx = max(0, min(output_w - 16, int(xmin * output_w) - pad_x))
+            by = max(0, min(output_h - 16, int(ymin * output_h) - pad_y))
+            bw = cls._even(max(16, min(output_w - bx, int((xmax - xmin) * output_w) + pad_x * 2)))
+            bh = cls._even(max(16, min(output_h - by, int((ymax - ymin) * output_h) + pad_y * 2)))
+
+            clean_chain_filters.append(
+                f"[{curr_v_label}]split=2[orig_{filter_seq}][crop_{filter_seq}];"
+                f"[crop_{filter_seq}]crop={bw}:{bh}:{bx}:{by},{blur_filter_spec}[blur_{filter_seq}];"
+                f"[orig_{filter_seq}][blur_{filter_seq}]overlay={bx}:{by}{enable_str}[{next_label}]"
+            )
+            curr_v_label = next_label
+            _log(f"🛡️ [BLUR QC APPLIED] Làm mờ '{lbl}' [{blur_filter_spec}]: x={bx}, y={by}, w={bw}, h={bh} | Kích hoạt: {cond}")
+
+        qc_filters_str = (";" + ";".join(clean_chain_filters)) if clean_chain_filters else ""
+        return qc_filters_str, curr_v_label
+
+    @classmethod
     def generate_90s_grid_image(
         cls,
         timeline_inputs: list,
@@ -2846,148 +3006,12 @@ class EditorProcessor:
         red_to_gray_lut_path = cls.ensure_red_to_gray_lut() if has_blood else ""
         audio_input_index = timeline_input_count + 1
 
-        def _merge_time_intervals(ivs, max_gap=0.05):
-            if not ivs:
-                return []
-            sorted_ivs = sorted(ivs, key=lambda x: x[0])
-            merged = [sorted_ivs[0]]
-            for c_st, c_end in sorted_ivs[1:]:
-                p_st, p_end = merged[-1]
-                if c_st <= p_end + max_gap:
-                    merged[-1] = (p_st, max(p_end, c_end))
-                else:
-                    merged.append((c_st, c_end))
-            return merged
-
-        def _iou(b1, b2):
-            y1 = max(b1[0], b2[0])
-            x1 = max(b1[1], b2[1])
-            y2 = min(b1[2], b2[2])
-            x2 = min(b1[3], b2[3])
-            inter = max(0.0, y2 - y1) * max(0.0, x2 - x1)
-            a1 = max(0.0, b1[2] - b1[0]) * max(0.0, b1[3] - b1[1])
-            a2 = max(0.0, b2[2] - b2[0]) * max(0.0, b2[3] - b2[1])
-            union = a1 + a2 - inter
-            return (inter / union) if union > 0 else 0.0
-
-        def _should_cluster(cl, item):
-            b1, b2 = cl["box"], item["box"]
-            lbl1, lbl2 = cl["label"], item["label"]
-            # Cùng nhóm overlay (logo / sub / ticker / bảng điểm trùng vị trí):
-            if _iou(b1, b2) >= 0.50:
-                return True
-            # Với dải chữ/bảng điểm ngang màn hình (width > 0.60):
-            is_wide1 = (b1[3] - b1[1]) > 0.60
-            is_wide2 = (b2[3] - b2[1]) > 0.60
-            if is_wide1 and is_wide2:
-                v_inter = max(0.0, min(b1[2], b2[2]) - max(b1[0], b2[0]))
-                v_union = max(b1[2], b2[2]) - min(b1[0], b2[0])
-                if v_union > 0 and (v_inter / v_union) >= 0.65:
-                    return True
-            return False
-
-        # 1. TÁCH RIÊNG KHOẢNG THỜI GIAN CÓ MÁU ĐỂ KHỬ MÀU TOÀN DIỆN (STREAM 3D LUT - ZERO CROP - MOTION-IMMUNE)
-        blood_intervals = []
-        non_blood_items = []
-        for item in watermark_blurs:
-            lbl = str(item.get("label") or "").strip().lower()
-            st = max(0.0, float(item.get("start_sec", 0.0)))
-            en = min(float(audio_mix_raw), float(item.get("end_sec", audio_mix_raw)))
-            if en <= st:
-                continue
-            if "blood" in lbl:
-                blood_intervals.append((st, en))
-            else:
-                non_blood_items.append(item)
-
-        # Gom cụm không gian (Spatial Clustering) cho Logo, Subtitle, Banner, Bảng điểm
-        clustered_blurs = []
-        for item in non_blood_items:
-            lbl = str(item.get("label") or "watermark_logo").strip()
-            box = [round(float(v), 3) for v in item.get("box", [0, 0, 0, 0])]
-            if box[2] <= box[0] or box[3] <= box[1]:
-                continue
-            st = max(0.0, float(item.get("start_sec", 0.0)))
-            en = min(float(audio_mix_raw), float(item.get("end_sec", audio_mix_raw)))
-            if en <= st:
-                continue
-
-            merged = False
-            for cl in clustered_blurs:
-                if _should_cluster(cl, {"label": lbl, "box": box, "st": st, "en": en}):
-                    cb = cl["box"]
-                    cl["box"] = [min(cb[0], box[0]), min(cb[1], box[1]), max(cb[2], box[2]), max(cb[3], box[3])]
-                    cl["intervals"].append((st, en))
-                    merged = True
-                    break
-            if not merged:
-                clustered_blurs.append({
-                    "label": lbl,
-                    "box": list(box),
-                    "intervals": [(st, en)],
-                })
-
-        # Lề an toàn tiêu chuẩn (+4px mỗi bên) cho logo/watermark/sub/bảng điểm
-        pad_x = 4
-        pad_y = 4
-        blur_filter_spec = "gblur=sigma=6.0:steps=1"
-
-        clean_chain_filters = []
         curr_v_label = "vout"
-        filter_seq = 0
-
-        # ÁP DỤNG KHỬ MÀU ĐỎ MÁU THEO TỪNG PIXEL BẰNG 3D LUT (100% ZERO CROP - MOTION-IMMUNE):
-        # Không dùng ô vuông, không crop/overlay. Dòng video tự động lọc pixel đỏ máu sang xám/đen tự nhiên.
-        merged_blood_intervals = _merge_time_intervals(blood_intervals, max_gap=0.3)
-        if merged_blood_intervals and red_to_gray_lut_path and os.path.exists(red_to_gray_lut_path):
-            blood_cond = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in merged_blood_intervals)
-            blood_enable_str = f":enable='{blood_cond}'" if blood_cond else ""
-            abs_lut = os.path.abspath(red_to_gray_lut_path).replace("\\", "/")
-            drv, rest = abs_lut.split(":", 1) if ":" in abs_lut else ("", abs_lut)
-            escaped_lut = f"{drv}\\:{rest}" if drv else abs_lut
-            filter_seq += 1
-            next_label = f"v_clean_{filter_seq}"
-            clean_chain_filters.append(
-                f"[{curr_v_label}]lut3d=file='{escaped_lut}'{blood_enable_str}[{next_label}]"
-            )
-            curr_v_label = next_label
-            logger.info(
-                f"🩸 [BLOOD 3D LUT STREAM] Khử màu đỏ máu từng pixel (Zero Crop - Motion-Immune): "
-                f"Kích hoạt: {blood_cond}"
-            )
-
-        # ÁP DỤNG LÀM MỜ KÍNH FROSTED GLASS CHO LOGO / SUB / BANNER / BẢNG ĐIỂM (GIỮ NGUYÊN 100%):
-        for item in clustered_blurs:
-            lbl = item["label"]
-            box = item["box"]
-            ymin, xmin, ymax, xmax = box
-
-            merged_intervals = _merge_time_intervals(item.get("intervals", []), max_gap=0.1)
-            if not merged_intervals:
-                continue
-
-            cond = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in merged_intervals)
-            filter_seq += 1
-            next_label = f"v_clean_{filter_seq}"
-            enable_str = f":enable='{cond}'" if cond else ""
-
-            bx = max(0, min(cls.OUTPUT_W - 16, int(xmin * cls.OUTPUT_W) - pad_x))
-            by = max(0, min(cls.OUTPUT_H - 16, int(ymin * cls.OUTPUT_H) - pad_y))
-            bw = cls._even(max(16, min(cls.OUTPUT_W - bx, int((xmax - xmin) * cls.OUTPUT_W) + pad_x * 2)))
-            bh = cls._even(max(16, min(cls.OUTPUT_H - by, int((ymax - ymin) * cls.OUTPUT_H) + pad_y * 2)))
-
-            clean_chain_filters.append(
-                f"[{curr_v_label}]split=2[orig_{filter_seq}][crop_{filter_seq}];"
-                f"[crop_{filter_seq}]crop={bw}:{bh}:{bx}:{by},{blur_filter_spec}[blur_{filter_seq}];"
-                f"[orig_{filter_seq}][blur_{filter_seq}]overlay={bx}:{by}{enable_str}[{next_label}]"
-            )
-            curr_v_label = next_label
-            logger.info(
-                f"🛡️ [BLUR QC APPLIED] Làm mờ '{lbl}' [{blur_filter_spec}]: "
-                f"x={bx}, y={by}, w={bw}, h={bh} | Kích hoạt: {cond}"
-            )
-
-        qc_filters_str = (";" + ";".join(clean_chain_filters)) if clean_chain_filters else ""
+        qc_filters_str, curr_v_label = cls.build_clustered_qc_filters(
+            watermark_blurs, duration_sec=audio_mix_raw,
+            curr_v_label=curr_v_label, output_w=cls.OUTPUT_W, output_h=cls.OUTPUT_H,
+            red_to_gray_lut_path=red_to_gray_lut_path
+        )
 
         v_chain = []
         if sub_filter_str:

@@ -1356,97 +1356,13 @@ class CompilationProcessor:
             else:
                 audio_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{effective_dur:.2f}[a_final]"
 
-            # 4.1 Quét kiểm duyệt AI xóa logo, sub cũ, banner (Gemini Grid Inspector)
-            clean_chain_str = ""
-            curr_v_label = "vout"
-            enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
-            from antigravity_processor import AntigravityProcessor
-            api_key = str(post_options.get("gemini_api_key") or post_options.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
-            has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
-
-            if enable_gemini_qc and has_ai_service:
-                try:
-                    from ai_processor import AIProcessor
-                    qc_frames_dir = os.path.join(work_dir, f"qc_frames_top_{r}")
-                    os.makedirs(qc_frames_dir, exist_ok=True)
-
-                    cmd_kf = [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}",
-                        "-i", clip_video,
-                        "-vf", "fps=1,scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2",
-                        os.path.join(qc_frames_dir, "frame_%04d.jpg")
-                    ]
-                    if CREATE_NO_WINDOW:
-                        subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW)
-                    else:
-                        subprocess.run(cmd_kf, check=False)
-
-                    frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
-                    if frame_files:
-                        logger.info(f"🔍 [AI QC TOP {r}] Đang quét bản quyền, logo, sub cũ, banner cho clip No. {r}...")
-                        step = max(1, len(frame_files) // 10)
-                        sampled_frames = frame_files[::step][:12]
-                        kf_items = []
-                        for s_idx, fp in enumerate(sampled_frames, start=1):
-                            sec = float(s_idx * step)
-                            kf_items.append({
-                                "path": fp,
-                                "start_sec": max(0.0, sec - (step / 2.0)),
-                                "end_sec": min(raw_cut_dur, sec + (step / 2.0))
-                            })
-
-                        model_name = str(post_options.get("gemini_model") or post_options.get("ai_model") or "")
-                        detected_items = AIProcessor.inspect_90s_grid_for_copyright(
-                            api_key=api_key, model_name=model_name,
-                            duration_sec=raw_cut_dur,
-                            keyframes=kf_items
-                        )
-
-                        if detected_items:
-                            watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
-                                detected_items, qc_frames_dir, duration_sec=raw_cut_dur
-                            )
-                        else:
-                            watermark_blurs = []
-
-                        clean_filters = []
-                        filter_seq = 0
-                        for item in watermark_blurs:
-                            lbl = str(item.get("label") or "").strip().lower()
-                            if "blood" in lbl:
-                                continue
-                            box = item.get("box", [0, 0, 0, 0])
-                            ymin, xmin, ymax, xmax = box
-                            st = max(0.0, float(item.get("start_sec", 0.0)))
-                            en = min(raw_cut_dur, float(item.get("end_sec", raw_cut_dur)))
-                            cond = f"between(t,{st:.2f},{en:.2f})"
-                            filter_seq += 1
-                            next_label = f"v_qc_{filter_seq}"
-                            bx = max(0, min(1080 - 16, int(xmin * 1080) - 4))
-                            by = max(0, min(1920 - 16, int(ymin * 1920) - 4))
-                            bw = max(16, min(1080 - bx, int((xmax - xmin) * 1080) + 8))
-                            bh = max(16, min(1920 - by, int((ymax - ymin) * 1920) + 8))
-                            clean_filters.append(
-                                f"[{curr_v_label}]split=2[orig_{filter_seq}][crop_{filter_seq}];"
-                                f"[crop_{filter_seq}]crop={bw}:{bh}:{bx}:{by},gblur=sigma=6.0:steps=1[blur_{filter_seq}];"
-                                f"[orig_{filter_seq}][blur_{filter_seq}]overlay={bx}:{by}:enable='{cond}'[{next_label}]"
-                            )
-                            curr_v_label = next_label
-                            logger.info(f"🛡️ [AI QC BLUR TOP {r}] Che mờ {item.get('label', 'overlay')} tại [{st:.1f}s -> {en:.1f}s]")
-
-                        if clean_filters:
-                            clean_chain_str = ";" + ";".join(clean_filters)
-                except Exception as qc_e:
-                    logger.warning(f"⚠️ [AI QC TOP {r}] Bỏ qua quét AI do: {qc_e}")
-
             if abs(speed - 1.0) >= 0.01:
-                v_speed_node = f"[{curr_v_label}]setpts={1.0 / speed:.6f}*PTS[v_sped];[v_sped]"
+                v_speed_node = f"[vout]setpts={1.0 / speed:.6f}*PTS[v_sped];[v_sped]"
             else:
-                v_speed_node = f"[{curr_v_label}]"
+                v_speed_node = "[vout]"
 
             filter_chain = (
-                f"{base_vf}{clean_chain_str};"
+                f"{base_vf};"
                 f"{v_speed_node}[1:v]overlay={top_x}:{top_y}[v_top];"
                 f"[v_top][2:v]overlay={badge_x}:{badge_y},fps=30[v_final];"
                 f"{audio_chain}"

@@ -686,58 +686,12 @@ class PartSplitterEngine:
                     has_blood = any("blood" in str(item.get("label", "")).lower() for item in watermark_blurs)
                     red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""
 
-                    blood_intervals = []
-                    non_blood_items = []
-                    for item in watermark_blurs:
-                        lbl = str(item.get("label") or "").strip().lower()
-                        st = max(0.0, float(item.get("start_sec", 0.0)))
-                        en = min(part_dur, float(item.get("end_sec", part_dur)))
-                        if en <= st:
-                            continue
-                        if "blood" in lbl:
-                            blood_intervals.append((st, en))
-                        else:
-                            non_blood_items.append(item)
-
-                    clean_filters = []
-                    filter_seq = 0
-
-                    # 3D LUT khử máu
-                    if blood_intervals and red_to_gray_lut_path and os.path.exists(red_to_gray_lut_path):
-                        blood_cond = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in blood_intervals)
-                        blood_enable_str = f":enable='{blood_cond}'" if blood_cond else ""
-                        abs_lut = os.path.abspath(red_to_gray_lut_path).replace("\\", "/")
-                        drv, rest = abs_lut.split(":", 1) if ":" in abs_lut else ("", abs_lut)
-                        escaped_lut = f"{drv}\\:{rest}" if drv else abs_lut
-                        filter_seq += 1
-                        next_label = f"v_qc_{filter_seq}"
-                        clean_filters.append(f"[{curr_v_label}]lut3d=file='{escaped_lut}'{blood_enable_str}[{next_label}]")
-                        curr_v_label = next_label
-                        _log(f"🩸 [BLOOD 3D LUT] Khử màu đỏ máu từng pixel Part {p_idx} (Zero Crop - Motion-Immune)")
-
-                    # Kính mờ Frosted Glass cho logo, sub cũ, banner
-                    for item in non_blood_items:
-                        box = item.get("box", [0, 0, 0, 0])
-                        ymin, xmin, ymax, xmax = box
-                        st = max(0.0, float(item.get("start_sec", 0.0)))
-                        en = min(part_dur, float(item.get("end_sec", part_dur)))
-                        cond = f"between(t,{st:.2f},{en:.2f})"
-                        filter_seq += 1
-                        next_label = f"v_qc_{filter_seq}"
-                        bx = max(0, min(1080 - 16, int(xmin * 1080) - 4))
-                        by = max(0, min(1920 - 16, int(ymin * 1920) - 4))
-                        bw = max(16, min(1080 - bx, int((xmax - xmin) * 1080) + 8))
-                        bh = max(16, min(1920 - by, int((ymax - ymin) * 1920) + 8))
-                        clean_filters.append(
-                            f"[{curr_v_label}]split=2[orig_{filter_seq}][crop_{filter_seq}];"
-                            f"[crop_{filter_seq}]crop={bw}:{bh}:{bx}:{by},gblur=sigma=6.0:steps=1[blur_{filter_seq}];"
-                            f"[orig_{filter_seq}][blur_{filter_seq}]overlay={bx}:{by}:enable='{cond}'[{next_label}]"
-                        )
-                        curr_v_label = next_label
-                        _log(f"🛡️ [AI QC BLUR] Che mờ {item.get('label', 'overlay')} tại [{st:.1f}s -> {en:.1f}s]")
-
-                    if clean_filters:
-                        clean_chain_str = ";" + ";".join(clean_filters)
+                    clean_chain_str, curr_v_label = EditorProcessor.build_clustered_qc_filters(
+                        watermark_blurs, duration_sec=part_dur,
+                        curr_v_label="vout", output_w=1080, output_h=1920,
+                        red_to_gray_lut_path=red_to_gray_lut_path,
+                        log_fn=_log
+                    )
             except Exception as qc_e:
                 _log(f"⚠️ [AI QC PART {p_idx}] Bỏ qua quét AI do: {qc_e}")
                 curr_v_label = "vout"

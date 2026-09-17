@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.11"
+VERSION = "1.3.12"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.11: Tích hợp đầy đủ 2 chốt chặn bảo vệ: (1) Smart Fluff Trimming phát hiện và cắt sạch 100% intro bumper / logo animation mở đầu từ 0.0s, bắt đầu thẳng vào nội dung phim; (2) Gemini Grid Inspector AI QC tự động phát hiện và làm mờ kính mờ (frosted glass) các watermark logo / phụ đề cũ / banner trong toàn bộ chế độ Chia Part & Tuyển tập Playlist, hỗ trợ trọn vẹn cả Google Antigravity CLI và Gemini API."
+NOTES = "Bản phát hành v1.3.12: Chuẩn hóa 100% tư duy khử Logo / Sub / Banner theo đúng chuẩn Tóm Tắt Video. Loại bỏ việc phân mảnh quá nhiều filter blur gây lỗi FFmpeg; Tự động gom cụm không gian (Spatial Clustering) và hợp nhất thời gian để tạo kính mờ duy nhất cho logo/sub/banner; Giữ nguyên pipeline màu sắc, crop, zoom và Blur Mask chuẩn Tóm Tắt."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
