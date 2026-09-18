@@ -2162,15 +2162,23 @@ Return JSON only:
             try:
                 from antigravity_processor import AntigravityProcessor
                 if AntigravityProcessor.executable():
-                    # Tối ưu cho Antigravity CLI: nếu danh sách ảnh lớn hơn 3,
-                    # chỉ chọn 3 keyframe đại diện (đầu, giữa, cuối timeline) để CLI phản hồi siêu tốc (< 10s),
-                    # tránh nạp hàng chục ảnh gây phình token (130k+) và nghẽn timeout
+                    # Tối ưu cho Antigravity CLI: hỗ trợ trọn vẹn lên tới 6 keyframes (Top 5 clip chỉ 5 keyframes ~40k tokens)
                     sample_kf = valid_kf
-                    if len(valid_kf) > 3:
-                        mid_idx = len(valid_kf) // 2
-                        sample_kf = [valid_kf[0], valid_kf[mid_idx], valid_kf[-1]]
-                    logger.info(f"🔍 [AI QC KEYFRAMES] Đang gửi {len(sample_kf)} shot keyframes đại diện tới Antigravity CLI...")
-                    raw_resp = AntigravityProcessor.inspect_safety_sheets(sample_kf, prompt_unified)
+                    sample_prompt = prompt_unified
+                    if len(valid_kf) > 6:
+                        step = len(valid_kf) / 5.0
+                        chosen_indices = sorted(list({int(i * step) for i in range(5)} | {len(valid_kf) - 1}))
+                        sample_kf = [valid_kf[i] for i in chosen_indices]
+                        # Đồng bộ lại danh sách metadata trong prompt khớp chính xác với số ảnh thực tế
+                        sub_meta = []
+                        for s_i, fp in enumerate(sample_kf, start=1):
+                            bn = os.path.basename(fp)
+                            sub_meta.append(f"- Image #{s_i} ({bn}): Sampled representative shot #{s_i}")
+                        sample_prompt = prompt_unified.replace(shot_metadata_str, "\n".join(sub_meta))
+                        sample_prompt = sample_prompt.replace(f"analyzing {len(valid_kf)} full-frame", f"analyzing {len(sample_kf)} full-frame")
+
+                    logger.info(f"🔍 [AI QC KEYFRAMES] Đang gửi {len(sample_kf)} shot keyframes tới Antigravity CLI...")
+                    raw_resp = AntigravityProcessor.inspect_safety_sheets(sample_kf, sample_prompt)
             except Exception as a_err:
                 logger.warning(f"⚠️ [AI QC KEYFRAMES] Lỗi Antigravity CLI: {a_err}")
 
@@ -2872,16 +2880,21 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
         t = re.sub(r"\[[^\]]*\]", "", t)
         # 3. Bỏ các thẻ trong ngoặc đơn (music), (applause), (âm nhạc)...
         t = re.sub(r"\([^\)]*\)", "", t)
-        # 4. Bỏ ký tự nốt nhạc và ký hiệu đặc biệt
-        t = re.sub(r"[♪♫🎵#\*]", "", t)
-        # 5. Gộp khoảng trắng và ngắt dòng
+        # 4. Bỏ các thẻ trong ngoặc nhọn hoặc dấu sao {music}, *music*
+        t = re.sub(r"\{[^\}]*\}", "", t)
+        t = re.sub(r"\*[^\*]*\*", "", t)
+        # 5. Bỏ ký tự nốt nhạc và ký hiệu đặc biệt
+        t = re.sub(r"[♪♫🎵#\*~]", "", t)
+        # 6. Gộp khoảng trắng và ngắt dòng
         t = " ".join(t.split()).strip()
-        # 6. Kiểm tra xem nếu chuỗi chỉ còn từ khóa âm thanh vô nghĩa thì loại bỏ hoàn toàn
+        # 7. Kiểm tra xem nếu chuỗi chỉ còn từ khóa âm thanh vô nghĩa thì loại bỏ hoàn toàn
         pure_words = re.sub(r"[^\w\s]", "", t, flags=re.UNICODE).strip().lower()
         if not pure_words or pure_words in (
             "music", "applause", "laughter", "cheering", "sound effect", "singing",
             "am nhac", "âm nhạc", "tieng vo tay", "tiếng vỗ tay", "tieng cuoi", "tiếng cười",
-            "nhac", "nhạc", "intro", "outro", "background music"
+            "nhac", "nhạc", "intro", "outro", "background music", "upbeat music",
+            "dramatic music", "suspense music", "music playing", "gentle music", "soft music",
+            "bell", "chime", "gasp", "sigh", "screaming", "crying", "groan", "grunt"
         ):
             return ""
         return t

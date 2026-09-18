@@ -502,6 +502,74 @@ class CompilationProcessor:
         return cues
 
     @classmethod
+    def clean_and_write_srt(cls, cues: list[dict], output_srt: str) -> str:
+        """
+        Ghi danh sách cue vào file SRT theo đúng chuẩn Tóm Tắt (EditorProcessor):
+        1. Cues được sắp xếp tăng dần theo start time.
+        2. Triệt tiêu 100% hiện tượng overlap: cue sau chỉ bắt đầu sau khi cue trước đã kết thúc.
+           Không bao giờ có 2 cue hiển thị cùng lúc làm chồng 2 dòng hoặc nhảy chữ giật cục.
+        3. Lọc sạch 100% các thẻ âm nhạc, [Music], (music), ♪, tiếng vỗ tay.
+        4. Đảm bảo thời lượng tối thiểu 0.25s.
+        """
+        if not cues:
+            return ""
+
+        from ai_processor import AIProcessor
+
+        def to_srt_time(sec):
+            sec = max(0.0, float(sec))
+            h = int(sec // 3600)
+            m = int((sec % 3600) // 60)
+            s = int(sec % 60)
+            ms = int(round((sec - int(sec)) * 1000))
+            if ms >= 1000:
+                s += 1
+                ms = 0
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        valid_cues = []
+        for c in cues:
+            raw_text = str(c.get("text", "")).strip()
+            clean_text = AIProcessor.clean_subtitle_cue_text(raw_text)
+            if not clean_text:
+                continue
+            st = max(0.0, float(c.get("start", 0.0)))
+            en = max(st + 0.25, float(c.get("end", st + 1.0)))
+            valid_cues.append({"start": st, "end": en, "text": clean_text})
+
+        if not valid_cues:
+            return ""
+
+        valid_cues.sort(key=lambda x: x["start"])
+
+        # De-overlap cues: không bao giờ để đè mốc thời gian
+        non_overlap_cues = []
+        for cue in valid_cues:
+            if not non_overlap_cues:
+                non_overlap_cues.append(cue)
+                continue
+            prev = non_overlap_cues[-1]
+            if cue["start"] < prev["end"]:
+                if cue["start"] - prev["start"] >= 0.3:
+                    prev["end"] = cue["start"] - 0.02
+                else:
+                    cue["start"] = prev["end"] + 0.02
+            if cue["end"] > cue["start"] + 0.15:
+                non_overlap_cues.append(cue)
+
+        blocks = []
+        for idx, cue in enumerate(non_overlap_cues, start=1):
+            blocks.append(f"{idx}\n{to_srt_time(cue['start'])} --> {to_srt_time(cue['end'])}\n{cue['text']}\n")
+
+        try:
+            with open(output_srt, "w", encoding="utf-8") as f:
+                f.write("\n".join(blocks))
+            return output_srt
+        except Exception as e:
+            logger.warning(f"⚠️ Lỗi ghi file SRT tổng thể: {e}")
+            return ""
+
+    @classmethod
     def generate_ass_subtitle_file(
         cls,
         cues: list[dict],
@@ -1890,7 +1958,8 @@ class CompilationProcessor:
 
         tolerance_ratio = float(post_options.get("compilation_duration_tolerance", 0.20))
         segment_videos = []
-        clip_overlays = []
+        clip_badges = []
+        timeline_segs = []
         all_timeline_cues = []
         current_timeline_t = 0.0
         top_banner_info = None
@@ -1912,9 +1981,6 @@ class CompilationProcessor:
             source_target_d = allocated_d * speed if abs(speed - 1.0) >= 0.01 else allocated_d
 
             # TRÍCH XUẤT PHÂN CẢNH TRỌN VẸN VÀ NỘI DUNG TỐT NHẤT (COHERENT HIGHLIGHT SCENE):
-            # 1. Hít chặt 100% vào Scene Cuts và Silence Pauses (không bao giờ cắt đứt đoạn cảnh/thoại).
-            # 2. Dung sai linh hoạt +-20% (không ép cứng số giây để người xem hiểu trọn vẹn ngữ cảnh).
-            # 3. Ưu tiên cao trào hấp dẫn nhất từ YouTube Heatmap (Most Replayed) hoặc Audio Energy.
             clean_start_t, raw_cut_dur = cls.find_coherent_highlight_scene_window(
                 video_path=clip_video,
                 target_dur=source_target_d,
@@ -1926,6 +1992,8 @@ class CompilationProcessor:
 
             # Thời lượng clip thành phẩm sau khi áp dụng tốc độ speed
             effective_dur = raw_cut_dur / speed if abs(speed - 1.0) >= 0.01 else raw_cut_dur
+            seg_st = current_timeline_t
+            seg_en = current_timeline_t + effective_dur
 
             if progress_callback:
                 speed_txt = f", speed {speed:.2f}x" if abs(speed - 1.0) >= 0.01 else ""
@@ -1942,7 +2010,24 @@ class CompilationProcessor:
                 post_options=post_options
             )
 
-            seg_out = os.path.join(work_dir, f"segment_top_{r}.mp4")
+            if top_banner_info is None and top_png and os.path.exists(top_png):
+                top_banner_info = {"path": top_png, "x": top_x, "y": top_y}
+
+            if badge_png and os.path.exists(badge_png):
+                clip_badges.append({
+                    "path": badge_png,
+                    "x": badge_x,
+                    "y": badge_y,
+                    "start_t": seg_st,
+                    "end_t": seg_en
+                })
+
+            timeline_segs.append({
+                "shot_index": idx,
+                "rank": r,
+                "start": seg_st,
+                "end": seg_en
+            })
 
             # Kiểm tra âm thanh gốc của clip
             has_orig_audio = False
@@ -2011,122 +2096,93 @@ class CompilationProcessor:
                     except Exception as seg_w_err:
                         logger.warning(f"⚠️ [SEGMENT WHISPER] Lỗi bốc sub nhanh Top {r}: {seg_w_err}")
 
-            # XÂY DỰNG FILTER GRAPH 1 PASS DUY NHẤT CHUẨN 100% TÓM TẮT:
-            # - Cắt footage và áp dụng crop 9:16, zoom, pan, color look
-            # - Overlay Title Banner trên cùng (nếu bật title)
-            # - Overlay Badge No. X ở giữa
-            # - Nhúng Subtitle (nếu bật sub và có nội dung)
-            # - Xuất trực tiếp phân đoạn hoàn chỉnh (không bao giờ encode lại lần 2)
-            inputs = ["-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}", "-i", clip_video]
-            filter_parts = [base_vf]
-            curr_v = "vout"
-            in_idx = 1
+                if seg_sub_path and os.path.exists(seg_sub_path):
+                    for cue in cls.parse_srt_cues(seg_sub_path):
+                        all_timeline_cues.append({
+                            "start": cue["start"] + seg_st,
+                            "end": cue["end"] + seg_st,
+                            "text": cue["text"]
+                        })
 
-            enable_title = bool(post_options.get("enable_title", True))
-            if enable_title and top_png and os.path.exists(top_png):
-                inputs.extend(["-i", top_png])
-                filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay={top_x}:{top_y}[v_top]")
-                curr_v = "v_top"
-                in_idx += 1
-
-            if badge_png and os.path.exists(badge_png):
-                inputs.extend(["-i", badge_png])
-                filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay={badge_x}:{badge_y}[v_badged]")
-                curr_v = "v_badged"
-                in_idx += 1
-
-            sub_filter_spec = ""
-            if enable_sub and seg_sub_path and os.path.exists(seg_sub_path) and os.path.getsize(seg_sub_path) > 0:
-                abs_srt = os.path.abspath(seg_sub_path).replace('\\', '/')
-                if ":" in abs_srt:
-                    drive, p_part = abs_srt.split(":", 1)
-                    formatted_srt = f"{drive}\\:{p_part}"
-                else:
-                    formatted_srt = abs_srt
-
-                from font_manager import FontManager
-                sample_text = ""
-                try:
-                    with open(seg_sub_path, "r", encoding="utf-8", errors="ignore") as sf:
-                        sample_text = sf.read(2048)
-                except Exception:
-                    pass
-
-                style_type = str(post_options.get("sub_style_type", "tiktok_slim"))
-                style_specs = FontManager.get_subtitle_style_specs(
-                    style_type=style_type,
-                    sample_text=sample_text,
-                    custom_overrides=post_options
-                )
-                font_name = style_specs["font_name"]
-                sub_size = style_specs["font_size"]
-                sub_outline = style_specs["outline"]
-                sub_shadow = style_specs["shadow"]
-                sub_bold = style_specs["bold"]
-                sub_margin_v = int(post_options.get("sub_margin_v", 100))
-                primary_color = post_options.get("sub_color", "&HFFFFFF&")
-                outline_color = post_options.get("sub_outline_color", "&H000000&")
-
-                basic_sub_style = (
-                    f"FontName={font_name},FontSize={sub_size},Bold={sub_bold},"
-                    f"PrimaryColour={primary_color},OutlineColour={outline_color},"
-                    f"BorderStyle=1,Outline={sub_outline},Shadow={sub_shadow},"
-                    f"Alignment=2,MarginL=70,MarginR=70,MarginV={sub_margin_v},WrapStyle=1"
-                )
-                sub_filter_spec = f",subtitles='{formatted_srt}':force_style='{basic_sub_style}'"
-
+            # PASS 1: RENDER PHÂN ĐOẠN 9:16 GỐC SẠCH (CHƯA NHÚNG BANNER/BADGE/SUB ĐỂ AI QC KHÔNG NHẬN DIỆN NHẦM):
             speed_v_filter = f",setpts={1.0 / speed:.6f}*PTS" if abs(speed - 1.0) >= 0.01 else ""
-            filter_parts.append(f"[{curr_v}]{sub_filter_spec.lstrip(',')}{speed_v_filter},fps=30[v_final]")
-            filter_parts.append(audio_chain)
-
-            filter_chain = ";".join(filter_parts)
+            clean_filter_chain = f"{base_vf};[vout]null{speed_v_filter},fps=30[v_clean];{audio_chain}"
 
             from part_splitter_engine import get_best_video_encoder
             enc_name, enc_opts = get_best_video_encoder()
 
+            clean_seg_out = os.path.join(work_dir, f"clean_segment_top_{r}.mp4")
             cmd_seg = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                *inputs,
-                "-filter_complex", filter_chain,
-                "-map", "[v_final]", "-map", "[a_final]",
+                "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}", "-i", clip_video,
+                "-filter_complex", clean_filter_chain,
+                "-map", "[v_clean]", "-map", "[a_final]",
                 "-t", f"{effective_dur:.2f}",
                 "-r", "30",
                 "-pix_fmt", "yuv420p",
                 "-c:v", enc_name, *enc_opts,
                 "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-                seg_out
+                clean_seg_out
             ]
-            run_ffmpeg_auto(cmd_seg, label=f"render_playlist_top_{r}", logger=logger)
-            if os.path.exists(seg_out) and os.path.getsize(seg_out) > 0:
-                segment_videos.append(seg_out)
+            run_ffmpeg_auto(cmd_seg, label=f"render_clean_top_{r}", logger=logger)
+            if os.path.exists(clean_seg_out) and os.path.getsize(clean_seg_out) > 0:
+                segment_videos.append(clean_seg_out)
+
+            current_timeline_t += effective_dur
 
         if not segment_videos:
             raise RuntimeError("Không xuất được phân đoạn nào từ Playlist!")
 
-        # GHÉP TẤT CẢ PHÂN ĐOẠN THEO THỨ TỰ TỪ NO. N VỀ NO. 1 (CONCAT COPY SIÊU TỐC 0.5s):
+        # GỘP TOÀN BỘ CÁC PHÂN ĐOẠN 9:16 GỐC SẠCH VÀO TIMELINE HOÀN CHỈNH (CONCAT COPY 0.5s):
         os.makedirs(cls.OUTPUT_DIR, exist_ok=True)
         safe_name = re.sub(r'[\\/*?:"<>|]', "", playlist_title).strip().replace(" ", "_") or "Playlist_Top_Highlight"
         final_output = os.path.join(cls.OUTPUT_DIR, f"{safe_name}_{int(time.time())}.mp4")
 
-        final_concat_list = os.path.join(work_dir, "final_concat.txt")
+        final_concat_list = os.path.join(work_dir, "clean_final_concat.txt")
         with open(final_concat_list, "w", encoding="utf-8") as f:
             for s_path in segment_videos:
                 safe_sp = os.path.abspath(s_path).replace('\\', '/').replace("'", "'\\''")
                 f.write(f"file '{safe_sp}'\n")
 
+        clean_merged_timeline = os.path.join(work_dir, "clean_merged_timeline.mp4")
         cmd_final = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "concat", "-safe", "0", "-i", final_concat_list,
-            "-c", "copy", final_output
+            "-c", "copy", clean_merged_timeline
         ]
         if CREATE_NO_WINDOW:
             subprocess.run(cmd_final, check=False, creationflags=CREATE_NO_WINDOW)
         else:
             subprocess.run(cmd_final, check=False)
 
+        # Gộp toàn bộ Subtitle timeline và khử triệt để overlap
+        combined_sub_path = ""
+        enable_sub = bool(post_options.get("enable_sub", True))
+        if enable_sub and all_timeline_cues:
+            combined_sub_path = os.path.join(work_dir, "timeline_subtitles.srt")
+            cls.clean_and_write_srt(all_timeline_cues, combined_sub_path)
+
+        overlay_specs = {
+            "top_banner": top_banner_info or {},
+            "badges": clip_badges,
+            "subtitles": combined_sub_path if (enable_sub and combined_sub_path and os.path.exists(combined_sub_path) and os.path.getsize(combined_sub_path) > 0) else ""
+        }
+
+        # GIAI ĐOẠN AI QC + LẮP RÁP CHUẨN TÓM TẮT (PASS 2):
+        final_result = cls.apply_timeline_ai_qc_if_enabled(
+            merged_video=clean_merged_timeline,
+            final_output=final_output,
+            post_options=post_options,
+            work_dir=work_dir,
+            timeline_segs=timeline_segs,
+            overlay_specs=overlay_specs,
+            job_id=job.get("id", ""),
+            progress_callback=progress_callback
+        )
+
         total_sec = time.time() - started_at
-        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_output}")
-        return final_output
+        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_result}")
+        return final_result
 
     @classmethod
     def apply_timeline_ai_qc_if_enabled(
@@ -2135,21 +2191,20 @@ class CompilationProcessor:
         final_output: str,
         post_options: dict,
         work_dir: str,
+        timeline_segs: list = None,
         overlay_specs: dict = None,
         job_id: str = "",
         progress_callback=None
     ) -> str:
         """
-        GIAI ĐOẠN KIỂM DUYỆT AI THEO ĐÚNG TƯ DUY TÓM TẮT:
-        Chỉ quét kiểm duyệt SAU KHI ĐÃ GỘP TOÀN BỘ CLIPS VÀO TIMELINE 9:16 HOÀN CHỈNH.
-        - Quét 1 lần duy nhất cho toàn bộ video (không tìm tòi từng video một gây chậm).
-        - Tỷ lệ 9:16 và zoom in (178%) đã áp dụng sẵn, logo ngoài viền đã bị crop mất tự nhiên.
-        - AI QC chỉ quét trên footage gốc sạch (chưa có Title Header hay Badge).
-        - Title Banner và Badge No. X luôn được overlay ĐÈ LÊN TRÊN CÙNG sau bộ lọc kính mờ QC.
-        - Có chốt chặn Safe Zone tuyệt đối không bao giờ làm mờ vùng Title (y < 0.25) và vùng Badge (y ~ 0.5).
+        GIAI ĐOẠN KIỂM DUYỆT AI THEO ĐÚNG 100% TƯ DUY TÓM TẮT (EditorProcessor):
+        1. Quét trên footage gốc sạch (9:16) sau khi đã gộp timeline.
+        2. Trích xuất 1fps frames và chọn đúng khung hình điểm giữa (midpoint) của từng Shot/Clip đại diện gửi cho AI.
+        3. Tinh chỉnh box bằng OpenCV, xây dựng bộ lọc kính mờ clustered delogo/gblur.
+        4. Lắp ráp Subtitle, Title Banner và Badge No. X ĐÈ LÊN TRÊN CÙNG sau kính mờ QC.
         """
         from editor_processor import EditorProcessor
-        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", False))
+        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
         from antigravity_processor import AntigravityProcessor
         api_key = str(post_options.get("gemini_api_key") or post_options.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
         has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
@@ -2162,38 +2217,70 @@ class CompilationProcessor:
         if enable_gemini_qc and has_ai_service and os.path.exists(merged_video):
             def _run_timeline_qc():
                 nonlocal qc_filters_str, final_v_lbl
+                import math
+                import shutil
                 from ai_processor import AIProcessor
-                qc_frames_dir = os.path.join(work_dir, "qc_timeline_full_frames")
+
+                qc_frames_dir = os.path.join(work_dir, "qc_timeline_frames")
+                qc_shot_dir = os.path.join(work_dir, "qc_shot_keyframes")
                 os.makedirs(qc_frames_dir, exist_ok=True)
+                os.makedirs(qc_shot_dir, exist_ok=True)
 
                 if progress_callback and job_id:
-                    progress_callback(job_id, "ai_qc", "AI đang quét kiểm duyệt logo/sub trên toàn bộ timeline 9:16 đã gộp...")
-                logger.info("🔍 [AI QC TIMELINE FULL] Bắt đầu quét kiểm duyệt logo, sub cũ trên toàn bộ timeline 9:16 đã gộp...")
+                    progress_callback(job_id, "ai_qc", "AI đang quét kiểm duyệt logo/sub theo Shot Keyframes chuẩn Tóm Tắt...")
+                logger.info("🔍 [AI QC TIMELINE SHOT KEYFRAMES] Bắt đầu trích xuất frame và quét kiểm duyệt logo, sub cũ chuẩn Tóm Tắt...")
 
+                # 1. Trích xuất frame 1fps (540x960) từ timeline sạch
                 cmd_kf = [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-i", merged_video,
-                    "-vf", "fps=1,scale=540:960",
+                    "-t", f"{total_timeline_dur:.2f}",
+                    "-vf", "fps=1,scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2",
+                    "-q:v", "5",
                     os.path.join(qc_frames_dir, "frame_%04d.jpg")
                 ]
                 if CREATE_NO_WINDOW:
-                    subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW, timeout=20)
+                    subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW, timeout=30)
                 else:
-                    subprocess.run(cmd_kf, check=False, timeout=20)
+                    subprocess.run(cmd_kf, check=False, timeout=30)
 
-                frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
-                if frame_files:
-                    step = max(1, len(frame_files) // 12)
-                    sampled_frames = frame_files[::step][:15]
-                    kf_items = []
-                    for s_idx, fp in enumerate(sampled_frames, start=1):
-                        sec = float(s_idx * step)
+                all_frames = sorted([
+                    os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir)
+                    if f.startswith("frame_") and f.endswith(".jpg")
+                ])
+                total_frames = len(all_frames)
+
+                # 2. Chọn đúng khung hình ở điểm giữa (midpoint) của từng Shot đại diện gửi cho AI
+                segs = list(timeline_segs or [])
+                if not segs:
+                    step = max(5.0, total_timeline_dur / 5.0)
+                    curr = 0.0
+                    while curr < total_timeline_dur:
+                        segs.append({"start": curr, "end": min(total_timeline_dur, curr + step), "shot_index": len(segs) + 1})
+                        curr += step
+
+                kf_items = []
+                for idx, seg in enumerate(segs, start=1):
+                    st = float(seg.get("start", 0.0))
+                    en = float(seg.get("end", total_timeline_dur))
+                    mid_t = (st + en) / 2.0
+
+                    f_idx = max(1, min(total_frames, int(math.floor(mid_t)) + 1)) if total_frames > 0 else 0
+                    target_src = os.path.join(qc_frames_dir, f"frame_{f_idx:04d}.jpg")
+                    if os.path.isfile(target_src):
+                        dst_name = f"shot_{idx:02d}_t{int(mid_t)}s.jpg"
+                        dst_path = os.path.join(qc_shot_dir, dst_name)
+                        shutil.copy2(target_src, dst_path)
                         kf_items.append({
-                            "path": fp,
-                            "start_sec": max(0.0, sec - (step / 2.0)),
-                            "end_sec": min(total_timeline_dur, sec + (step / 2.0))
+                            "shot_index": idx,
+                            "path": dst_path,
+                            "start_sec": st,
+                            "end_sec": en,
+                            "mid_sec": mid_t,
+                            "mirror": False
                         })
 
+                if kf_items:
                     model_name = str(post_options.get("gemini_model") or post_options.get("ai_model") or "")
                     detected_items = AIProcessor.inspect_90s_grid_for_copyright(
                         api_key=api_key, model_name=model_name,
@@ -2201,35 +2288,39 @@ class CompilationProcessor:
                         keyframes=kf_items
                     )
 
-                    if detected_items:
+                    if detected_items and os.path.isdir(qc_frames_dir):
                         watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
                             detected_items, qc_frames_dir, duration_sec=total_timeline_dur
                         )
+                    else:
+                        watermark_blurs = detected_items or []
 
-                        # VÙNG AN TOÀN BẢO VỆ TUYỆT ĐỐI (SAFEGUARD):
-                        # Loại bỏ ngay lập tức bất kỳ box nào rơi vào vùng Title Header (y < 0.25)
-                        # hoặc vùng Badge No. X ở giữa (0.40 <= y <= 0.65)
-                        safe_blurs = []
-                        for item in (watermark_blurs or []):
-                            box = item.get("box", [0, 0, 0, 0])
-                            ymin, xmin, ymax, xmax = box
-                            if ymin < 0.25 and ymax < 0.32:
-                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Title Header của App)")
-                                continue
-                            if ymin >= 0.40 and ymax <= 0.65:
-                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Badge No. X của App)")
-                                continue
-                            if ymin >= 0.75:
-                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Subtitle ở đáy màn hình)")
-                                continue
-                            safe_blurs.append(item)
+                    # SAFEGUARD: Bảo vệ vùng Header và Subtitle
+                    safe_blurs = []
+                    for item in (watermark_blurs or []):
+                        box = item.get("box", [0, 0, 0, 0])
+                        ymin, xmin, ymax, xmax = box
+                        if ymin < 0.22 and ymax < 0.30:
+                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Title Header)")
+                            continue
+                        if ymin >= 0.42 and ymax <= 0.62:
+                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Badge No. X)")
+                            continue
+                        if ymin >= 0.78:
+                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Subtitle)")
+                            continue
+                        safe_blurs.append(item)
 
-                        if safe_blurs:
-                            qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
-                                safe_blurs, duration_sec=total_timeline_dur,
-                                curr_v_label="0:v", output_w=1080, output_h=1920,
-                                log_fn=logger.info
-                            )
+                    has_blood = any("blood" in str(item.get("label", "")).lower() for item in safe_blurs)
+                    red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""
+
+                    if safe_blurs:
+                        qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
+                            safe_blurs, duration_sec=total_timeline_dur,
+                            curr_v_label="0:v", output_w=1080, output_h=1920,
+                            red_to_gray_lut_path=red_to_gray_lut_path,
+                            log_fn=logger.info
+                        )
 
             import concurrent.futures
             try:

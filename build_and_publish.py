@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.24"
+VERSION = "1.3.25"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.24: (1) Chuẩn hóa 100% quy trình dựng Tuyển tập Playlist Highlight theo đúng tư duy cốt lõi của Tóm Tắt Video (EditorProcessor): Dựng phân đoạn hoàn chỉnh (crop 9:16, màu sắc, Title Banner, Badge No. X và Subtitle) trong 1 Pass duy nhất, loại bỏ hoàn toàn việc render thô rồi encode lại lần 2; (2) Ghép nối siêu tốc toàn bộ video bằng FFmpeg concat copy (0.5 giây), triệt tiêu hoàn toàn khâu quét AI QC trên timeline gộp và không bao giờ bị đơ máy hay tràn VRAM; (3) Tối ưu hóa và tôn trọng tuyệt đối công tắc tắt/bật Subtitle và Title trong popup cấu hình."
+NOTES = "Bản phát hành v1.3.25: (1) Chuẩn hóa 100% tư duy AI QC trong Tuyển tập Playlist Highlight theo đúng chuẩn Tóm Tắt Video (EditorProcessor): Trích xuất 1 keyframe 540x960 tại điểm giữa (midpoint) của từng Shot/Clip đại diện gửi cho AI, phân tích chính xác từng mốc timeline và tinh chỉnh box bằng OpenCV; (2) Quy trình dựng 2 Pass hoàn chỉnh: Pass 1 dựng footage 9:16 gốc sạch -> Concat copy siêu tốc -> Quét AI QC & làm mờ kính mờ -> Pass 2 lắp ráp Subtitle, Top Banner và Badge No. X đè lên trên kính mờ QC; (3) Làm sạch triệt để các thẻ [Music], (music), ♪, tiếng vỗ tay khỏi phụ đề, đồng thời khử triệt để overlap giữa các cue giúp chữ không bị nhảy loạn xạ hay chồng 2 dòng; (4) Tôn trọng tuyệt đối công tắc tắt/bật Subtitle (enable_sub) trong cả Tóm Tắt và Tuyển tập Playlist."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
