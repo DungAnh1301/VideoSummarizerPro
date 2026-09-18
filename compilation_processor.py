@@ -345,8 +345,9 @@ class CompilationProcessor:
         """
         Trích xuất và dời mốc thời gian SRT cho đúng phân đoạn [start_sec, start_sec + dur_sec].
         Bù trừ theo tốc độ speed (thời lượng hiển thị co lại nếu speed > 1.0).
-        TỰ ĐỘNG CHUNK 1 DÒNG DUY NHẤT (3-5 từ/cụm) THEO PHONG CÁCH SHORTS/TIKTOK.
-        Tuyệt đối không bao giờ hiển thị 2 dòng hay để chữ tràn màn hình.
+        Giữ nguyên nhịp điệu phát ngôn tự nhiên của video gốc (theo đúng 100% chuẩn Tóm Tắt).
+        Lọc sạch 100% các thẻ [Music], [Am nhạc], ♪, tiếng vỗ tay, hiệu ứng âm thanh.
+        Tự động khử overlap giữa các cue để không bao giờ bị chồng 2 dòng hoặc nhảy chữ loạn xạ.
         """
         if not srt_path or not os.path.exists(srt_path):
             return ""
@@ -375,8 +376,9 @@ class CompilationProcessor:
                 ms = 0
             return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-        new_blocks = []
-        out_idx = 1
+        from ai_processor import AIProcessor
+
+        extracted_cues = []
         for b in blocks:
             lines = b.strip().splitlines()
             if len(lines) < 2:
@@ -406,31 +408,41 @@ class CompilationProcessor:
 
             text_lines = lines[2:] if "-->" in lines[1] else lines[1:]
             raw_text = " ".join(" ".join(text_lines).split()).strip()
-            if not raw_text:
+            clean_text = AIProcessor.clean_subtitle_cue_text(raw_text)
+            if not clean_text:
                 continue
 
-            # Tách nhỏ câu dài thành các cụm 1 dòng (tối đa 4 từ mỗi cụm)
-            words = raw_text.split()
-            max_words_per_cue = 4
-            if len(words) <= max_words_per_cue:
-                chunks = [words]
-            else:
-                chunks = [words[i:i + max_words_per_cue] for i in range(0, len(words), max_words_per_cue)]
+            extracted_cues.append({
+                "start": final_start,
+                "end": final_end,
+                "text": clean_text
+            })
 
-            cue_total_dur = max(0.1, final_end - final_start)
-            cur_t = final_start
-            for c_idx, c_words in enumerate(chunks):
-                c_dur = cue_total_dur * (len(c_words) / len(words))
-                c_end = final_end if c_idx == len(chunks) - 1 else cur_t + c_dur
-                c_text = " ".join(c_words)
-                new_blocks.append(
-                    f"{out_idx}\n{to_srt_time(cur_t)} --> {to_srt_time(c_end)}\n{c_text}\n"
-                )
-                out_idx += 1
-                cur_t = c_end
-
-        if not new_blocks:
+        if not extracted_cues:
             return ""
+
+        # Sắp xếp và khử triệt để tình trạng overlap giữa các cue
+        # (Không cho 2 câu đè mốc thời gian lên nhau gây hiện tượng chồng 2 dòng và chữ nhảy giật)
+        extracted_cues.sort(key=lambda x: x["start"])
+        clean_cues = []
+        for cue in extracted_cues:
+            if not clean_cues:
+                clean_cues.append(cue)
+                continue
+            prev = clean_cues[-1]
+            if cue["start"] < prev["end"]:
+                if cue["start"] - prev["start"] >= 0.3:
+                    prev["end"] = cue["start"]
+                else:
+                    cue["start"] = prev["end"]
+            if cue["end"] > cue["start"] + 0.15:
+                clean_cues.append(cue)
+
+        new_blocks = []
+        for out_idx, cue in enumerate(clean_cues, start=1):
+            new_blocks.append(
+                f"{out_idx}\n{to_srt_time(cue['start'])} --> {to_srt_time(cue['end'])}\n{cue['text']}\n"
+            )
 
         if not output_srt:
             output_srt = os.path.join(os.path.dirname(srt_path), f"sliced_sub_{int(start_sec)}_{int(dur_sec)}.srt")
@@ -462,6 +474,8 @@ class CompilationProcessor:
         def to_seconds(h, m, s, ms):
             return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
 
+        from ai_processor import AIProcessor
+
         cues = []
         for b in blocks:
             lines = b.strip().splitlines()
@@ -475,7 +489,8 @@ class CompilationProcessor:
             t_end = to_seconds(m.group(5), m.group(6), m.group(7), m.group(8))
 
             text_lines = lines[2:] if "-->" in lines[1] else lines[1:]
-            clean_text = " ".join(" ".join(text_lines).split()).strip()
+            raw_text = " ".join(" ".join(text_lines).split()).strip()
+            clean_text = AIProcessor.clean_subtitle_cue_text(raw_text)
             if not clean_text:
                 continue
 
@@ -686,7 +701,7 @@ class CompilationProcessor:
                 try:
                     logger.info(f"🎙️ [WHISPER FALLBACK] Top {rank}: YouTube không có caption -> Đang bốc sub từ audio bằng Whisper...")
                     wav_tmp = os.path.join(clip_dir, "audio_16k.wav")
-                    cmd_wav = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", target_video, "-vn", "-ac", "1", "-ar", "16000", "-t", "120", wav_tmp]
+                    cmd_wav = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", target_video, "-vn", "-ac", "1", "-ar", "16000", wav_tmp]
                     if CREATE_NO_WINDOW:
                         subprocess.run(cmd_wav, check=False, creationflags=CREATE_NO_WINDOW)
                     else:
@@ -2057,17 +2072,42 @@ class CompilationProcessor:
         else:
             subprocess.run(cmd_final, check=False)
 
-        # Tạo file phụ đề ASS hoàn chỉnh cho toàn bộ Timeline (chuẩn 1080x1920)
+        # Tạo file phụ đề SRT hoàn chỉnh cho toàn bộ Timeline theo đúng chuẩn Tóm Tắt (EditorProcessor)
         timeline_sub_file = ""
         if all_timeline_cues:
-            timeline_ass_path = os.path.join(work_dir, "timeline_subtitles.ass")
-            sample_txt = " ".join([c["text"] for c in all_timeline_cues[:10]])
-            timeline_sub_file = cls.generate_ass_subtitle_file(
-                cues=all_timeline_cues,
-                output_ass=timeline_ass_path,
-                post_options=post_options,
-                sample_text=sample_txt
-            )
+            all_timeline_cues.sort(key=lambda x: x["start"])
+            clean_timeline_cues = []
+            for c in all_timeline_cues:
+                if not clean_timeline_cues:
+                    clean_timeline_cues.append(c)
+                    continue
+                prev = clean_timeline_cues[-1]
+                if c["start"] < prev["end"]:
+                    if c["start"] - prev["start"] >= 0.3:
+                        prev["end"] = c["start"]
+                    else:
+                        c["start"] = prev["end"]
+                if c["end"] > c["start"] + 0.15:
+                    clean_timeline_cues.append(c)
+
+            def to_srt_time(sec):
+                sec = max(0.0, sec)
+                h = int(sec // 3600)
+                m = int((sec % 3600) // 60)
+                s = int(sec % 60)
+                ms = int(round((sec - int(sec)) * 1000))
+                if ms >= 1000:
+                    s += 1
+                    ms = 0
+                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+            timeline_srt_path = os.path.join(work_dir, "timeline_subtitles.srt")
+            with open(timeline_srt_path, "w", encoding="utf-8") as f_tsrt:
+                for idx, c in enumerate(clean_timeline_cues, start=1):
+                    f_tsrt.write(f"{idx}\n{to_srt_time(c['start'])} --> {to_srt_time(c['end'])}\n{c['text']}\n\n")
+
+            timeline_sub_file = timeline_srt_path
+            logger.info(f"📝 [TIMELINE SUBTITLE] Đã tạo file phụ đề SRT chuẩn Tóm Tắt ({len(clean_timeline_cues)} cues) tại: {timeline_sub_file}")
 
         # 6. Kiểm duyệt AI QC trên timeline và Lắp ráp Sub/Title/Badge lên trên cùng theo đúng chuẩn Tóm Tắt
         final_result = cls.apply_timeline_ai_qc_if_enabled(
@@ -2208,7 +2248,7 @@ class CompilationProcessor:
                     filter_parts.append(qc_filters_str.lstrip(";"))
                     curr_v = final_v_lbl
 
-                # 1. Nhúng phụ đề Subtitle (ASS) lên trên video và lớp blur QC
+                # 1. Nhúng phụ đề Subtitle (SRT) theo đúng 100% chuẩn Tóm Tắt (EditorProcessor):
                 if sub_path and os.path.exists(sub_path) and os.path.getsize(sub_path) > 0:
                     abs_sub = os.path.abspath(sub_path).replace('\\', '/')
                     if ":" in abs_sub:
@@ -2216,8 +2256,69 @@ class CompilationProcessor:
                         fmt_sub = f"{drive}\\:{p_part}"
                     else:
                         fmt_sub = abs_sub
-                    filter_parts.append(f"[{curr_v}]subtitles='{fmt_sub}'[v_sub]")
+
+                    sample_srt_text = ""
+                    try:
+                        with open(sub_path, "r", encoding="utf-8", errors="ignore") as sf:
+                            sample_srt_text = sf.read(4096)
+                    except Exception:
+                        sample_srt_text = ""
+
+                    from font_manager import FontManager
+                    style_type = str(post_options.get("sub_style_type", "tiktok_slim"))
+                    style_specs = FontManager.get_subtitle_style_specs(
+                        style_type=style_type,
+                        sample_text=sample_srt_text,
+                        custom_overrides=post_options
+                    )
+
+                    font_name = style_specs["font_name"]
+                    sub_sz = style_specs["font_size"]
+                    sub_ol = style_specs["outline"]
+                    sub_sh = style_specs["shadow"]
+                    sub_bold = style_specs["bold"]
+                    sub_margin_v = int(post_options.get("sub_margin_v", 100))
+                    primary_color = post_options.get("sub_color", "&HFFFFFF&")
+                    outline_color = post_options.get("sub_outline_color", "&H000000&")
+
+                    srt_to_embed = fmt_sub
+                    if style_specs.get("uppercase") and sample_srt_text:
+                        try:
+                            upper_srt_path = os.path.join(work_dir, "timeline_subtitles_uppercase.srt")
+                            with open(sub_path, "r", encoding="utf-8", errors="ignore") as in_f:
+                                content = in_f.read()
+                            lines = content.splitlines()
+                            new_lines = []
+                            for line in lines:
+                                s_line = line.strip()
+                                if s_line.isdigit() or "-->" in s_line or not s_line:
+                                    new_lines.append(line)
+                                else:
+                                    new_lines.append(line.upper())
+                            with open(upper_srt_path, "w", encoding="utf-8") as out_f:
+                                out_f.write("\n".join(new_lines))
+                            abs_upper = os.path.abspath(upper_srt_path).replace('\\', '/')
+                            if ":" in abs_upper:
+                                d, p = abs_upper.split(":", 1)
+                                srt_to_embed = f"{d}\\:{p}"
+                            else:
+                                srt_to_embed = abs_upper
+                        except Exception as up_err:
+                            logger.warning(f"⚠️ Không tạo được SRT in hoa: {up_err}")
+
+                    basic_sub_style = (
+                        f"FontName={font_name},FontSize={sub_sz},Bold={sub_bold},"
+                        f"PrimaryColour={primary_color},OutlineColour={outline_color},"
+                        f"BorderStyle=1,Outline={sub_ol},Shadow={sub_sh},"
+                        f"Alignment=2,MarginL=70,MarginR=70,MarginV={sub_margin_v},WrapStyle=1"
+                    )
+                    filter_parts.append(f"[{curr_v}]subtitles='{srt_to_embed}':force_style='{basic_sub_style}'[v_sub]")
                     curr_v = "v_sub"
+                    logger.info(
+                        f"💬 [SUBTITLE STYLE] Đã nhúng SRT theo đúng chuẩn Tóm Tắt | "
+                        f"Kiểu: '{style_specs['style_name']}' | Font: {font_name} | "
+                        f"Size: {sub_sz} | Outline: {sub_ol} | MarginV: {sub_margin_v}"
+                    )
 
                 # 2. Overlay Title Banner lên trên
                 input_idx = 1

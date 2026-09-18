@@ -2714,17 +2714,22 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                     if transcript_list:
                         srt_blocks = []
                         text_lines = []
-                        for i, entry in enumerate(transcript_list, start=1):
+                        idx = 1
+                        for entry in transcript_list:
                             start_sec = entry['start']
                             duration = entry.get('duration', 3.0)
                             end_sec = start_sec + duration
-                            text_clean = entry['text'].replace('\n', ' ')
+                            raw_text = entry['text'].replace('\n', ' ')
+                            text_clean = cls.clean_subtitle_cue_text(raw_text)
+                            if not text_clean:
+                                continue
                             
                             start_str = cls._format_seconds_to_srt_time(start_sec)
                             end_str = cls._format_seconds_to_srt_time(end_sec)
                             
-                            srt_blocks.append(f"{i}\n{start_str} --> {end_str}\n{text_clean}\n")
+                            srt_blocks.append(f"{idx}\n{start_str} --> {end_str}\n{text_clean}\n")
                             text_lines.append(text_clean)
+                            idx += 1
                             
                         full_text = " ".join(text_lines)
                         srt_content = "\n".join(srt_blocks)
@@ -2765,15 +2770,19 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
             
             srt_lines = []
             text_lines = []
-            for i, seg in enumerate(segments, start=1):
+            idx = 1
+            for seg in segments:
+                text_clean = cls.clean_subtitle_cue_text(seg.text.strip())
+                if not text_clean:
+                    continue
                 start_str = cls._format_seconds_to_srt_time(seg.start)
                 end_str = cls._format_seconds_to_srt_time(seg.end)
-                text_clean = seg.text.strip()
                 
-                srt_lines.append(f"{i}\n{start_str} --> {end_str}\n{text_clean}\n")
+                srt_lines.append(f"{idx}\n{start_str} --> {end_str}\n{text_clean}\n")
                 text_lines.append(text_clean)
-                if i % 15 == 0:
-                    logger.info(f"⏳ [WHISPER TIẾN ĐỘ] Đang bốc sub đến {start_str} ({i} câu)...")
+                if idx % 15 == 0:
+                    logger.info(f"⏳ [WHISPER TIẾN ĐỘ] Đang bốc sub đến {start_str} ({idx} câu)...")
+                idx += 1
                 
             return " ".join(text_lines), "\n".join(srt_lines)
 
@@ -2830,7 +2839,7 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
             if line.isdigit():
                 continue
                 
-            clean_line = re.sub(r'<[^<]+?>', '', line)
+            clean_line = cls.clean_subtitle_cue_text(line)
             if clean_line and clean_line not in text_lines:
                 text_lines.append(clean_line)
                 start_t = cls._format_seconds_to_srt_time((idx - 1) * 3.0)
@@ -2839,6 +2848,33 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                 idx += 1
                 
         return " ".join(text_lines), "\n".join(srt_blocks)
+
+    @classmethod
+    def clean_subtitle_cue_text(cls, raw_text: str) -> str:
+        """Làm sạch triệt để thẻ âm nhạc, tiếng vỗ tay, hiệu ứng âm thanh khỏi subtitle.
+        Tuyệt đối không bao giờ để chữ [Music], (music), ♪, [Âm nhạc] xuất hiện trên video."""
+        if not raw_text:
+            return ""
+        import re
+        # 1. Bỏ HTML tags (<font>, <c.color>, etc.)
+        t = re.sub(r"<[^>]+>", "", str(raw_text))
+        # 2. Bỏ các thẻ trong ngoặc vuông [Music], [Âm nhạc], [Applause], [Laughter], [Tiếng vỗ tay]...
+        t = re.sub(r"\[[^\]]*\]", "", t)
+        # 3. Bỏ các thẻ trong ngoặc đơn (music), (applause), (âm nhạc)...
+        t = re.sub(r"\([^\)]*\)", "", t)
+        # 4. Bỏ ký tự nốt nhạc và ký hiệu đặc biệt
+        t = re.sub(r"[♪♫🎵#\*]", "", t)
+        # 5. Gộp khoảng trắng và ngắt dòng
+        t = " ".join(t.split()).strip()
+        # 6. Kiểm tra xem nếu chuỗi chỉ còn từ khóa âm thanh vô nghĩa thì loại bỏ hoàn toàn
+        pure_words = re.sub(r"[^\w\s]", "", t, flags=re.UNICODE).strip().lower()
+        if not pure_words or pure_words in (
+            "music", "applause", "laughter", "cheering", "sound effect", "singing",
+            "am nhac", "âm nhạc", "tieng vo tay", "tiếng vỗ tay", "tieng cuoi", "tiếng cười",
+            "nhac", "nhạc", "intro", "outro", "background music"
+        ):
+            return ""
+        return t
 
     @classmethod
     def _format_seconds_to_srt_time(cls, seconds: float) -> str:
