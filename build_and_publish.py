@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.15"
+VERSION = "1.3.16"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.15: Nâng cấp thuật toán Cắt phân cảnh trọn vẹn và chọn lọc nội dung thông minh (Coherent Highlight Scene Extraction): (1) KHÔNG BAO GIỜ cắt đứt đoạn cảnh: Điểm bắt đầu và kết thúc hít chặt 100% vào ranh giới chuyển cảnh (Scene Cut bằng PySceneDetect) và điểm dừng câu thoại (Speech Silence Pause bằng silencedetect), bảo toàn trọn vẹn từng camera shot; (2) Dung sai linh hoạt +-20% (thay vì ép cứng số giây): Tự động mở rộng hoặc co ngắn để vừa khít phân cảnh hoàn chỉnh, nếu clip ngắn thì giữ trọn vẹn 100% không cắt vụn; (3) Chọn lọc nội dung tốt nhất để người xem dễ hiểu nhất: Bắt trúng tâm điểm cao trào kịch tính từ YouTube Most Replayed Heatmap và năng lượng âm thanh (Audio Energy)."
+NOTES = "Bản phát hành v1.3.16: Khắc phục triệt để hiển thị phụ đề (Subtitle) chế độ Tuyển tập Top: (1) Chunking thông minh 1 dòng duy nhất (tối đa 4 từ/cụm), xóa bỏ hoàn toàn hiện tượng hiển thị 2-3 dòng chữ; (2) Chuyển toàn bộ quy trình nhúng phụ đề sang Pass 2 sau AI QC, dán phụ đề đè lên trên kính mờ và khóa vùng đáy (ymin >= 0.75), đảm bảo 100% không bao giờ bị AI QC làm mờ nhầm; (3) Chuẩn hóa canvas ASS 1080x1920 theo chuẩn TikTok/Shorts, đồng bộ font quốc tế, cỡ chữ và tọa độ lề đáy MarginV theo config Studio."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

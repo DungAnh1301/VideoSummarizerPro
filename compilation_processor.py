@@ -334,6 +334,271 @@ class CompilationProcessor:
         return title or "Moment"
 
     @classmethod
+    def slice_srt_for_segment(
+        cls,
+        srt_path: str,
+        start_sec: float,
+        dur_sec: float,
+        speed: float = 1.0,
+        output_srt: str = ""
+    ) -> str:
+        """
+        Trích xuất và dời mốc thời gian SRT cho đúng phân đoạn [start_sec, start_sec + dur_sec].
+        Bù trừ theo tốc độ speed (thời lượng hiển thị co lại nếu speed > 1.0).
+        TỰ ĐỘNG CHUNK 1 DÒNG DUY NHẤT (3-5 từ/cụm) THEO PHONG CÁCH SHORTS/TIKTOK.
+        Tuyệt đối không bao giờ hiển thị 2 dòng hay để chữ tràn màn hình.
+        """
+        if not srt_path or not os.path.exists(srt_path):
+            return ""
+
+        end_sec = start_sec + dur_sec
+        try:
+            with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except Exception:
+            return ""
+
+        blocks = re.split(r'\n\s*\n', content.strip())
+        time_pattern = re.compile(r'(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})')
+
+        def to_seconds(h, m, s, ms):
+            return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+        def to_srt_time(sec):
+            sec = max(0.0, sec)
+            h = int(sec // 3600)
+            m = int((sec % 3600) // 60)
+            s = int(sec % 60)
+            ms = int(round((sec - int(sec)) * 1000))
+            if ms >= 1000:
+                s += 1
+                ms = 0
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        new_blocks = []
+        out_idx = 1
+        for b in blocks:
+            lines = b.strip().splitlines()
+            if len(lines) < 2:
+                continue
+            time_line = lines[1] if "-->" in lines[1] else (lines[0] if "-->" in lines[0] else "")
+            m = time_pattern.search(time_line)
+            if not m:
+                continue
+            t_start = to_seconds(m.group(1), m.group(2), m.group(3), m.group(4))
+            t_end = to_seconds(m.group(5), m.group(6), m.group(7), m.group(8))
+
+            # Kiểm tra xem cue có giao cắt với khoảng cắt không
+            if t_end <= start_sec or t_start >= end_sec:
+                continue
+
+            rel_start = max(0.0, t_start - start_sec)
+            rel_end = min(dur_sec, t_end - start_sec)
+            if rel_end - rel_start < 0.2:
+                continue
+
+            if abs(speed - 1.0) >= 0.01:
+                final_start = rel_start / speed
+                final_end = rel_end / speed
+            else:
+                final_start = rel_start
+                final_end = rel_end
+
+            text_lines = lines[2:] if "-->" in lines[1] else lines[1:]
+            raw_text = " ".join(" ".join(text_lines).split()).strip()
+            if not raw_text:
+                continue
+
+            # Tách nhỏ câu dài thành các cụm 1 dòng (tối đa 4 từ mỗi cụm)
+            words = raw_text.split()
+            max_words_per_cue = 4
+            if len(words) <= max_words_per_cue:
+                chunks = [words]
+            else:
+                chunks = [words[i:i + max_words_per_cue] for i in range(0, len(words), max_words_per_cue)]
+
+            cue_total_dur = max(0.1, final_end - final_start)
+            cur_t = final_start
+            for c_idx, c_words in enumerate(chunks):
+                c_dur = cue_total_dur * (len(c_words) / len(words))
+                c_end = final_end if c_idx == len(chunks) - 1 else cur_t + c_dur
+                c_text = " ".join(c_words)
+                new_blocks.append(
+                    f"{out_idx}\n{to_srt_time(cur_t)} --> {to_srt_time(c_end)}\n{c_text}\n"
+                )
+                out_idx += 1
+                cur_t = c_end
+
+        if not new_blocks:
+            return ""
+
+        if not output_srt:
+            output_srt = os.path.join(os.path.dirname(srt_path), f"sliced_sub_{int(start_sec)}_{int(dur_sec)}.srt")
+        try:
+            with open(output_srt, "w", encoding="utf-8") as f_out:
+                f_out.write("\n".join(new_blocks))
+            return output_srt
+        except Exception as write_err:
+            logger.warning(f"⚠️ Lỗi ghi sliced sub: {write_err}")
+            return ""
+
+    @classmethod
+    def parse_srt_cues(cls, srt_path: str) -> list[dict]:
+        """
+        Đọc file SRT và trích xuất danh sách các cue:
+        [{'start': float, 'end': float, 'text': str}]
+        """
+        if not srt_path or not os.path.exists(srt_path):
+            return []
+        try:
+            with open(srt_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except Exception:
+            return []
+
+        blocks = re.split(r'\n\s*\n', content.strip())
+        time_pattern = re.compile(r'(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})')
+
+        def to_seconds(h, m, s, ms):
+            return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+        cues = []
+        for b in blocks:
+            lines = b.strip().splitlines()
+            if len(lines) < 2:
+                continue
+            time_line = lines[1] if "-->" in lines[1] else (lines[0] if "-->" in lines[0] else "")
+            m = time_pattern.search(time_line)
+            if not m:
+                continue
+            t_start = to_seconds(m.group(1), m.group(2), m.group(3), m.group(4))
+            t_end = to_seconds(m.group(5), m.group(6), m.group(7), m.group(8))
+
+            text_lines = lines[2:] if "-->" in lines[1] else lines[1:]
+            clean_text = " ".join(" ".join(text_lines).split()).strip()
+            if not clean_text:
+                continue
+
+            cues.append({
+                "start": t_start,
+                "end": t_end,
+                "text": clean_text
+            })
+        return cues
+
+    @classmethod
+    def generate_ass_subtitle_file(
+        cls,
+        cues: list[dict],
+        output_ass: str,
+        post_options: dict,
+        sample_text: str = ""
+    ) -> str:
+        """
+        Sinh file phụ đề ASS chuẩn xác cho canvas 1080x1920 (TikTok 9:16):
+        - PlayResX=1080, PlayResY=1920 chuẩn tuyệt đối.
+        - Cỡ chữ font_size thích ứng từ config Studio (38-54px).
+        - Khoảng cách lề dưới MarginV đặt chuẩn ở vùng đáy (không che giữa màn hình).
+        - Màu chữ, viền, bóng chuẩn ASS &HAABBGGRR&.
+        - Font chữ tương thích quốc tế qua FontManager.
+        """
+        if not cues:
+            return ""
+
+        from font_manager import FontManager
+        style_type = str(post_options.get("sub_style_type", "tiktok_slim"))
+        style_specs = FontManager.get_subtitle_style_specs(
+            style_type=style_type,
+            sample_text=sample_text,
+            custom_overrides=post_options
+        )
+        font_name = style_specs["font_name"]
+
+        # Cỡ chữ cho canvas 1080x1920
+        raw_size = int(post_options.get("sub_size") or style_specs["font_size"])
+        if raw_size <= 28:
+            font_size = max(38, int(raw_size * 2.5))
+        else:
+            font_size = raw_size
+
+        raw_outline = int(post_options.get("sub_outline") or style_specs["outline"])
+        outline = max(2, int(raw_outline * 1.5))
+        shadow = int(post_options.get("sub_shadow") if post_options.get("sub_shadow") is not None else style_specs["shadow"])
+        bold = 1 if style_specs.get("bold") else 0
+
+        # Lề đáy MarginV: chuẩn TikTok ở vùng dưới màn hình (130-180px từ đáy)
+        raw_margin_v = int(post_options.get("sub_margin_v", 140))
+        margin_v = max(100, raw_margin_v)
+
+        def _to_ass_color(col_str: str, default_ass: str = "&H00FFFFFF&") -> str:
+            if not col_str:
+                return default_ass
+            col = str(col_str).strip()
+            if col.startswith("&H") and col.endswith("&"):
+                return col
+            if col.startswith("#"):
+                hex_str = col.lstrip("#")
+                if len(hex_str) == 6:
+                    r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
+                    return f"&H00{b}{g}{r}&".upper()
+                elif len(hex_str) == 8:
+                    r, g, b, a = hex_str[0:2], hex_str[2:4], hex_str[4:6], hex_str[6:8]
+                    return f"&H{a}{b}{g}{r}&".upper()
+            return default_ass
+
+        primary_color = _to_ass_color(post_options.get("sub_color"), "&H00FFFFFF&")
+        outline_color = _to_ass_color(post_options.get("sub_outline_color"), "&H00000000&")
+
+        def _to_ass_time(sec: float) -> str:
+            sec = max(0.0, sec)
+            h = int(sec // 3600)
+            m = int((sec % 3600) // 60)
+            s = int(sec % 60)
+            cs = int(round((sec - int(sec)) * 100))
+            if cs >= 100:
+                s += 1
+                cs = 0
+            return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
+
+        # Xây dựng nội dung ASS
+        ass_lines = [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 1080",
+            "PlayResY: 1920",
+            "ScaledBorderAndShadow: yes",
+            "",
+            "[V4+ Styles]",
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+            f"Style: Default,{font_name},{font_size},{primary_color},&H000000FF,{outline_color},&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},{shadow},2,80,80,{margin_v},1",
+            "",
+            "[Events]",
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+        ]
+
+        for cue in cues:
+            c_text = str(cue.get("text", "")).strip()
+            if not c_text:
+                continue
+            if style_specs.get("uppercase"):
+                c_text = c_text.upper()
+            st_str = _to_ass_time(cue["start"])
+            en_str = _to_ass_time(cue["end"])
+            ass_lines.append(f"Dialogue: 0,{st_str},{en_str},Default,,0,0,0,,{c_text}")
+
+        try:
+            with open(output_ass, "w", encoding="utf-8") as f_ass:
+                f_ass.write("\n".join(ass_lines))
+            logger.info(
+                f"💬 [ASS SUBTITLE] Đã tạo phụ đề timeline '{font_name}' size {font_size} "
+                f"MarginV={margin_v} Primary={primary_color} ({len(cues)} cues)"
+            )
+            return output_ass
+        except Exception as e:
+            logger.warning(f"⚠️ Không ghi được file ASS: {e}")
+            return ""
+
+    @classmethod
     def download_selected_clips(
         cls,
         ranked_items: list[dict],
@@ -342,16 +607,16 @@ class CompilationProcessor:
         all_entries: list[dict] = None
     ) -> list[dict]:
         """
-        Tải chọn lọc ĐÚNG N clip đã được bốc (Selective Downloader).
+        Tải chọn lọc ĐÚNG N clip đã được bốc bằng ThreadPoolExecutor song song đa luồng.
+        Đồng thời tải tự động phụ đề Subtitle (SRT/VTT) để phục vụ hiển thị sub ở chế độ Top.
         Với clip Local: giữ nguyên đường dẫn có sẵn.
         Tự động bốc video thay thế từ all_entries nếu video ban đầu bị YouTube chặn/xóa.
         """
         os.makedirs(work_dir, exist_ok=True)
-        results = []
         used_ids = {it.get("id") for it in ranked_items if it.get("id")}
         backup_pool = [e for e in (all_entries or []) if e.get("id") and e.get("id") not in used_ids]
 
-        for item in ranked_items:
+        def _download_single_item(item: dict) -> dict | None:
             rank = item["rank"]
             source_type = item.get("source_type", "youtube")
             clip_dir = os.path.join(work_dir, f"top_{rank}")
@@ -359,77 +624,101 @@ class CompilationProcessor:
 
             if source_type == "local" and os.path.exists(item.get("local_path", "")):
                 item["downloaded_video"] = item["local_path"]
-                results.append(item)
+                # Tìm phụ đề local cùng tên nếu có
+                l_base = os.path.splitext(item["local_path"])[0]
+                for ext in (".srt", ".vtt"):
+                    if os.path.exists(l_base + ext):
+                        item["subtitle_path"] = l_base + ext
+                        break
                 logger.info(f"📁 [LOCAL READY] Top {rank}: {os.path.basename(item['local_path'])}")
-                continue
+                return item
 
             # Tải YouTube
             target_video = os.path.join(clip_dir, "source_video.mp4")
+            url = item.get("url") or item.get("webpage_url") or ""
+            if not url and item.get("id"):
+                url = f"https://www.youtube.com/watch?v={item['id']}"
+
+            dl_ok = False
             if os.path.exists(target_video) and os.path.getsize(target_video) > 1024 * 1024:
                 logger.info(f"⏭️ [SKIP DL] Top {rank} đã có sẵn tại {target_video}")
                 item["downloaded_video"] = target_video
-                results.append(item)
-                continue
+                dl_ok = True
+            else:
+                logger.info(f"📥 [PARALLEL DL] Top {rank} (Rank {rank}): {item['title'][:40]}...")
+                if progress_cb:
+                    progress_cb(f"Đang tải song song Top {rank} ({item['title'][:30]}...)")
 
-            url = item["url"]
-            logger.info(f"📥 [SELECTIVE DL] Top {rank} (Rank {rank}): {item['title'][:40]}...")
-            if progress_cb:
-                progress_cb(f"Đang tải Top {rank} ({item['title'][:30]}...)")
-
-            ydl_opts = {
-                "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
-                "outtmpl": target_video,
-                "quiet": True,
-                "no_warnings": True,
-                "merge_output_format": "mp4",
-            }
-            ydl_opts = DownloaderProcessor.apply_cookies_to_opts(ydl_opts)
-            dl_ok = False
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-                if os.path.exists(target_video) and os.path.getsize(target_video) > 500 * 1024:
-                    dl_ok = True
-                    item["downloaded_video"] = target_video
-            except Exception as e:
-                logger.warning(f"⚠️ Lỗi tải Top {rank} bằng yt-dlp: {e} - thử chế độ fallback...")
+                ydl_opts = {
+                    "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
+                    "outtmpl": target_video,
+                    "quiet": True,
+                    "no_warnings": True,
+                    "merge_output_format": "mp4",
+                }
+                ydl_opts = DownloaderProcessor.apply_cookies_to_opts(ydl_opts)
                 try:
-                    DownloaderProcessor.download_high_res_video(url, target_video)
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([url])
                     if os.path.exists(target_video) and os.path.getsize(target_video) > 500 * 1024:
                         dl_ok = True
                         item["downloaded_video"] = target_video
-                except Exception as fb_err:
-                    logger.warning(f"⚠️ Fallback tải Top {rank} thất bại: {fb_err}")
-
-            # Nếu video bị chặn/xóa hoàn toàn trên YouTube -> Tự động bốc video dự phòng từ playlist
-            if not dl_ok and backup_pool:
-                while backup_pool and not dl_ok:
-                    cand = backup_pool.pop(0)
-                    used_ids.add(cand["id"])
-                    logger.info(f"🔄 [AUTO-REPLACE] Top {rank} ('{item['title']}') không khả dụng. Bốc video dự phòng thay thế: '{cand['title']}'...")
-                    if progress_cb:
-                        progress_cb(f"Bốc video thay thế cho Top {rank}: '{cand['title'][:25]}'...")
-                    c_url = cand["url"]
-                    cand_opts = dict(ydl_opts)
+                except Exception as e:
+                    logger.warning(f"⚠️ Lỗi tải Top {rank} bằng yt-dlp: {e} - thử chế độ fallback...")
                     try:
-                        with yt_dlp.YoutubeDL(cand_opts) as ydl:
-                            ydl.download([c_url])
+                        DownloaderProcessor.download_high_res_video(url, target_video)
                         if os.path.exists(target_video) and os.path.getsize(target_video) > 500 * 1024:
                             dl_ok = True
-                            item["id"] = cand["id"]
-                            item["title"] = cand["title"]
-                            item["url"] = c_url
                             item["downloaded_video"] = target_video
-                            logger.info(f"✅ [AUTO-REPLACE] Thay thế Top {rank} thành công bằng: '{cand['title']}'")
-                            break
-                    except Exception as cand_err:
-                        logger.warning(f"⚠️ Video dự phòng '{cand['title']}' cũng lỗi: {cand_err}, thử video khác...")
+                    except Exception as fb_err:
+                        logger.warning(f"⚠️ Fallback tải Top {rank} thất bại: {fb_err}")
 
-            if dl_ok:
-                results.append(item)
+            # Lấy phụ đề (Subtitle) an toàn bằng YouTubeTranscriptApi (Không bị lỗi 429 của yt-dlp)
+            srt_out = os.path.join(clip_dir, "caption.srt")
+            if not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0:
+                try:
+                    AIProcessor.transcribe_audio(video_url=url, srt_output_path=srt_out, youtube_caption_only=True)
+                except Exception:
+                    pass
+            if os.path.exists(srt_out) and os.path.getsize(srt_out) > 0:
+                item["subtitle_path"] = srt_out
             else:
-                logger.error(f"❌ Không thể tải clip Top {rank} ('{item.get('title')}'), bỏ qua clip này.")
+                # Kiểm tra xem có file sub local nào trong clip_dir không
+                sub_candidates = [
+                    os.path.join(clip_dir, f) for f in os.listdir(clip_dir)
+                    if f.endswith((".srt", ".vtt"))
+                ]
+                if sub_candidates:
+                    item["subtitle_path"] = sub_candidates[0]
 
+            return item if dl_ok else None
+
+        # Kích hoạt tải song song đa luồng ThreadPool
+        max_w = min(5, max(1, len(ranked_items)))
+        logger.info(f"⚡ [PARALLEL DOWNLOAD] Kích hoạt {max_w} luồng tải song song đồng thời cho {len(ranked_items)} clips...")
+        with ThreadPoolExecutor(max_workers=max_w) as executor:
+            downloaded = list(executor.map(_download_single_item, ranked_items))
+
+        results = []
+        for idx, it in enumerate(downloaded):
+            if it is not None:
+                results.append(it)
+            elif backup_pool:
+                # Bốc video dự phòng nếu tải thất bại
+                orig_item = ranked_items[idx]
+                r = orig_item["rank"]
+                while backup_pool:
+                    cand = backup_pool.pop(0)
+                    used_ids.add(cand["id"])
+                    logger.info(f"🔄 [AUTO-REPLACE] Top {r} ('{orig_item['title']}') tải lỗi. Bốc video dự phòng thay thế: '{cand['title']}'...")
+                    cand["rank"] = r
+                    rep_res = _download_single_item(cand)
+                    if rep_res is not None:
+                        results.append(rep_res)
+                        break
+
+        # Sắp xếp lại danh sách kết quả theo rank gốc
+        results.sort(key=lambda x: x.get("rank", 0))
         return results
 
     @classmethod
@@ -939,50 +1228,44 @@ class CompilationProcessor:
         if climax_center_t is None:
             climax_center_t = start_limit + usable_dur * 0.38
 
-        # BƯỚC 2: Quét ranh giới chuyển cảnh (Scene Cuts) trong dải [start_limit, end_limit]
-        scene_cuts = [start_limit]
+        # BƯỚC 2: Quét ranh giới chuyển cảnh (Scene Cuts) trong Cửa Sổ Co Dãn Động quanh Climax
+        # Cửa sổ co dãn động tỷ lệ trực tiếp theo target_dur (không fix cứng 60s)
+        win_radius = max(target_dur * 0.8, 30.0)
+        scan_w_start = max(start_limit, climax_center_t - win_radius)
+        scan_w_end = min(end_limit, climax_center_t + win_radius)
+        scan_w_dur = max(5.0, scan_w_end - scan_w_start)
+
+        scene_cuts = [start_limit, scan_w_start]
         try:
-            from scenedetect import SceneManager, open_video, AdaptiveDetector
-            s_vid = open_video(video_path)
-            fps = float(s_vid.frame_rate or 30.0)
-            sm = SceneManager()
-            sm.auto_downscale = True
-            sm.add_detector(AdaptiveDetector(adaptive_threshold=3.0, min_scene_len=max(1, int(fps * 0.5))))
-            sm.detect_scenes(video=s_vid, show_progress=False)
-            for sc in sm.get_scene_list(start_in_scene=True):
-                sec = float(sc[0].seconds if hasattr(sc[0], "seconds") else sc[0].get_seconds())
+            cmd_sc = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{scan_w_start:.2f}",
+                "-t", f"{scan_w_dur:.2f}",
+                "-i", video_path,
+                "-vf", "scale=160:90,select='gt(scene,0.22)',metadata=print",
+                "-f", "null", "-"
+            ]
+            p_sc = subprocess.run(
+                cmd_sc, capture_output=True, text=True,
+                creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
+            )
+            for x in re.findall(r"pts_time:([0-9.]+)", p_sc.stderr or ""):
+                sec = round(scan_w_start + float(x), 2)
                 if start_limit + 0.5 <= sec <= end_limit - 0.5:
                     scene_cuts.append(sec)
         except Exception as sc_err:
-            logger.debug(f"PySceneDetect error: {sc_err}; fallback sang FFmpeg select scene...")
-            try:
-                cmd_sc = [
-                    "ffmpeg", "-hide_banner", "-ss", f"{start_limit:.2f}",
-                    "-t", f"{usable_dur:.2f}", "-i", video_path,
-                    "-vf", "select=gt(scene\\,0.22),metadata=print",
-                    "-f", "null", "-"
-                ]
-                p_sc = subprocess.run(
-                    cmd_sc, capture_output=True, text=True,
-                    creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
-                )
-                for x in re.findall(r"pts_time:([0-9.]+)", p_sc.stderr or ""):
-                    sec = round(start_limit + float(x), 2)
-                    if start_limit + 0.5 <= sec <= end_limit - 0.5:
-                        scene_cuts.append(sec)
-            except Exception:
-                pass
+            logger.debug(f"FFmpeg scene detect error: {sc_err}")
 
-        scene_cuts.append(end_limit)
+        scene_cuts.extend([scan_w_end, end_limit])
         scene_cuts = sorted(list(set(scene_cuts)))
-        logger.info(f"🎬 [SCENE CUTS] Nhận diện {len(scene_cuts)} ranh giới phân cảnh sạch trong '{os.path.basename(video_path)}'")
+        logger.info(f"🎬 [SCENE CUTS] Nhận diện {len(scene_cuts)} ranh giới phân cảnh sạch trong cửa sổ động [{scan_w_start:.1f}s - {scan_w_end:.1f}s] của '{os.path.basename(video_path)}'")
 
-        # BƯỚC 3: Quét khoảng lặng âm thanh (Speech Pauses)
+        # BƯỚC 3: Quét khoảng lặng âm thanh (Speech Pauses) trong cửa sổ động
         silence_points = []
         try:
             cmd_sil = [
                 "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
-                "-ss", f"{start_limit:.2f}", "-t", f"{usable_dur:.2f}",
+                "-ss", f"{scan_w_start:.2f}", "-t", f"{scan_w_dur:.2f}",
                 "-i", video_path,
                 "-af", "silencedetect=noise=-28dB:d=0.20",
                 "-f", "null", "-"
@@ -995,11 +1278,11 @@ class CompilationProcessor:
                 if "silence_end:" in line:
                     m = re.search(r"silence_end:([\d\.]+)", line)
                     if m:
-                        silence_points.append(start_limit + float(m.group(1)))
+                        silence_points.append(scan_w_start + float(m.group(1)))
                 elif "silence_start:" in line:
                     m = re.search(r"silence_start:([\d\.]+)", line)
                     if m:
-                        silence_points.append(start_limit + float(m.group(1)))
+                        silence_points.append(scan_w_start + float(m.group(1)))
         except Exception:
             pass
 
@@ -1295,14 +1578,16 @@ class CompilationProcessor:
         max_width: int = 860,
         font_size: int = 48,
         stroke_width: int = 3,
-        text_color: tuple = (255, 255, 255, 255),
-        stroke_color: tuple = (0, 0, 0, 255)
+        text_color: tuple = None,
+        stroke_color: tuple = None,
+        opacity: float = 0.70
     ) -> tuple[str, int, int]:
         """
-        Vẽ chữ No. X hiển thị chuẩn phong cách TikTok (chữ trắng viền đen, KHÔNG hộp nền):
+        Vẽ chữ No. X hiển thị chuẩn phong cách TikTok:
+        - Nét đậm 70%, làm mờ 30% (opacity = 0.70, alpha = 178/255).
         - Font Sans-serif đậm nét chuẩn TikTok (Arial Bold / Segoe UI Bold).
         - Tự động ngắt dòng thông minh khi tiêu đề dài để không tràn màn hình.
-        - Viền đen rõ nét và bóng đổ nhẹ, nổi bật 100% trên mọi nền video.
+        - Viền đen rõ nét và bóng đổ nhẹ, nổi bật và thanh thoát, không che khuất video.
         - Trả về: (output_png_path, width, height)
         """
         from font_manager import FontManager
@@ -1354,19 +1639,37 @@ class CompilationProcessor:
         img = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Lớp bóng đổ nhẹ phía dưới tạo chiều sâu
+        # Tính toán alpha cho nét đậm 70% (độ mờ 30%)
+        alpha = max(10, min(255, int(round(255 * opacity))))
+        if text_color is None:
+            text_color = (255, 255, 255, alpha)
+        elif len(text_color) == 3:
+            text_color = (text_color[0], text_color[1], text_color[2], alpha)
+        elif len(text_color) == 4:
+            text_color = (text_color[0], text_color[1], text_color[2], min(text_color[3], alpha))
+
+        if stroke_color is None:
+            stroke_color = (0, 0, 0, alpha)
+        elif len(stroke_color) == 3:
+            stroke_color = (stroke_color[0], stroke_color[1], stroke_color[2], alpha)
+        elif len(stroke_color) == 4:
+            stroke_color = (stroke_color[0], stroke_color[1], stroke_color[2], min(stroke_color[3], alpha))
+
+        shadow_alpha = int(round(160 * opacity))
+
+        # Lớp bóng đổ nhẹ phía dưới tạo chiều sâu (mờ tương ứng 30%)
         draw.multiline_text(
             (pad - bbox[0] + 2, pad - bbox[1] + 2),
             wrapped_text,
             font=font,
-            fill=(0, 0, 0, 160),
+            fill=(0, 0, 0, shadow_alpha),
             stroke_width=2,
-            stroke_fill=(0, 0, 0, 160),
+            stroke_fill=(0, 0, 0, shadow_alpha),
             align="center",
             spacing=12
         )
 
-        # Chữ trắng viền đen nét căng chuẩn TikTok
+        # Chữ trắng viền đen nét đậm 70% chuẩn TikTok
         draw.multiline_text(
             (pad - bbox[0], pad - bbox[1]),
             wrapped_text,
@@ -1395,26 +1698,44 @@ class CompilationProcessor:
         post_options: dict = None
     ) -> tuple:
         """
-        Tạo 2 Title Banner chuẩn theo quy định:
-        1. Banner trên cùng (Top Banner): In Tên Title của Playlist (ví dụ: 'GYPSY SISTERS').
-        2. Banner giữa màn hình (Center Badge): Chuẩn phong cách TikTok chữ trắng viền đen 'No. {rank} : {video_title}'.
+        Tạo 2 Title Banner chuẩn theo quy định và config Studio:
+        1. Banner trên cùng (Top Banner): In Tên Title của Playlist theo đúng config (title_y_pos, 2 dòng, title_color1, title_color2, title_bg_color).
+        2. Banner giữa màn hình (Center Badge): Chuẩn phong cách TikTok nét đậm 70% (mờ 30%) 'No. {rank} : {video_title}'.
         """
         from editor_processor import EditorProcessor
         post_options = post_options or {}
 
-        # 1. Top Banner: Tên Playlist
-        p_title = str(playlist_title or "TOP HIGHLIGHT").strip().upper()
+        # 1. Top Banner: Tên Playlist chuẩn theo config Studio
+        raw_p_title = str(playlist_title or "TOP HIGHLIGHT").strip()
+        # Tách 2 dòng thông minh nếu có dấu : hoặc - hoặc tên dài
+        if ":" in raw_p_title:
+            parts = raw_p_title.split(":", 1)
+            line1, line2 = parts[0].strip().upper(), parts[1].strip().upper()
+        elif " - " in raw_p_title:
+            parts = raw_p_title.split(" - ", 1)
+            line1, line2 = parts[0].strip().upper(), parts[1].strip().upper()
+        else:
+            words = raw_p_title.upper().split()
+            if len(words) >= 5:
+                mid = len(words) // 2
+                line1 = " ".join(words[:mid])
+                line2 = " ".join(words[mid:])
+            else:
+                line1 = raw_p_title.upper()
+                line2 = ""
+
         top_opts = dict(post_options)
-        top_opts["title_y_pos"] = int(post_options.get("playlist_title_y_pos", 160))
+        # Đọc chuẩn xác tọa độ Y từ config Studio (mặc định 260)
+        top_opts["title_y_pos"] = int(post_options.get("title_y_pos") or post_options.get("playlist_title_y_pos") or 260)
         top_dir = os.path.join(work_dir, "banners_top")
         os.makedirs(top_dir, exist_ok=True)
         top_banner_path, top_w, top_h = EditorProcessor._create_dynamic_title_banner_custom(
-            top_dir, p_title, "", top_opts
+            top_dir, line1, line2, top_opts
         )
         top_x = int((1080 - top_w) / 2)
         top_y = top_opts["title_y_pos"]
 
-        # 2. Center Banner: No. {rank} : {video_title} (Phong cách chữ TikTok KHÔNG hộp nền)
+        # 2. Center Banner: No. {rank} : {video_title} (Phong cách chữ TikTok nét đậm 70%, mờ 30%)
         clean_v_title = cls.clean_clip_title(video_title)
         title_style = post_options.get("compilation_title_style", "clean_original")
         if title_style == "only_rank" or not clean_v_title:
@@ -1426,12 +1747,14 @@ class CompilationProcessor:
         os.makedirs(badge_dir, exist_ok=True)
         badge_png_path = os.path.join(badge_dir, f"tiktok_badge_no_{rank}.png")
 
+        badge_opacity = float(post_options.get("badge_opacity", 0.70))
         badge_banner_path, badge_w, badge_h = cls.render_tiktok_style_badge(
             text=badge_text,
             output_png=badge_png_path,
             max_width=880,
             font_size=48,
-            stroke_width=3
+            stroke_width=3,
+            opacity=badge_opacity
         )
         badge_x = int((1080 - badge_w) / 2)
         badge_y = int(post_options.get("clip_badge_y_pos", 960))
@@ -1544,6 +1867,7 @@ class CompilationProcessor:
         tolerance_ratio = float(post_options.get("compilation_duration_tolerance", 0.20))
         segment_videos = []
         clip_overlays = []
+        all_timeline_cues = []
         current_timeline_t = 0.0
         top_banner_info = None
 
@@ -1586,8 +1910,8 @@ class CompilationProcessor:
             # Tạo Title 2 tầng:
             # 1. Trên cùng: Tên Playlist
             # 2. Giữa màn hình: No. {r} : {Tên clip}
-            # LƯU Ý CHUẨN TÓM TẮT: Title Banner và Badge No. X KHÔNG gắn vào clip ở bước này.
-            # Chúng sẽ được overlay lên trên cùng SAU KHI ĐÃ XỬ LÝ AI QC để không bao giờ bị làm mờ nhầm.
+            # LƯU Ý CHUẨN TÓM TẮT: Title Banner, Badge No. X và Subtitle KHÔNG gắn vào clip ở bước này.
+            # Chúng sẽ được nhúng/overlay lên trên cùng SAU KHI ĐÃ XỬ LÝ AI QC để không bao giờ bị làm mờ nhầm.
             top_png, top_x, top_y, badge_png, badge_x, badge_y = cls.create_playlist_dual_banners(
                 playlist_title=playlist_title,
                 rank=r,
@@ -1620,6 +1944,30 @@ class CompilationProcessor:
             else:
                 audio_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{effective_dur:.2f}[a_final]"
 
+            # Trích xuất và dời mốc Subtitle cho phân đoạn này nếu có (chuẩn hóa 1 dòng 3-5 từ)
+            sub_source = item.get("subtitle_path") or ""
+            seg_sub_path = ""
+            if sub_source and os.path.exists(sub_source):
+                sub_target_path = os.path.join(work_dir, f"sub_top_{r}.srt")
+                seg_sub_path = cls.slice_srt_for_segment(
+                    srt_path=sub_source,
+                    start_sec=clean_start_t,
+                    dur_sec=raw_cut_dur,
+                    speed=speed,
+                    output_srt=sub_target_path
+                )
+                if seg_sub_path and os.path.exists(seg_sub_path):
+                    seg_cues = cls.parse_srt_cues(seg_sub_path)
+                    for c in seg_cues:
+                        all_timeline_cues.append({
+                            "start": c["start"] + current_timeline_t,
+                            "end": c["end"] + current_timeline_t,
+                            "text": c["text"]
+                        })
+                    logger.info(f"💬 [SUBTITLE COLLECT {r}] Đã gom {len(seg_cues)} cues 1 dòng (bắt đầu tại timeline {current_timeline_t:.2f}s)")
+
+            # PASS 1 RENDER FOOTAGE SẠCH 100%:
+            # Tuyệt đối không nhúng Sub hay overlay Banner ở Pass 1 để AI QC không quét trúng.
             if abs(speed - 1.0) >= 0.01:
                 v_speed_node = f"[vout]setpts={1.0 / speed:.6f}*PTS,fps=30[v_final];"
             else:
@@ -1631,6 +1979,9 @@ class CompilationProcessor:
                 f"{audio_chain}"
             )
 
+            from part_splitter_engine import get_best_video_encoder
+            enc_name, enc_opts = get_best_video_encoder()
+
             cmd_seg = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}",
@@ -1640,8 +1991,7 @@ class CompilationProcessor:
                 "-t", f"{effective_dur:.2f}",
                 "-r", "30",
                 "-pix_fmt", "yuv420p",
-                "-c:v", "libx264", "-preset", "fast", "-profile:v", "high", "-level:v", "4.1",
-                "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
+                "-c:v", enc_name, *enc_opts,
                 "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
                 seg_out
             ]
@@ -1683,7 +2033,19 @@ class CompilationProcessor:
         else:
             subprocess.run(cmd_final, check=False)
 
-        # 6. Kiểm duyệt AI QC trên timeline và Lắp ráp Title/Badge lên trên cùng theo đúng chuẩn Tóm Tắt
+        # Tạo file phụ đề ASS hoàn chỉnh cho toàn bộ Timeline (chuẩn 1080x1920)
+        timeline_sub_file = ""
+        if all_timeline_cues:
+            timeline_ass_path = os.path.join(work_dir, "timeline_subtitles.ass")
+            sample_txt = " ".join([c["text"] for c in all_timeline_cues[:10]])
+            timeline_sub_file = cls.generate_ass_subtitle_file(
+                cues=all_timeline_cues,
+                output_ass=timeline_ass_path,
+                post_options=post_options,
+                sample_text=sample_txt
+            )
+
+        # 6. Kiểm duyệt AI QC trên timeline và Lắp ráp Sub/Title/Badge lên trên cùng theo đúng chuẩn Tóm Tắt
         final_result = cls.apply_timeline_ai_qc_if_enabled(
             merged_video=merged_timeline_video,
             final_output=final_output,
@@ -1691,7 +2053,8 @@ class CompilationProcessor:
             work_dir=work_dir,
             overlay_specs={
                 "top_banner": top_banner_info,
-                "badges": clip_overlays
+                "badges": clip_overlays,
+                "subtitles": timeline_sub_file
             },
             job_id=job_id,
             progress_callback=progress_callback
@@ -1791,6 +2154,9 @@ class CompilationProcessor:
                             if ymin >= 0.40 and ymax <= 0.65:
                                 logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Badge No. X của App)")
                                 continue
+                            if ymin >= 0.75:
+                                logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (trùng vùng Subtitle ở đáy màn hình)")
+                                continue
                             safe_blurs.append(item)
 
                         if safe_blurs:
@@ -1803,11 +2169,12 @@ class CompilationProcessor:
                 logger.warning(f"⚠️ [AI QC TIMELINE FULL] Bỏ qua quét AI timeline do lỗi: {qc_err}")
 
         # LẮP RÁP HOÀN CHỈNH (FINAL ASSEMBLY THEO ĐÚNG TƯ DUY TÓM TẮT):
-        # Title Banner và Badge No. X LUÔN ĐƯỢC OVERLAY LÊN TRÊN CÙNG sau khi đã áp dụng kính mờ QC (nếu có).
+        # Subtitle, Title Banner và Badge No. X LUÔN ĐƯỢC NHÚNG/OVERLAY LÊN TRÊN CÙNG sau khi đã áp dụng kính mờ QC (nếu có).
         if overlay_specs:
             try:
                 top_spec = overlay_specs.get("top_banner") or {}
                 badges = overlay_specs.get("badges") or []
+                sub_path = overlay_specs.get("subtitles") or ""
 
                 inputs = ["-i", merged_video]
                 filter_parts = []
@@ -1817,16 +2184,29 @@ class CompilationProcessor:
                     filter_parts.append(qc_filters_str.lstrip(";"))
                     curr_v = final_v_lbl
 
+                # 1. Nhúng phụ đề Subtitle (ASS) lên trên video và lớp blur QC
+                if sub_path and os.path.exists(sub_path) and os.path.getsize(sub_path) > 0:
+                    abs_sub = os.path.abspath(sub_path).replace('\\', '/')
+                    if ":" in abs_sub:
+                        drive, p_part = abs_sub.split(":", 1)
+                        fmt_sub = f"{drive}\\:{p_part}"
+                    else:
+                        fmt_sub = abs_sub
+                    filter_parts.append(f"[{curr_v}]subtitles='{fmt_sub}'[v_sub]")
+                    curr_v = "v_sub"
+
+                # 2. Overlay Title Banner lên trên
                 input_idx = 1
                 top_path = top_spec.get("path", "")
                 if top_path and os.path.exists(top_path):
                     inputs.extend(["-i", top_path])
                     tx = top_spec.get("x", 0)
-                    ty = top_spec.get("y", 160)
+                    ty = top_spec.get("y", int(post_options.get("title_y_pos") or 260))
                     filter_parts.append(f"[{curr_v}][{input_idx}:v]overlay={tx}:{ty}[v_top]")
                     curr_v = "v_top"
                     input_idx += 1
 
+                # 3. Overlay Badge No. X lên trên
                 for b_entry in badges:
                     bp = b_entry.get("path", "")
                     if bp and os.path.exists(bp):
@@ -1841,31 +2221,36 @@ class CompilationProcessor:
                         input_idx += 1
 
                 full_fc = ";".join(filter_parts)
+                from part_splitter_engine import get_best_video_encoder
+                enc_name, enc_opts = get_best_video_encoder()
+
                 cmd_final_assembly = [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     *inputs,
                     "-filter_complex", full_fc,
                     "-map", f"[{curr_v}]", "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-c:v", enc_name, *enc_opts,
                     "-c:a", "copy",
                     final_output
                 ]
-                logger.info("🛡️ [TIMELINE FINAL ASSEMBLY] Lắp ráp Title & Badge đè lên trên video đã xử lý QC...")
+                logger.info(f"🛡️ [TIMELINE FINAL ASSEMBLY] Lắp ráp Sub, Title & Badge đè lên trên video đã xử lý QC bằng encoder '{enc_name}'...")
                 run_ffmpeg_auto(cmd_final_assembly, label="render_full_timeline_assembly", logger=logger)
                 if os.path.exists(final_output) and os.path.getsize(final_output) > 0:
                     qc_applied = True
             except Exception as asm_err:
-                logger.warning(f"⚠️ [TIMELINE FINAL ASSEMBLY] Lỗi lắp ráp banner/badge: {asm_err}")
+                logger.warning(f"⚠️ [TIMELINE FINAL ASSEMBLY] Lỗi lắp ráp banner/badge/sub: {asm_err}")
 
         elif qc_filters_str:
             clean_vf = qc_filters_str.lstrip(";")
             logger.info("🛡️ [AI QC TIMELINE APPLIED] Áp dụng kính mờ chuẩn Tóm Tắt lên video timeline hoàn chỉnh...")
+            from part_splitter_engine import get_best_video_encoder
+            enc_name, enc_opts = get_best_video_encoder()
             cmd_clean = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-i", merged_video,
                 "-filter_complex", clean_vf,
                 "-map", f"[{final_v_lbl}]", "-map", "0:a",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:v", enc_name, *enc_opts,
                 "-c:a", "copy",
                 final_output
             ]
