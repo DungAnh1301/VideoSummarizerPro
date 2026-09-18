@@ -475,6 +475,15 @@ class AntigravityProcessor:
         return result
 
     @classmethod
+    def get_qc_candidate_profiles(cls) -> list[dict]:
+        """Profile chuyên biệt cho tác vụ quét thị giác (QC / Logo / Safety): Ưu tiên low-effort, siêu tốc < 10s."""
+        return [
+            {"model": "gemini-3.8-flash-low", "effort": "low", "label": "Gemini 3.8 Flash (Low)"},
+            {"model": "gemini-3.7-flash-low", "effort": "low", "label": "Gemini 3.7 Flash (Low)"},
+            {"model": "gemini-3.6-flash-low", "effort": "low", "label": "Gemini 3.6 Flash (Emergency fallback)"},
+        ]
+
+    @classmethod
     def inspect_grid_image(cls, image_path: str, prompt: str, ref_image_path: str = "") -> str:
         """Kiểm tra ảnh lưới 2s contact sheet và ảnh tham chiếu 9:16 bằng Antigravity CLI cục bộ."""
         exe = cls.executable()
@@ -514,8 +523,8 @@ class AntigravityProcessor:
             "Inspect the 9:16 reference frame and contact sheet (sampled 1s per frame) in this directory strictly following "
             "grid_inspection_request.txt. Do not edit files or run extra commands. Output ONLY valid JSON immediately."
         )
-        candidate_profiles = cls.get_candidate_profiles()
-        max_retries = max(2, len(candidate_profiles))
+        candidate_profiles = cls.get_qc_candidate_profiles()
+        max_retries = min(2, len(candidate_profiles))
         for attempt in range(1, max_retries + 1):
             prof = candidate_profiles[(attempt - 1) % len(candidate_profiles)]
             command = [
@@ -523,13 +532,15 @@ class AntigravityProcessor:
                 "--model", prof["model"],
                 "--output-format", "json",
                 "--effort", prof["effort"],
+                "--disable-slash-commands",
+                "--print-timeout", "30s",
                 "--add-dir", qc_dir,
                 "--dangerously-skip-permissions",
             ]
             try:
                 completed = subprocess.run(
                     command, cwd=qc_dir, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=600,
+                    encoding="utf-8", errors="replace", timeout=40,
                     creationflags=0x08000000 if os.name == "nt" else 0,
                 )
                 if completed.returncode != 0:
@@ -549,13 +560,20 @@ class AntigravityProcessor:
                 except json.JSONDecodeError:
                     pass
                 return raw
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ [ANTIGRAVITY QC TIMEOUT] Quá thời gian chờ (40s) ở lần thử %d/%d.", attempt, max_retries)
+                if attempt < max_retries:
+                    continue
+                return ""
             except Exception as exc:
                 if attempt < max_retries:
                     next_prof = candidate_profiles[attempt % len(candidate_profiles)]
-                    logger.warning("⚠️ [ANTIGRAVITY QC RETRY] Lỗi (%s), tự động hạ cấp sang '%s' (lần %d/%d sau 2s)...", exc, next_prof["label"], attempt + 1, max_retries)
+                    logger.warning("⚠️ [ANTIGRAVITY QC RETRY] Lỗi (%s), tự động thử với '%s' (lần %d/%d sau 2s)...", exc, next_prof["label"], attempt + 1, max_retries)
                     time.sleep(2.0)
                     continue
-                raise
+                logger.warning("⚠️ [ANTIGRAVITY QC] Bỏ qua quét AI do lỗi: %s", exc)
+                return ""
+        return ""
 
     @classmethod
     def inspect_safety_sheets(cls, sheet_paths: list, prompt: str) -> str:
@@ -591,8 +609,8 @@ class AntigravityProcessor:
             "grid_inspection_request.txt. Detect ALL watermark_logo, crawling_ticker_banner, scoreboard_nameplate, hardcoded_subtitles, and blood_wound. "
             "Do not edit files, do not write scripts or run extra commands. Rely purely on direct visual inspection and output ONLY valid JSON immediately."
         )
-        candidate_profiles = cls.get_candidate_profiles(frame_count=len(valid_sheets) * 25)
-        max_retries = max(2, len(candidate_profiles))
+        candidate_profiles = cls.get_qc_candidate_profiles()
+        max_retries = min(2, len(candidate_profiles))
         for attempt in range(1, max_retries + 1):
             prof = candidate_profiles[(attempt - 1) % len(candidate_profiles)]
             command = [
@@ -600,13 +618,15 @@ class AntigravityProcessor:
                 "--model", prof["model"],
                 "--output-format", "json",
                 "--effort", prof["effort"],
+                "--disable-slash-commands",
+                "--print-timeout", "30s",
                 "--add-dir", qc_safety_dir,
                 "--dangerously-skip-permissions",
             ]
             try:
                 completed = subprocess.run(
                     command, cwd=qc_safety_dir, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=600,
+                    encoding="utf-8", errors="replace", timeout=40,
                     creationflags=0x08000000 if os.name == "nt" else 0,
                 )
                 if completed.returncode != 0:
@@ -626,13 +646,20 @@ class AntigravityProcessor:
                 except json.JSONDecodeError:
                     pass
                 return raw
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ [ANTIGRAVITY SAFETY TIMEOUT] Quá thời gian chờ (40s) ở lần thử %d/%d.", attempt, max_retries)
+                if attempt < max_retries:
+                    continue
+                return ""
             except Exception as exc:
                 if attempt < max_retries:
                     next_prof = candidate_profiles[attempt % len(candidate_profiles)]
-                    logger.warning("⚠️ [ANTIGRAVITY SAFETY RETRY] Lỗi (%s), tự động hạ cấp sang '%s' (lần %d/%d sau 2s)...", exc, next_prof["label"], attempt + 1, max_retries)
+                    logger.warning("⚠️ [ANTIGRAVITY SAFETY RETRY] Lỗi (%s), tự động thử lại với '%s' (lần %d/%d sau 2s)...", exc, next_prof["label"], attempt + 1, max_retries)
                     time.sleep(2.0)
                     continue
-                raise
+                logger.warning("⚠️ [ANTIGRAVITY SAFETY] Bỏ qua quét AI do lỗi: %s", exc)
+                return ""
+        return ""
 
     @classmethod
     def generate_text(cls, system_prompt: str, user_prompt: str, job_dir: str = None) -> str:

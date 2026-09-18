@@ -2162,8 +2162,15 @@ Return JSON only:
             try:
                 from antigravity_processor import AntigravityProcessor
                 if AntigravityProcessor.executable():
-                    logger.info(f"🔍 [AI QC KEYFRAMES] Đang gửi {len(valid_kf)} shot keyframes tới Antigravity CLI...")
-                    raw_resp = AntigravityProcessor.inspect_safety_sheets(valid_kf, prompt_unified)
+                    # Tối ưu cho Antigravity CLI: nếu danh sách ảnh lớn hơn 3,
+                    # chỉ chọn 3 keyframe đại diện (đầu, giữa, cuối timeline) để CLI phản hồi siêu tốc (< 10s),
+                    # tránh nạp hàng chục ảnh gây phình token (130k+) và nghẽn timeout
+                    sample_kf = valid_kf
+                    if len(valid_kf) > 3:
+                        mid_idx = len(valid_kf) // 2
+                        sample_kf = [valid_kf[0], valid_kf[mid_idx], valid_kf[-1]]
+                    logger.info(f"🔍 [AI QC KEYFRAMES] Đang gửi {len(sample_kf)} shot keyframes đại diện tới Antigravity CLI...")
+                    raw_resp = AntigravityProcessor.inspect_safety_sheets(sample_kf, prompt_unified)
             except Exception as a_err:
                 logger.warning(f"⚠️ [AI QC KEYFRAMES] Lỗi Antigravity CLI: {a_err}")
 

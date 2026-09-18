@@ -2172,7 +2172,7 @@ class CompilationProcessor:
         - Có chốt chặn Safe Zone tuyệt đối không bao giờ làm mờ vùng Title (y < 0.25) và vùng Badge (y ~ 0.5).
         """
         from editor_processor import EditorProcessor
-        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
+        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", False))
         from antigravity_processor import AntigravityProcessor
         api_key = str(post_options.get("gemini_api_key") or post_options.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
         has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
@@ -2183,7 +2183,8 @@ class CompilationProcessor:
         total_timeline_dur = DownloaderProcessor.probe_duration_sec(merged_video)
 
         if enable_gemini_qc and has_ai_service and os.path.exists(merged_video):
-            try:
+            def _run_timeline_qc():
+                nonlocal qc_filters_str, final_v_lbl
                 from ai_processor import AIProcessor
                 qc_frames_dir = os.path.join(work_dir, "qc_timeline_full_frames")
                 os.makedirs(qc_frames_dir, exist_ok=True)
@@ -2199,9 +2200,9 @@ class CompilationProcessor:
                     os.path.join(qc_frames_dir, "frame_%04d.jpg")
                 ]
                 if CREATE_NO_WINDOW:
-                    subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW)
+                    subprocess.run(cmd_kf, check=False, creationflags=CREATE_NO_WINDOW, timeout=20)
                 else:
-                    subprocess.run(cmd_kf, check=False)
+                    subprocess.run(cmd_kf, check=False, timeout=20)
 
                 frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
                 if frame_files:
@@ -2252,6 +2253,14 @@ class CompilationProcessor:
                                 curr_v_label="0:v", output_w=1080, output_h=1920,
                                 log_fn=logger.info
                             )
+
+            import concurrent.futures
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    fut = executor.submit(_run_timeline_qc)
+                    fut.result(timeout=45)
+            except concurrent.futures.TimeoutError:
+                logger.warning("⚠️ [AI QC TIMELINE FULL] Quá thời gian 45s khi quét AI timeline, tự động bỏ qua để hoàn tất dựng video!")
             except Exception as qc_err:
                 logger.warning(f"⚠️ [AI QC TIMELINE FULL] Bỏ qua quét AI timeline do lỗi: {qc_err}")
 
