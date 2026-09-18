@@ -2802,8 +2802,11 @@ class EditorProcessor:
         # nó trước đây vẫn bị SRT exact ghi đè, vừa chậm vừa có thể sai nội dung.
         perfect_srt_path = ""
         exact_srt_path = os.path.join(specific_dir, "voice_script_exact.srt")
+        enable_sub = bool(post_options.get("enable_sub", True))
         if original_audio_mode:
             logger.info("⏭️ [TIẾNG GỐC] Không tạo/nhúng subtitle vì không có lời đọc AI.")
+        elif not enable_sub:
+            logger.info("⏭️ [SUBTITLE TẮT] Phụ đề đã được tắt trong cấu hình Title & Sub.")
         elif os.path.exists(exact_srt_path):
             # Path A burn sub trước rồi mới setpts tăng tốc toàn bộ hình. Vì vậy
             # SRT phải giữ timeline gốc; setpts sẽ tự co sub đúng cùng audio.
@@ -2852,8 +2855,8 @@ class EditorProcessor:
         outline_color = post_options.get("sub_outline_color", "&H000000&")
 
         sub_filter_str = ""
-        target_srt_to_use = perfect_srt_path if perfect_srt_path and os.path.exists(perfect_srt_path) else ""
-        if os.path.exists(target_srt_to_use):
+        target_srt_to_use = perfect_srt_path if (enable_sub and perfect_srt_path and os.path.exists(perfect_srt_path)) else ""
+        if enable_sub and os.path.exists(target_srt_to_use):
             abs_srt_path = os.path.abspath(target_srt_to_use).replace('\\', '/')
             if ":" in abs_srt_path:
                 drive, path_part = abs_srt_path.split(":", 1)
@@ -3019,11 +3022,20 @@ class EditorProcessor:
         if abs(speed - 1.0) >= 0.01:
             v_chain.append(f"setpts={1.0 / speed}*PTS")
         v_chain.append(f"fade=t=out:st={fade_st:.4f}:d={fade_d:.4f}")
-        video_filter_final = (
-            f"{timeline_graph};{vf_color_grading}{qc_filters_str};"
-            f"[{curr_v_label}][{banner_input_index}:v]overlay={banner_x}:{banner_y}[v_banner];"
-            f"[v_banner]{','.join(v_chain)}[outv]"
-        )
+        enable_title = bool(post_options.get("enable_title", True))
+        if enable_title and banner_path and os.path.exists(banner_path):
+            video_filter_final = (
+                f"{timeline_graph};{vf_color_grading}{qc_filters_str};"
+                f"[{curr_v_label}][{banner_input_index}:v]overlay={banner_x}:{banner_y}[v_banner];"
+                f"[v_banner]{','.join(v_chain)}[outv]"
+            )
+            ffmpeg_inputs = [*timeline_inputs, "-i", banner_path]
+        else:
+            video_filter_final = (
+                f"{timeline_graph};{vf_color_grading}{qc_filters_str};"
+                f"[{curr_v_label}]{','.join(v_chain)}[outv]"
+            )
+            ffmpeg_inputs = [*timeline_inputs]
 
         scramble_audio = bool(post_options.get("scramble_original_audio", True))
         if original_audio_mode:
@@ -3043,8 +3055,6 @@ class EditorProcessor:
         # encode thật để log không còn gộp chung và gây hiểu nhầm.
         finish_stage("5. Dựng filter graph", stage_started)
         encode_started = time.perf_counter()
-
-        ffmpeg_inputs = [*timeline_inputs, "-i", banner_path]
         if original_audio_mode:
             audio_graph = f"{timeline_audio_label}{audio_filter_final}[outa]"
         elif mix_original_with_voice:

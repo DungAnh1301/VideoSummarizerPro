@@ -2847,9 +2847,13 @@ class ProfessionalVideoApp:
         title_group = ttk.LabelFrame(main_frame, text=" 📌 Cấu hình Tiêu đề (Title Banner) ", padding=10)
         title_group.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(title_group, text="Tọa độ Y (Lên/Xuống):").grid(row=0, column=0, sticky=tk.W, pady=3)
+        enable_title_var = tk.BooleanVar(value=bool(src_cfg.get("enable_title", True)))
+        cb_enable_title = ttk.Checkbutton(title_group, text="✅ Hiển thị Tiêu đề (Title Banner)", variable=enable_title_var)
+        cb_enable_title.grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=(0, 6))
+
+        ttk.Label(title_group, text="Tọa độ Y (Lên/Xuống):").grid(row=1, column=0, sticky=tk.W, pady=3)
         title_y_spin = ttk.Spinbox(title_group, from_=0, to=1000, increment=10, width=12)
-        title_y_spin.grid(row=0, column=1, sticky=tk.W, padx=5, pady=3)
+        title_y_spin.grid(row=1, column=1, sticky=tk.W, padx=5, pady=3)
         title_y_spin.set(src_cfg.get("title_y_pos", 260))
 
         # Hàm cập nhật màu nền ô preview trực quan dựa trên mã màu hiện tại
@@ -2913,14 +2917,18 @@ class ProfessionalVideoApp:
             btn.grid(row=row_idx, column=3, padx=5, pady=3)
             return entry
 
-        t_c1_entry = create_color_row(title_group, 1, "Màu dòng 1:", "title_color1", "black")
-        t_c2_entry = create_color_row(title_group, 2, "Màu dòng 2:", "title_color2", "red")
-        t_outline_entry = create_color_row(title_group, 3, "Màu viền Title:", "title_outline_color", "none")
-        t_bg_entry = create_color_row(title_group, 4, "Màu nền Banner:", "title_bg_color", "white")
+        t_c1_entry = create_color_row(title_group, 2, "Màu dòng 1:", "title_color1", "black")
+        t_c2_entry = create_color_row(title_group, 3, "Màu dòng 2:", "title_color2", "red")
+        t_outline_entry = create_color_row(title_group, 4, "Màu viền Title:", "title_outline_color", "none")
+        t_bg_entry = create_color_row(title_group, 5, "Màu nền Banner:", "title_bg_color", "white")
 
         # --- NHÓM SUBTITLE ---
         sub_group = ttk.LabelFrame(main_frame, text=" 💬 Cấu hình Phụ đề (Subtitle Style) ", padding=10)
         sub_group.pack(fill=tk.X, pady=(0, 10))
+
+        enable_sub_var = tk.BooleanVar(value=bool(src_cfg.get("enable_sub", True)))
+        cb_enable_sub = ttk.Checkbutton(sub_group, text="✅ Hiển thị Phụ đề (Subtitle)", variable=enable_sub_var)
+        cb_enable_sub.grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=(0, 6))
 
         # 3 Kiểu Style hiển thị trực quan
         current_sub_style = src_cfg.get("sub_style_type", "tiktok_slim")
@@ -2929,7 +2937,7 @@ class ProfessionalVideoApp:
         sub_style_var = tk.StringVar(value=current_sub_style)
 
         style_frame = ttk.Frame(sub_group)
-        style_frame.grid(row=0, column=0, columnspan=4, sticky=tk.EW, pady=(0, 8))
+        style_frame.grid(row=1, column=0, columnspan=4, sticky=tk.EW, pady=(0, 8))
         ttk.Label(style_frame, text="Kiểu phụ đề:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8))
 
         def apply_sub_style_preset(selected_key=None):
@@ -2962,34 +2970,36 @@ class ProfessionalVideoApp:
         rb_std = ttk.Radiobutton(style_frame, text="📺 Bình thường (Tiêu chuẩn)", variable=sub_style_var, value="standard", command=lambda: apply_sub_style_preset("standard"))
         rb_std.pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(sub_group, text="Cỡ chữ Sub:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        ttk.Label(sub_group, text="Cỡ chữ Sub:").grid(row=2, column=0, sticky=tk.W, pady=3)
         sub_size_spin = ttk.Spinbox(sub_group, from_=10, to=48, increment=1, width=12)
-        sub_size_spin.grid(row=1, column=1, sticky=tk.W, padx=5, pady=3)
+        sub_size_spin.grid(row=2, column=1, sticky=tk.W, padx=5, pady=3)
         sub_size_spin.set(src_cfg.get("sub_size", 16 if current_sub_style == "tiktok_slim" else 22))
 
-        ttk.Label(sub_group, text="Độ dày viền:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        ttk.Label(sub_group, text="Độ dày viền:").grid(row=3, column=0, sticky=tk.W, pady=3)
         sub_outline_spin = ttk.Spinbox(sub_group, from_=1, to=8, increment=1, width=12)
-        sub_outline_spin.grid(row=2, column=1, sticky=tk.W, padx=5, pady=3)
+        sub_outline_spin.grid(row=3, column=1, sticky=tk.W, padx=5, pady=3)
         sub_outline_spin.set(src_cfg.get("sub_outline", 2 if current_sub_style == "tiktok_slim" else 3))
 
-        ttk.Label(sub_group, text="Bóng mờ 3D (Shadow):").grid(row=3, column=0, sticky=tk.W, pady=3)
+        ttk.Label(sub_group, text="Bóng mờ 3D (Shadow):").grid(row=4, column=0, sticky=tk.W, pady=3)
         sub_shadow_spin = ttk.Spinbox(sub_group, from_=0, to=4, increment=1, width=12)
-        sub_shadow_spin.grid(row=3, column=1, sticky=tk.W, padx=5, pady=3)
+        sub_shadow_spin.grid(row=4, column=1, sticky=tk.W, padx=5, pady=3)
         sub_shadow_spin.set(src_cfg.get("sub_shadow", 1 if current_sub_style == "tiktok_slim" else 0))
 
-        ttk.Label(sub_group, text="MarginV (Lề đáy):").grid(row=4, column=0, sticky=tk.W, pady=3)
+        ttk.Label(sub_group, text="MarginV (Lề đáy):").grid(row=5, column=0, sticky=tk.W, pady=3)
         sub_margin_spin = ttk.Spinbox(sub_group, from_=20, to=600, increment=10, width=12)
-        sub_margin_spin.grid(row=4, column=1, sticky=tk.W, padx=5, pady=3)
+        sub_margin_spin.grid(row=5, column=1, sticky=tk.W, padx=5, pady=3)
         sub_margin_spin.set(src_cfg.get("sub_margin_v", 100))
 
-        sub_c_entry = create_color_row(sub_group, 5, "Màu chữ Sub:", "sub_color", "&HFFFFFF&", is_ass=True)
-        sub_outline_c_entry = create_color_row(sub_group, 6, "Màu viền Sub:", "sub_outline_color", "&H000000&", is_ass=True)
+        sub_c_entry = create_color_row(sub_group, 6, "Màu chữ Sub:", "sub_color", "&HFFFFFF&", is_ass=True)
+        sub_outline_c_entry = create_color_row(sub_group, 7, "Màu viền Sub:", "sub_outline_color", "&H000000&", is_ass=True)
         lbl_locale_note = ttk.Label(sub_group, text="🌍 Tự động đổi font theo Quốc gia (Nga, Đức, Pháp, Việt, Ả Rập, CJK...) — Luôn sắc nét 100%, chống lỗi font [].", foreground="#2563EB", font=("Segoe UI", 8, "italic"))
-        lbl_locale_note.grid(row=7, column=0, columnspan=4, sticky=tk.W, pady=(6, 2))
+        lbl_locale_note.grid(row=8, column=0, columnspan=4, sticky=tk.W, pady=(6, 2))
 
         def save_studio_config():
             # Lưu chuẩn xác toàn bộ giá trị màu hiện tại đang hiển thị trên giao diện vào config
             sub_data = {
+                "enable_title": bool(enable_title_var.get()),
+                "enable_sub": bool(enable_sub_var.get()),
                 "title_y_pos": int(title_y_spin.get()),
                 "title_color1": t_c1_entry.get().strip(),
                 "title_color2": t_c2_entry.get().strip(),
@@ -5628,6 +5638,8 @@ class ProfessionalVideoApp:
                 "sub_size": int(self.config.get("sub_size", 16 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 22)),
                 "sub_outline": int(self.config.get("sub_outline", 2 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 3)),
                 "sub_shadow": int(self.config.get("sub_shadow", 1 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 0)),
+                "enable_title": bool(self.config.get("enable_title", True)),
+                "enable_sub": bool(self.config.get("enable_sub", True)),
                 "title_y_pos": int(self.config.get("title_y_pos", 260)),
                 "title_color1": self.config.get("title_color1", "black"),
                 "title_color2": self.config.get("title_color2", "red"),

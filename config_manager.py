@@ -68,6 +68,8 @@ def normalize_config(data, defaults=None):
     data["video_min_duration_sec"] = unified_dur
     data["compilation_target_duration"] = unified_dur
 
+    data.setdefault("enable_title", True)
+    data.setdefault("enable_sub", True)
     data.setdefault("scramble_original_audio", True)
     data.setdefault("gemini_grid_inspector", True)
     data.setdefault("auto_shot_detection", True)
@@ -104,6 +106,8 @@ def normalize_config(data, defaults=None):
             payload.setdefault("compilation_enable_teaser", True)
             payload.setdefault("compilation_teaser_duration", 3.0)
             payload.setdefault("compilation_rank_by", "views")
+            payload.setdefault("enable_title", True)
+            payload.setdefault("enable_sub", True)
             # Bảo đảm preset cũ cũng có đủ các trường Tab 3.
             payload.setdefault("broll_max_sec", 3.5)
             payload.setdefault("scramble_original_audio", True)

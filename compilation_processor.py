@@ -1984,9 +1984,10 @@ class CompilationProcessor:
                 audio_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{effective_dur:.2f}[a_final]"
 
             # Trích xuất và dời mốc Subtitle cho phân đoạn này nếu có (chuẩn hóa 1 dòng 3-5 từ)
+            enable_sub = bool(post_options.get("enable_sub", True))
             sub_source = item.get("subtitle_path") or ""
             seg_sub_path = ""
-            if sub_source and os.path.exists(sub_source):
+            if enable_sub and sub_source and os.path.exists(sub_source):
                 sub_target_path = os.path.join(work_dir, f"sub_top_{r}.srt")
                 seg_sub_path = cls.slice_srt_for_segment(
                     srt_path=sub_source,
@@ -2074,7 +2075,8 @@ class CompilationProcessor:
 
         # Tạo file phụ đề SRT hoàn chỉnh cho toàn bộ Timeline theo đúng chuẩn Tóm Tắt (EditorProcessor)
         timeline_sub_file = ""
-        if all_timeline_cues:
+        enable_sub = bool(post_options.get("enable_sub", True))
+        if enable_sub and all_timeline_cues:
             all_timeline_cues.sort(key=lambda x: x["start"])
             clean_timeline_cues = []
             for c in all_timeline_cues:
@@ -2249,7 +2251,8 @@ class CompilationProcessor:
                     curr_v = final_v_lbl
 
                 # 1. Nhúng phụ đề Subtitle (SRT) theo đúng 100% chuẩn Tóm Tắt (EditorProcessor):
-                if sub_path and os.path.exists(sub_path) and os.path.getsize(sub_path) > 0:
+                enable_sub = bool(post_options.get("enable_sub", True))
+                if enable_sub and sub_path and os.path.exists(sub_path) and os.path.getsize(sub_path) > 0:
                     abs_sub = os.path.abspath(sub_path).replace('\\', '/')
                     if ":" in abs_sub:
                         drive, p_part = abs_sub.split(":", 1)
@@ -2321,9 +2324,10 @@ class CompilationProcessor:
                     )
 
                 # 2. Overlay Title Banner lên trên
+                enable_title = bool(post_options.get("enable_title", True))
                 input_idx = 1
                 top_path = top_spec.get("path", "")
-                if top_path and os.path.exists(top_path):
+                if enable_title and top_path and os.path.exists(top_path):
                     inputs.extend(["-i", top_path])
                     tx = top_spec.get("x", 0)
                     ty = top_spec.get("y", int(post_options.get("title_y_pos") or 260))
@@ -2559,8 +2563,10 @@ class CompilationProcessor:
             sub_srt = os.path.join(work_dir, f"top_{r}", f"sub_top_{r}.srt")
             cls.generate_srt_for_narration(it.get("narration", ""), it.get("transition", ""), voice_dur, sub_srt)
 
+            enable_sub = bool(post_options.get("enable_sub", True))
+            enable_title = bool(post_options.get("enable_title", True))
             sub_filter_spec = ""
-            if os.path.exists(sub_srt) and os.path.getsize(sub_srt) > 0:
+            if enable_sub and os.path.exists(sub_srt) and os.path.getsize(sub_srt) > 0:
                 abs_srt = os.path.abspath(sub_srt).replace("\\", "/")
                 if ":" in abs_srt:
                     drive, p_part = abs_srt.split(":", 1)
@@ -2610,6 +2616,11 @@ class CompilationProcessor:
                 except Exception:
                     has_orig_audio = False
 
+            if enable_title:
+                v_overlay_node = f"[vout][2:v]overlay={banner_x}:{banner_y}{sub_filter_spec}{speed_v_filter},fps=30[v_badged]"
+            else:
+                v_overlay_node = f"[vout]null{sub_filter_spec}{speed_v_filter},fps=30[v_badged]"
+
             if mix_audio and has_orig_audio:
                 scramble_audio = bool(post_options.get("scramble_original_audio", True))
                 bed_chain = []
@@ -2624,7 +2635,7 @@ class CompilationProcessor:
 
                 filter_chain = (
                     f"{base_vf};"
-                    f"[vout][2:v]overlay={banner_x}:{banner_y}{sub_filter_spec}{speed_v_filter},fps=30[v_badged];"
+                    f"{v_overlay_node};"
                     f"[1:a]{voice_chain}[voicea];"
                     f"[0:a]{','.join(bed_chain)},apad[beda];"
                     f"[voicea][beda]amix=inputs=2:duration=first:dropout_transition=0,"
@@ -2633,7 +2644,7 @@ class CompilationProcessor:
             else:
                 filter_chain = (
                     f"{base_vf};"
-                    f"[vout][2:v]overlay={banner_x}:{banner_y}{sub_filter_spec}{speed_v_filter},fps=30[v_badged];"
+                    f"{v_overlay_node};"
                     f"[1:a]{voice_chain}[a_final]"
                 )
 
