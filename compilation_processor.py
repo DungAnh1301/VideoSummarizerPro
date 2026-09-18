@@ -1931,11 +1931,9 @@ class CompilationProcessor:
                 speed_txt = f", speed {speed:.2f}x" if abs(speed - 1.0) >= 0.01 else ""
                 progress_callback(job_id, "rendering", f"AI đang tinh lược & dựng No. {r} ({effective_dur:.0f}s / {total_clip_dur:.0f}s{speed_txt})...")
 
-            # Tạo Title 2 tầng:
-            # 1. Trên cùng: Tên Playlist
-            # 2. Giữa màn hình: No. {r} : {Tên clip}
-            # LƯU Ý CHUẨN TÓM TẮT: Title Banner, Badge No. X và Subtitle KHÔNG gắn vào clip ở bước này.
-            # Chúng sẽ được nhúng/overlay lên trên cùng SAU KHI ĐÃ XỬ LÝ AI QC để không bao giờ bị làm mờ nhầm.
+            # Tạo Title 2 tầng theo đúng tư duy Tóm Tắt (EditorProcessor):
+            # 1. Trên cùng: Tên Playlist (Top Banner)
+            # 2. Giữa màn hình: No. {r} : {Tên clip} (Badge Banner)
             top_png, top_x, top_y, badge_png, badge_x, badge_y = cls.create_playlist_dual_banners(
                 playlist_title=playlist_title,
                 rank=r,
@@ -1943,9 +1941,6 @@ class CompilationProcessor:
                 work_dir=os.path.join(work_dir, f"top_{r}"),
                 post_options=post_options
             )
-
-            if top_banner_info is None and top_png and os.path.exists(top_png):
-                top_banner_info = {"path": top_png, "x": top_x, "y": top_y}
 
             seg_out = os.path.join(work_dir, f"segment_top_{r}.mp4")
 
@@ -1968,7 +1963,7 @@ class CompilationProcessor:
             else:
                 audio_chain = f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=0:{effective_dur:.2f}[a_final]"
 
-            # Trích xuất và dời mốc Subtitle cho phân đoạn này nếu có (chuẩn hóa 1 dòng 3-5 từ)
+            # Trích xuất Subtitle cho phân đoạn này nếu bật Sub
             enable_sub = bool(post_options.get("enable_sub", True))
             sub_source = item.get("subtitle_path") or ""
             seg_sub_path = ""
@@ -1983,8 +1978,7 @@ class CompilationProcessor:
                         output_srt=sub_target_path
                     )
                 else:
-                    # Video không có sẵn caption YouTube: Dùng Whisper bốc sub SIÊU TỐC cho RIÊNG phân đoạn 20-30s này!
-                    # Cắt đúng đoạn audio 20-30s nên Whisper chỉ mất ~1.5s (thay vì 15 phút cả video), 100% không đơ máy.
+                    # Video không có sẵn caption YouTube: dùng Whisper bốc sub nhanh phân đoạn này
                     seg_wav = os.path.join(work_dir, f"seg_audio_top_{r}.wav")
                     try:
                         cmd_seg_wav = [
@@ -2017,36 +2011,82 @@ class CompilationProcessor:
                     except Exception as seg_w_err:
                         logger.warning(f"⚠️ [SEGMENT WHISPER] Lỗi bốc sub nhanh Top {r}: {seg_w_err}")
 
-                if seg_sub_path and os.path.exists(seg_sub_path):
-                    seg_cues = cls.parse_srt_cues(seg_sub_path)
-                    for c in seg_cues:
-                        all_timeline_cues.append({
-                            "start": c["start"] + current_timeline_t,
-                            "end": c["end"] + current_timeline_t,
-                            "text": c["text"]
-                        })
-                    logger.info(f"💬 [SUBTITLE COLLECT {r}] Đã gom {len(seg_cues)} cues 1 dòng (bắt đầu tại timeline {current_timeline_t:.2f}s)")
+            # XÂY DỰNG FILTER GRAPH 1 PASS DUY NHẤT CHUẨN 100% TÓM TẮT:
+            # - Cắt footage và áp dụng crop 9:16, zoom, pan, color look
+            # - Overlay Title Banner trên cùng (nếu bật title)
+            # - Overlay Badge No. X ở giữa
+            # - Nhúng Subtitle (nếu bật sub và có nội dung)
+            # - Xuất trực tiếp phân đoạn hoàn chỉnh (không bao giờ encode lại lần 2)
+            inputs = ["-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}", "-i", clip_video]
+            filter_parts = [base_vf]
+            curr_v = "vout"
+            in_idx = 1
 
-            # PASS 1 RENDER FOOTAGE SẠCH 100%:
-            # Tuyệt đối không nhúng Sub hay overlay Banner ở Pass 1 để AI QC không quét trúng.
-            if abs(speed - 1.0) >= 0.01:
-                v_speed_node = f"[vout]setpts={1.0 / speed:.6f}*PTS,fps=30[v_final];"
-            else:
-                v_speed_node = "[vout]fps=30[v_final];"
+            enable_title = bool(post_options.get("enable_title", True))
+            if enable_title and top_png and os.path.exists(top_png):
+                inputs.extend(["-i", top_png])
+                filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay={top_x}:{top_y}[v_top]")
+                curr_v = "v_top"
+                in_idx += 1
 
-            filter_chain = (
-                f"{base_vf};"
-                f"{v_speed_node}"
-                f"{audio_chain}"
-            )
+            if badge_png and os.path.exists(badge_png):
+                inputs.extend(["-i", badge_png])
+                filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay={badge_x}:{badge_y}[v_badged]")
+                curr_v = "v_badged"
+                in_idx += 1
+
+            sub_filter_spec = ""
+            if enable_sub and seg_sub_path and os.path.exists(seg_sub_path) and os.path.getsize(seg_sub_path) > 0:
+                abs_srt = os.path.abspath(seg_sub_path).replace('\\', '/')
+                if ":" in abs_srt:
+                    drive, p_part = abs_srt.split(":", 1)
+                    formatted_srt = f"{drive}\\:{p_part}"
+                else:
+                    formatted_srt = abs_srt
+
+                from font_manager import FontManager
+                sample_text = ""
+                try:
+                    with open(seg_sub_path, "r", encoding="utf-8", errors="ignore") as sf:
+                        sample_text = sf.read(2048)
+                except Exception:
+                    pass
+
+                style_type = str(post_options.get("sub_style_type", "tiktok_slim"))
+                style_specs = FontManager.get_subtitle_style_specs(
+                    style_type=style_type,
+                    sample_text=sample_text,
+                    custom_overrides=post_options
+                )
+                font_name = style_specs["font_name"]
+                sub_size = style_specs["font_size"]
+                sub_outline = style_specs["outline"]
+                sub_shadow = style_specs["shadow"]
+                sub_bold = style_specs["bold"]
+                sub_margin_v = int(post_options.get("sub_margin_v", 100))
+                primary_color = post_options.get("sub_color", "&HFFFFFF&")
+                outline_color = post_options.get("sub_outline_color", "&H000000&")
+
+                basic_sub_style = (
+                    f"FontName={font_name},FontSize={sub_size},Bold={sub_bold},"
+                    f"PrimaryColour={primary_color},OutlineColour={outline_color},"
+                    f"BorderStyle=1,Outline={sub_outline},Shadow={sub_shadow},"
+                    f"Alignment=2,MarginL=70,MarginR=70,MarginV={sub_margin_v},WrapStyle=1"
+                )
+                sub_filter_spec = f",subtitles='{formatted_srt}':force_style='{basic_sub_style}'"
+
+            speed_v_filter = f",setpts={1.0 / speed:.6f}*PTS" if abs(speed - 1.0) >= 0.01 else ""
+            filter_parts.append(f"[{curr_v}]{sub_filter_spec.lstrip(',')}{speed_v_filter},fps=30[v_final]")
+            filter_parts.append(audio_chain)
+
+            filter_chain = ";".join(filter_parts)
 
             from part_splitter_engine import get_best_video_encoder
             enc_name, enc_opts = get_best_video_encoder()
 
             cmd_seg = [
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}",
-                "-i", clip_video,
+                *inputs,
                 "-filter_complex", filter_chain,
                 "-map", "[v_final]", "-map", "[a_final]",
                 "-t", f"{effective_dur:.2f}",
@@ -2059,20 +2099,11 @@ class CompilationProcessor:
             run_ffmpeg_auto(cmd_seg, label=f"render_playlist_top_{r}", logger=logger)
             if os.path.exists(seg_out) and os.path.getsize(seg_out) > 0:
                 segment_videos.append(seg_out)
-                clip_overlays.append({
-                    "rank": r,
-                    "path": badge_png,
-                    "x": badge_x,
-                    "y": badge_y,
-                    "start_t": current_timeline_t,
-                    "end_t": current_timeline_t + effective_dur
-                })
-                current_timeline_t += effective_dur
 
         if not segment_videos:
             raise RuntimeError("Không xuất được phân đoạn nào từ Playlist!")
 
-        # 5. Ghép tất cả các clip theo thứ tự No. N ➔ No. 1 thành timeline footage sạch 9:16
+        # GHÉP TẤT CẢ PHÂN ĐOẠN THEO THỨ TỰ TỪ NO. N VỀ NO. 1 (CONCAT COPY SIÊU TỐC 0.5s):
         os.makedirs(cls.OUTPUT_DIR, exist_ok=True)
         safe_name = re.sub(r'[\\/*?:"<>|]', "", playlist_title).strip().replace(" ", "_") or "Playlist_Top_Highlight"
         final_output = os.path.join(cls.OUTPUT_DIR, f"{safe_name}_{int(time.time())}.mp4")
@@ -2083,73 +2114,19 @@ class CompilationProcessor:
                 safe_sp = os.path.abspath(s_path).replace('\\', '/').replace("'", "'\\''")
                 f.write(f"file '{safe_sp}'\n")
 
-        merged_timeline_video = os.path.join(work_dir, "timeline_clean_916.mp4")
         cmd_final = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "concat", "-safe", "0", "-i", final_concat_list,
-            "-c", "copy", merged_timeline_video
+            "-c", "copy", final_output
         ]
         if CREATE_NO_WINDOW:
             subprocess.run(cmd_final, check=False, creationflags=CREATE_NO_WINDOW)
         else:
             subprocess.run(cmd_final, check=False)
 
-        # Tạo file phụ đề SRT hoàn chỉnh cho toàn bộ Timeline theo đúng chuẩn Tóm Tắt (EditorProcessor)
-        timeline_sub_file = ""
-        enable_sub = bool(post_options.get("enable_sub", True))
-        if enable_sub and all_timeline_cues:
-            all_timeline_cues.sort(key=lambda x: x["start"])
-            clean_timeline_cues = []
-            for c in all_timeline_cues:
-                if not clean_timeline_cues:
-                    clean_timeline_cues.append(c)
-                    continue
-                prev = clean_timeline_cues[-1]
-                if c["start"] < prev["end"]:
-                    if c["start"] - prev["start"] >= 0.3:
-                        prev["end"] = c["start"]
-                    else:
-                        c["start"] = prev["end"]
-                if c["end"] > c["start"] + 0.15:
-                    clean_timeline_cues.append(c)
-
-            def to_srt_time(sec):
-                sec = max(0.0, sec)
-                h = int(sec // 3600)
-                m = int((sec % 3600) // 60)
-                s = int(sec % 60)
-                ms = int(round((sec - int(sec)) * 1000))
-                if ms >= 1000:
-                    s += 1
-                    ms = 0
-                return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-            timeline_srt_path = os.path.join(work_dir, "timeline_subtitles.srt")
-            with open(timeline_srt_path, "w", encoding="utf-8") as f_tsrt:
-                for idx, c in enumerate(clean_timeline_cues, start=1):
-                    f_tsrt.write(f"{idx}\n{to_srt_time(c['start'])} --> {to_srt_time(c['end'])}\n{c['text']}\n\n")
-
-            timeline_sub_file = timeline_srt_path
-            logger.info(f"📝 [TIMELINE SUBTITLE] Đã tạo file phụ đề SRT chuẩn Tóm Tắt ({len(clean_timeline_cues)} cues) tại: {timeline_sub_file}")
-
-        # 6. Kiểm duyệt AI QC trên timeline và Lắp ráp Sub/Title/Badge lên trên cùng theo đúng chuẩn Tóm Tắt
-        final_result = cls.apply_timeline_ai_qc_if_enabled(
-            merged_video=merged_timeline_video,
-            final_output=final_output,
-            post_options=post_options,
-            work_dir=work_dir,
-            overlay_specs={
-                "top_banner": top_banner_info,
-                "badges": clip_overlays,
-                "subtitles": timeline_sub_file
-            },
-            job_id=job_id,
-            progress_callback=progress_callback
-        )
-
         total_sec = time.time() - started_at
-        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_result}")
-        return final_result
+        logger.info(f"🎉 [HOÀN TẤT] Tuyển tập Playlist hoàn tất ({total_sec:.1f}s): {final_output}")
+        return final_output
 
     @classmethod
     def apply_timeline_ai_qc_if_enabled(

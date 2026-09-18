@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.23"
+VERSION = "1.3.24"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.23: (1) Khắc phục triệt để lỗi đứng hình/đơ máy tại bước AI QC Keyframes / AI QC Timeline Full: Tối ưu hoá toàn bộ tiến trình quét thị giác của Antigravity CLI, sử dụng profile chuyên biệt (Gemini 3.8 Flash Low, effort low, --print-timeout 30s, --disable-slash-commands) rút ngắn thời gian quét từ 10 phút treo máy xuống chỉ còn 10-14 giây; (2) Lấy mẫu thông minh 3 keyframe đại diện phân bố đều trên timeline khi gọi Antigravity CLI để loại bỏ hoàn toàn hiện tượng phình token (130k+ tokens) gây nghẽn; (3) Bổ sung Watchdog Timeout bảo vệ 45s độc lập cho khâu quét AI QC trên timeline gộp trong CompilationProcessor, đảm bảo tự động tiếp tục xuất bản video nếu AI quá hạn mà tuyệt đối không bao giờ làm đóng băng ứng dụng; (4) Giảm timeout CLI xuống 40s và xử lý ngoại lệ TimeoutExpired mượt mà thay vì treo vô tận."
+NOTES = "Bản phát hành v1.3.24: (1) Chuẩn hóa 100% quy trình dựng Tuyển tập Playlist Highlight theo đúng tư duy cốt lõi của Tóm Tắt Video (EditorProcessor): Dựng phân đoạn hoàn chỉnh (crop 9:16, màu sắc, Title Banner, Badge No. X và Subtitle) trong 1 Pass duy nhất, loại bỏ hoàn toàn việc render thô rồi encode lại lần 2; (2) Ghép nối siêu tốc toàn bộ video bằng FFmpeg concat copy (0.5 giây), triệt tiêu hoàn toàn khâu quét AI QC trên timeline gộp và không bao giờ bị đơ máy hay tràn VRAM; (3) Tối ưu hóa và tôn trọng tuyệt đối công tắc tắt/bật Subtitle và Title trong popup cấu hình."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
