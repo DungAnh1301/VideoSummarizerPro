@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.21"
+VERSION = "1.3.22"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.21: (1) Tự động lưu và khôi phục danh sách hàng đợi Chia Part (data/part_queue.json), đảm bảo khi thoát app hay mở lại ứng dụng, danh sách video chia part vẫn được giữ nguyên vẹn 100% giống hệt chế độ Tóm Tắt (data/queue.json); (2) Bổ sung nút '↻ Chạy lại' (Retry) để dễ dàng chạy lại job lỗi hoặc đã hoàn thành; (3) Thêm tính năng nhấp đúp vào danh sách để tải lại link/file nguồn và click để sao chép link; (4) Tự động khôi phục các job bị gián đoạn về trạng thái 'Chờ xử lý'; (5) Tích hợp giao thức thoát an toàn WM_DELETE_WINDOW lưu tự động toàn bộ cấu hình và hàng đợi cả 2 bên."
+NOTES = "Bản phát hành v1.3.22: (1) Khắc phục triệt để lỗi treo/đơ đứng máy khi tải Playlist Top Highlight: Loại bỏ việc bốc Whisper cả video gốc dài 5-30 phút trong luồng tải song song (vốn gây nghẽn 100% CPU và deadlock OpenMP trên Windows); (2) Bốc sub Whisper siêu tốc cục bộ (On-Demand Segment): Chỉ chạy Whisper cho ĐÚNG phân đoạn highlight 20-30s trong khâu dựng, thời gian xử lý chỉ mất ~1.5s thay vì 15-20 phút cả video; (3) Thêm khóa đồng bộ đa luồng _whisper_lock trong AIProcessor để chống xung đột luồng an toàn tuyệt đối."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

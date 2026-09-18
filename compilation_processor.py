@@ -688,36 +688,17 @@ class CompilationProcessor:
                     except Exception as fb_err:
                         logger.warning(f"⚠️ Fallback tải Top {rank} thất bại: {fb_err}")
 
-            # Lấy phụ đề (Subtitle) bằng YouTube API hoặc Whisper nếu YouTube không có caption
+            # Lấy phụ đề (Subtitle) bằng YouTube API nếu có (siêu tốc 0.1s)
             srt_out = os.path.join(clip_dir, "caption.srt")
             if not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0:
                 try:
                     AIProcessor.transcribe_audio(video_url=url, output_dir=clip_dir, srt_output_path=srt_out, youtube_caption_only=True)
                 except Exception as sub_err:
-                    logger.warning(f"⚠️ [SUBTITLE] Không lấy được sub YouTube cho Top {rank}: {sub_err}")
-
-            # Nếu YouTube không có sẵn caption (hoặc bị tắt), tự động bốc sub từ video bằng Whisper
-            if (not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0) and dl_ok and os.path.exists(target_video):
-                try:
-                    logger.info(f"🎙️ [WHISPER FALLBACK] Top {rank}: YouTube không có caption -> Đang bốc sub từ audio bằng Whisper...")
-                    wav_tmp = os.path.join(clip_dir, "audio_16k.wav")
-                    cmd_wav = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", target_video, "-vn", "-ac", "1", "-ar", "16000", wav_tmp]
-                    if CREATE_NO_WINDOW:
-                        subprocess.run(cmd_wav, check=False, creationflags=CREATE_NO_WINDOW)
-                    else:
-                        subprocess.run(cmd_wav, check=False)
-                    if os.path.exists(wav_tmp) and os.path.getsize(wav_tmp) > 1000:
-                        AIProcessor.transcribe_audio(audio_path=wav_tmp, output_dir=clip_dir, srt_output_path=srt_out, youtube_caption_only=False)
-                        try:
-                            os.remove(wav_tmp)
-                        except Exception:
-                            pass
-                except Exception as w_err:
-                    logger.warning(f"⚠️ [WHISPER FALLBACK] Lỗi bốc sub Top {rank}: {w_err}")
+                    logger.debug(f"ℹ️ [SUBTITLE] Video Top {rank} không có sẵn sub YouTube: {sub_err}")
 
             if os.path.exists(srt_out) and os.path.getsize(srt_out) > 0:
                 item["subtitle_path"] = srt_out
-                logger.info(f"✅ [SUB READY] Top {rank}: Đã sẵn sàng phụ đề ({os.path.getsize(srt_out)} bytes)")
+                logger.info(f"✅ [SUB READY] Top {rank}: Đã sẵn sàng phụ đề YouTube ({os.path.getsize(srt_out)} bytes)")
             else:
                 # Kiểm tra xem có file sub local nào trong clip_dir không
                 sub_candidates = [
@@ -726,6 +707,10 @@ class CompilationProcessor:
                 ]
                 if sub_candidates:
                     item["subtitle_path"] = sub_candidates[0]
+                    logger.info(f"📁 [SUB READY] Top {rank}: Đã sẵn sàng phụ đề local ({os.path.basename(sub_candidates[0])})")
+                else:
+                    item["subtitle_path"] = ""
+                    logger.info(f"ℹ️ [SUB DEFERRED] Top {rank}: Chưa có sub YouTube -> Sẽ tự động bốc sub Whisper siêu tốc cho riêng đoạn cắt 20-30s khi dựng.")
 
             return item if dl_ok else None
 
@@ -1987,15 +1972,51 @@ class CompilationProcessor:
             enable_sub = bool(post_options.get("enable_sub", True))
             sub_source = item.get("subtitle_path") or ""
             seg_sub_path = ""
-            if enable_sub and sub_source and os.path.exists(sub_source):
+            if enable_sub:
                 sub_target_path = os.path.join(work_dir, f"sub_top_{r}.srt")
-                seg_sub_path = cls.slice_srt_for_segment(
-                    srt_path=sub_source,
-                    start_sec=clean_start_t,
-                    dur_sec=raw_cut_dur,
-                    speed=speed,
-                    output_srt=sub_target_path
-                )
+                if sub_source and os.path.exists(sub_source) and os.path.getsize(sub_source) > 0:
+                    seg_sub_path = cls.slice_srt_for_segment(
+                        srt_path=sub_source,
+                        start_sec=clean_start_t,
+                        dur_sec=raw_cut_dur,
+                        speed=speed,
+                        output_srt=sub_target_path
+                    )
+                else:
+                    # Video không có sẵn caption YouTube: Dùng Whisper bốc sub SIÊU TỐC cho RIÊNG phân đoạn 20-30s này!
+                    # Cắt đúng đoạn audio 20-30s nên Whisper chỉ mất ~1.5s (thay vì 15 phút cả video), 100% không đơ máy.
+                    seg_wav = os.path.join(work_dir, f"seg_audio_top_{r}.wav")
+                    try:
+                        cmd_seg_wav = [
+                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-ss", f"{clean_start_t:.2f}", "-t", f"{raw_cut_dur:.2f}",
+                            "-i", clip_video, "-vn", "-ac", "1", "-ar", "16000", seg_wav
+                        ]
+                        subprocess.run(cmd_seg_wav, check=False, creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0)
+                        if os.path.exists(seg_wav) and os.path.getsize(seg_wav) > 1000:
+                            logger.info(f"🎙️ [FAST SEGMENT SUB] Top {r}: Đang bốc sub Whisper cho phân đoạn {raw_cut_dur:.1f}s...")
+                            AIProcessor.transcribe_audio(
+                                audio_path=seg_wav,
+                                output_dir=work_dir,
+                                srt_output_path=sub_target_path,
+                                youtube_caption_only=False
+                            )
+                            if os.path.exists(sub_target_path) and os.path.getsize(sub_target_path) > 0:
+                                cls.slice_srt_for_segment(
+                                    srt_path=sub_target_path,
+                                    start_sec=0.0,
+                                    dur_sec=raw_cut_dur,
+                                    speed=speed,
+                                    output_srt=sub_target_path
+                                )
+                                seg_sub_path = sub_target_path
+                            try:
+                                os.remove(seg_wav)
+                            except Exception:
+                                pass
+                    except Exception as seg_w_err:
+                        logger.warning(f"⚠️ [SEGMENT WHISPER] Lỗi bốc sub nhanh Top {r}: {seg_w_err}")
+
                 if seg_sub_path and os.path.exists(seg_sub_path):
                     seg_cues = cls.parse_srt_cues(seg_sub_path)
                     for c in seg_cues:

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import subprocess
 import time
+import threading
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -99,6 +100,7 @@ class AIProcessor:
     - Hỗ trợ đa dạng công cụ TTS: Edge-TTS và CapCut TTS API.
     - Tự động xuất file .srt chứa đầy đủ time sub phục vụ cho hậu kỳ edit.
     """
+    _whisper_lock = threading.Lock()
 
     @staticmethod
     def default_edge_voice(locale: str = "en-US") -> str:
@@ -2786,27 +2788,28 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                 
             return " ".join(text_lines), "\n".join(srt_lines)
 
-        cuda_allowed = not getattr(cls, "_whisper_cuda_disabled", False)
-        if cuda_allowed:
+        with cls._whisper_lock:
+            cuda_allowed = not getattr(cls, "_whisper_cuda_disabled", False)
+            if cuda_allowed:
+                try:
+                    logger.info("⚡ Đang khởi động Whisper trên GPU (CUDA)...")
+                    transcript_text, srt_content = run_whisper("cuda", "float16")
+                    with open(target_srt_path, "w", encoding="utf-8") as f_srt:
+                        f_srt.write(srt_content)
+                    logger.info(f"✅ Bốc sub GPU và tạo SRT thành công tại: {target_srt_path}")
+                    return transcript_text
+                except Exception as gpu_error:
+                    cls._whisper_cuda_disabled = True
+                    logger.info(f"ℹ️ GPU không khả dụng ({str(gpu_error).splitlines()[0]}). Chuyển sang CPU...")
+
             try:
-                logger.info("⚡ Đang khởi động Whisper trên GPU (CUDA)...")
-                transcript_text, srt_content = run_whisper("cuda", "float16")
+                transcript_text, srt_content = run_whisper("cpu", "int8")
                 with open(target_srt_path, "w", encoding="utf-8") as f_srt:
                     f_srt.write(srt_content)
-                logger.info(f"✅ Bốc sub GPU và tạo SRT thành công tại: {target_srt_path}")
+                logger.info(f"✅ Bốc sub CPU và tạo SRT thành công tại: {target_srt_path}")
                 return transcript_text
-            except Exception as gpu_error:
-                cls._whisper_cuda_disabled = True
-                logger.info(f"ℹ️ GPU không khả dụng ({str(gpu_error).splitlines()[0]}). Chuyển sang CPU...")
-
-        try:
-            transcript_text, srt_content = run_whisper("cpu", "int8")
-            with open(target_srt_path, "w", encoding="utf-8") as f_srt:
-                f_srt.write(srt_content)
-            logger.info(f"✅ Bốc sub CPU và tạo SRT thành công tại: {target_srt_path}")
-            return transcript_text
-        except Exception as cpu_error:
-            raise Exception(f"❌ Lỗi cả GPU lẫn CPU khi chạy Whisper: {str(cpu_error)}")
+            except Exception as cpu_error:
+                raise Exception(f"❌ Lỗi cả GPU lẫn CPU khi chạy Whisper: {str(cpu_error)}")
 
     @classmethod
     def get_youtube_transcript(cls, url: str) -> str:
