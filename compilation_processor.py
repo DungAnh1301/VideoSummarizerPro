@@ -673,20 +673,41 @@ class CompilationProcessor:
                     except Exception as fb_err:
                         logger.warning(f"⚠️ Fallback tải Top {rank} thất bại: {fb_err}")
 
-            # Lấy phụ đề (Subtitle) an toàn bằng YouTubeTranscriptApi (Không bị lỗi 429 của yt-dlp)
+            # Lấy phụ đề (Subtitle) bằng YouTube API hoặc Whisper nếu YouTube không có caption
             srt_out = os.path.join(clip_dir, "caption.srt")
             if not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0:
                 try:
-                    AIProcessor.transcribe_audio(video_url=url, srt_output_path=srt_out, youtube_caption_only=True)
-                except Exception:
-                    pass
+                    AIProcessor.transcribe_audio(video_url=url, output_dir=clip_dir, srt_output_path=srt_out, youtube_caption_only=True)
+                except Exception as sub_err:
+                    logger.warning(f"⚠️ [SUBTITLE] Không lấy được sub YouTube cho Top {rank}: {sub_err}")
+
+            # Nếu YouTube không có sẵn caption (hoặc bị tắt), tự động bốc sub từ video bằng Whisper
+            if (not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0) and dl_ok and os.path.exists(target_video):
+                try:
+                    logger.info(f"🎙️ [WHISPER FALLBACK] Top {rank}: YouTube không có caption -> Đang bốc sub từ audio bằng Whisper...")
+                    wav_tmp = os.path.join(clip_dir, "audio_16k.wav")
+                    cmd_wav = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", target_video, "-vn", "-ac", "1", "-ar", "16000", "-t", "120", wav_tmp]
+                    if CREATE_NO_WINDOW:
+                        subprocess.run(cmd_wav, check=False, creationflags=CREATE_NO_WINDOW)
+                    else:
+                        subprocess.run(cmd_wav, check=False)
+                    if os.path.exists(wav_tmp) and os.path.getsize(wav_tmp) > 1000:
+                        AIProcessor.transcribe_audio(audio_path=wav_tmp, output_dir=clip_dir, srt_output_path=srt_out, youtube_caption_only=False)
+                        try:
+                            os.remove(wav_tmp)
+                        except Exception:
+                            pass
+                except Exception as w_err:
+                    logger.warning(f"⚠️ [WHISPER FALLBACK] Lỗi bốc sub Top {rank}: {w_err}")
+
             if os.path.exists(srt_out) and os.path.getsize(srt_out) > 0:
                 item["subtitle_path"] = srt_out
+                logger.info(f"✅ [SUB READY] Top {rank}: Đã sẵn sàng phụ đề ({os.path.getsize(srt_out)} bytes)")
             else:
                 # Kiểm tra xem có file sub local nào trong clip_dir không
                 sub_candidates = [
                     os.path.join(clip_dir, f) for f in os.listdir(clip_dir)
-                    if f.endswith((".srt", ".vtt"))
+                    if f.endswith((".srt", ".vtt")) and os.path.getsize(os.path.join(clip_dir, f)) > 0
                 ]
                 if sub_candidates:
                     item["subtitle_path"] = sub_candidates[0]
@@ -717,8 +738,8 @@ class CompilationProcessor:
                         results.append(rep_res)
                         break
 
-        # Sắp xếp lại danh sách kết quả theo rank gốc
-        results.sort(key=lambda x: x.get("rank", 0))
+        # Sắp xếp danh sách clips theo thứ tự đếm ngược: No. N ➔ No. 1 (No. 1 ở cuối cùng của video)
+        results.sort(key=lambda x: x.get("rank", 0), reverse=True)
         return results
 
     @classmethod
@@ -1839,7 +1860,10 @@ class CompilationProcessor:
             all_entries=raw_entries
         )
 
-        # 4. Tính toán phân bổ thời lượng thích ứng thông minh (Adaptive Duration Balancing)
+        # 4. Bảo đảm danh sách clips luôn xếp đúng thứ tự đếm ngược: No. N ➔ No. 1 (No. 1 ở cuối cùng)
+        downloaded_items.sort(key=lambda x: x.get("rank", 0), reverse=True)
+
+        # Tính toán phân bổ thời lượng thích ứng thông minh (Adaptive Duration Balancing)
         bounds_list = []
         clip_durations = []
         usable_durations = []

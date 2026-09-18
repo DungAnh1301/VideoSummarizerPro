@@ -2689,14 +2689,15 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
 
     @classmethod
     def transcribe_audio(cls, audio_path: str = "temp/extracted_audio.wav", video_url: str = None,
-                         output_dir: str = "temp", youtube_caption_only: bool = False) -> str:
+                         output_dir: str = "temp", youtube_caption_only: bool = False,
+                         srt_output_path: str = None) -> str:
         """
         Lấy Sub/Caption chuẩn từ YouTube bằng youtube-transcript-api (tương thích mọi phiên bản). 
-        Đồng thời xuất ra file `transcript_sub.srt` chuẩn trong thư mục riêng của video phục vụ hậu kỳ edit.
+        Đồng thời xuất ra file `transcript_sub.srt` hoặc `srt_output_path` phục vụ hậu kỳ edit.
         """
         logger.info("🔍 [TRANSCRIPT] Đang lấy phụ đề (subtitle) trực tiếp từ YouTube API...")
         os.makedirs(output_dir, exist_ok=True)
-        srt_output_path = os.path.join(output_dir, "transcript_sub.srt")
+        target_srt_path = srt_output_path or os.path.join(output_dir, "transcript_sub.srt")
         
         if video_url:
             try:
@@ -2729,9 +2730,9 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                         srt_content = "\n".join(srt_blocks)
                         
                         if len(full_text.strip()) > 20:
-                            with open(srt_output_path, "w", encoding="utf-8") as f_srt:
+                            with open(target_srt_path, "w", encoding="utf-8") as f_srt:
                                 f_srt.write(srt_content)
-                            logger.info(f"✅ Đã tải sub thành công từ YouTube API tại: {srt_output_path}")
+                            logger.info(f"✅ Đã tải sub thành công từ YouTube API tại: {target_srt_path}")
                             return full_text
             except Exception as e:
                 first_line = str(e).strip().split("\n")[0]
@@ -2739,9 +2740,8 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                 logger.info(f"ℹ️ YouTube không có sẵn phụ đề ({first_line}); {next_step}.")
 
             if youtube_caption_only:
-                # Nguồn YouTube không có caption không phải lỗi pipeline. Gemini
-                # sẽ xem proxy 360p và tự viết theo hình; không chờ WAV/Whisper.
-                with open(srt_output_path, "w", encoding="utf-8") as f_srt:
+                # Nguồn YouTube không có caption không phải lỗi pipeline.
+                with open(target_srt_path, "w", encoding="utf-8") as f_srt:
                     f_srt.write("")
                 logger.info("🎥 [YOUTUBE NO-SUB] Không có caption — dùng Gemini Visual-only.")
                 return ""
@@ -2782,9 +2782,9 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
             try:
                 logger.info("⚡ Đang khởi động Whisper trên GPU (CUDA)...")
                 transcript_text, srt_content = run_whisper("cuda", "float16")
-                with open(srt_output_path, "w", encoding="utf-8") as f_srt:
+                with open(target_srt_path, "w", encoding="utf-8") as f_srt:
                     f_srt.write(srt_content)
-                logger.info(f"✅ Bốc sub GPU và tạo SRT thành công tại: {srt_output_path}")
+                logger.info(f"✅ Bốc sub GPU và tạo SRT thành công tại: {target_srt_path}")
                 return transcript_text
             except Exception as gpu_error:
                 cls._whisper_cuda_disabled = True
@@ -2792,9 +2792,9 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
 
         try:
             transcript_text, srt_content = run_whisper("cpu", "int8")
-            with open(srt_output_path, "w", encoding="utf-8") as f_srt:
+            with open(target_srt_path, "w", encoding="utf-8") as f_srt:
                 f_srt.write(srt_content)
-            logger.info(f"✅ Bốc sub CPU và tạo SRT thành công tại: {srt_output_path}")
+            logger.info(f"✅ Bốc sub CPU và tạo SRT thành công tại: {target_srt_path}")
             return transcript_text
         except Exception as cpu_error:
             raise Exception(f"❌ Lỗi cả GPU lẫn CPU khi chạy Whisper: {str(cpu_error)}")

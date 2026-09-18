@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.16"
+VERSION = "1.3.17"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.16: Khắc phục triệt để hiển thị phụ đề (Subtitle) chế độ Tuyển tập Top: (1) Chunking thông minh 1 dòng duy nhất (tối đa 4 từ/cụm), xóa bỏ hoàn toàn hiện tượng hiển thị 2-3 dòng chữ; (2) Chuyển toàn bộ quy trình nhúng phụ đề sang Pass 2 sau AI QC, dán phụ đề đè lên trên kính mờ và khóa vùng đáy (ymin >= 0.75), đảm bảo 100% không bao giờ bị AI QC làm mờ nhầm; (3) Chuẩn hóa canvas ASS 1080x1920 theo chuẩn TikTok/Shorts, đồng bộ font quốc tế, cỡ chữ và tọa độ lề đáy MarginV theo config Studio."
+NOTES = "Bản phát hành v1.3.17: (1) Khắc phục triệt để lỗi phụ đề không hiện: Sửa lỗi tham số srt_output_path trong AIProcessor.transcribe_audio, kết hợp tải YouTube API và tự động bốc sub bằng Whisper nếu clip tắt caption; (2) Đảo ngược thứ tự đếm ngược chuẩn xác: Clips luôn phát từ No. N đếm ngược dần về No. 1 ở cuối cùng của video (No. 1 ở dưới cùng - trùm cuối)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
