@@ -47,6 +47,9 @@ except ImportError:
     CompilationProcessor = None
 
 
+PART_QUEUE_FILE = os.path.join("data", "part_queue.json")
+
+
 class PartSplitterFrame(ttk.Frame):
     """Giao diện độc lập cho Chế độ Chia Part & Tinh Lược Video Gốc."""
 
@@ -56,7 +59,8 @@ class PartSplitterFrame(ttk.Frame):
         self.log_fn = log_fn
         self.config: Dict[str, Any] = load_part_config()
 
-        # Hàng đợi công việc
+        # Hàng đợi công việc (đồng bộ lưu file persistent data/part_queue.json)
+        self._queue_lock = threading.RLock()
         self.queue_items: List[Dict[str, Any]] = []
         self.queue_running: bool = False
         self.stop_requested: bool = False
@@ -66,6 +70,8 @@ class PartSplitterFrame(ttk.Frame):
         self._build_ui()
         self._load_config_to_ui()
         self._refresh_named_config_list()
+        self._load_queue_from_disk()
+        self._refresh_queue_table()
         sel_name = self.config.get("selected_config", "")
         if sel_name and sel_name in self.config.get("saved_configs", {}):
             try:
@@ -615,25 +621,26 @@ class PartSplitterFrame(ttk.Frame):
         # Thanh nút bấm hành động
         action_bar = ttk.Frame(bottom_frame)
         action_bar.grid(row=0, column=0, sticky=tk.EW, pady=(0, 4))
-        action_bar.columnconfigure(6, weight=1)
+        action_bar.columnconfigure(7, weight=1)
 
         ttk.Button(action_bar, text="＋ Thêm vào Hàng Đợi", command=self.add_current_to_queue, style="Tool.TButton").grid(row=0, column=0, padx=2)
         ttk.Button(action_bar, text="🗑 Xóa", command=self.delete_selected_queue, style="Danger.TButton").grid(row=0, column=1, padx=2)
-        ttk.Button(action_bar, text="▲", width=3, command=lambda: self.move_queue_item(-1)).grid(row=0, column=2, padx=2)
-        ttk.Button(action_bar, text="▼", width=3, command=lambda: self.move_queue_item(1)).grid(row=0, column=3, padx=2)
-        ttk.Button(action_bar, text="📁 Mở Thư Mục Xuất", command=self.open_output_folder, style="Tool.TButton").grid(row=0, column=4, padx=4)
+        ttk.Button(action_bar, text="↻ Chạy lại", command=self.retry_selected_queue, style="Tool.TButton").grid(row=0, column=2, padx=2)
+        ttk.Button(action_bar, text="▲", width=3, command=lambda: self.move_queue_item(-1)).grid(row=0, column=3, padx=2)
+        ttk.Button(action_bar, text="▼", width=3, command=lambda: self.move_queue_item(1)).grid(row=0, column=4, padx=2)
+        ttk.Button(action_bar, text="📁 Mở Thư Mục Xuất", command=self.open_output_folder, style="Tool.TButton").grid(row=0, column=5, padx=4)
 
         self.btn_start = ttk.Button(
             action_bar, text="🚀 BẮT ĐẦU CHIA PART & XUẤT VIDEO",
             command=self.start_queue_processing, style="Primary.TButton"
         )
-        self.btn_start.grid(row=0, column=5, padx=8)
+        self.btn_start.grid(row=0, column=6, padx=8)
 
         self.btn_stop = ttk.Button(
             action_bar, text="■ Dừng",
             command=self.stop_queue_processing, style="Danger.TButton"
         )
-        self.btn_stop.grid(row=0, column=6, sticky=tk.E, padx=4)
+        self.btn_stop.grid(row=0, column=7, sticky=tk.E, padx=4)
 
         # Bảng Treeview
         queue_box = ttk.LabelFrame(bottom_frame, text="  DANH SÁCH VIDEO CHIA PART  ", padding=4)
@@ -651,6 +658,13 @@ class PartSplitterFrame(ttk.Frame):
         for col in cols:
             self.queue_tree.heading(col, text=headings[col])
             self.queue_tree.column(col, width=widths[col], anchor=tk.W, stretch=(col in {"source", "status", "output"}))
+
+        self.queue_tree.tag_configure("completed", foreground="#16825D")
+        self.queue_tree.tag_configure("failed", foreground="#C93C37")
+        self.queue_tree.tag_configure("running", background="#EAF1FF", foreground="#1749A3")
+        self.queue_tree.tag_configure("pending", foreground="#172033")
+        self.queue_tree.bind("<Double-1>", self.on_queue_double_click)
+        self.queue_tree.bind("<ButtonRelease-1>", self.on_queue_click)
 
         q_scroll = ttk.Scrollbar(queue_box, orient=tk.VERTICAL, command=self.queue_tree.yview)
         self.queue_tree.configure(yscrollcommand=q_scroll.set)
@@ -1624,54 +1638,207 @@ class PartSplitterFrame(ttk.Frame):
         }
         self.queue_items.append(job)
 
+    def _load_queue_from_disk(self):
+        """Khôi phục danh sách video chia part đã lưu từ file data/part_queue.json."""
+        with self._queue_lock:
+            try:
+                if os.path.isfile(PART_QUEUE_FILE):
+                    with open(PART_QUEUE_FILE, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                    self.queue_items = raw if isinstance(raw, list) else []
+                else:
+                    self.queue_items = []
+            except Exception as e:
+                print(f"⚠️ [PART SPLITTER] Lỗi đọc {PART_QUEUE_FILE}: {e}")
+                self.queue_items = []
+
+            # Khôi phục trạng thái cho các job bị ngắt quãng khi app bị đóng đột ngột
+            for job in self.queue_items:
+                st = str(job.get("status", ""))
+                if st.startswith("Đang ") or st in (
+                    "Đang xử lý...", "Đang tải video...", "AI Gemini phân tích...",
+                    "Soát mốc OpenCV & Audio...", "Đang tinh lược video...",
+                    "Đang chia Part...", "Hậu kỳ CapCut & Banner...", "Đang dựng Top Playlist..."
+                ):
+                    job["status"] = "Chờ xử lý"
+            self._save_queue_to_disk()
+
+    def _save_queue_to_disk(self):
+        """Ghi danh sách hàng đợi chia part xuống đĩa an toàn (atomic write qua .tmp)."""
+        with self._queue_lock:
+            try:
+                folder = os.path.dirname(os.path.abspath(PART_QUEUE_FILE))
+                os.makedirs(folder, exist_ok=True)
+                tmp_file = PART_QUEUE_FILE + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    json.dump(self.queue_items, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_file, PART_QUEUE_FILE)
+            except Exception as e:
+                print(f"⚠️ [PART SPLITTER] Lỗi lưu {PART_QUEUE_FILE}: {e}")
+
+    def on_closing(self):
+        """Được gọi khi đóng ứng dụng để lưu toàn bộ cấu hình UI & hàng đợi chia part."""
+        try:
+            self._save_ui_to_config()
+            self._save_queue_to_disk()
+        except Exception as e:
+            print(f"⚠️ [PART SPLITTER] Lỗi lưu khi thoát: {e}")
+
+    def on_queue_double_click(self, _event=None):
+        """Nhấp đúp chuột vào job để load lại link/đường dẫn lên ô nhập nguồn."""
+        sel = self.queue_tree.selection()
+        if not sel:
+            return
+        selected_id = sel[0]
+        job = next((j for j in self.queue_items if j.get("id") == selected_id), None)
+        if not job:
+            return
+        src = job.get("source", "")
+        wf = job.get("workflow_mode", "single")
+        if wf == "compilation" and hasattr(self, "comp_source_path_entry"):
+            self.workflow_mode_var.set("compilation")
+            self.comp_source_path_entry.delete(0, tk.END)
+            self.comp_source_path_entry.insert(0, src)
+            self.on_workflow_mode_change()
+        else:
+            mode = job.get("source_mode", "youtube")
+            if hasattr(self, "workflow_mode_var"):
+                self.workflow_mode_var.set("single")
+                self.on_workflow_mode_change()
+            if mode == "youtube" and hasattr(self, "url_entry"):
+                self.source_mode_var.set("youtube")
+                self.url_entry.delete(0, tk.END)
+                self.url_entry.insert(0, src)
+                self.on_source_mode_change()
+            elif mode == "local" and hasattr(self, "local_path_entry"):
+                self.source_mode_var.set("local")
+                self.local_path_entry.delete(0, tk.END)
+                self.local_path_entry.insert(0, src)
+                self.on_source_mode_change()
+
+    def on_queue_click(self, event=None):
+        """Bấm chuột vào cột Video Nguồn để sao chép link/đường dẫn."""
+        if not event or self.queue_tree.identify_region(event.x, event.y) != "cell":
+            return
+        col = self.queue_tree.identify_column(event.x)
+        if col == "#2":
+            row_id = self.queue_tree.identify_row(event.y)
+            job = next((j for j in self.queue_items if j.get("id") == row_id), None)
+            if job and job.get("source"):
+                try:
+                    self.clipboard_clear()
+                    self.clipboard_append(job["source"])
+                    self.status_msg_var.set(f"Đã sao chép link nguồn: {job['source'][:50]}")
+                except Exception:
+                    pass
+
+    def retry_selected_queue(self):
+        """Đặt lại trạng thái job được chọn về 'Chờ xử lý' để chạy lại."""
+        sel = self.queue_tree.selection()
+        if not sel:
+            messagebox.showinfo("Chọn Job", "Vui lòng chọn video cần chạy lại trong hàng đợi.")
+            return
+        selected_id = sel[0]
+        with self._queue_lock:
+            for j in self.queue_items:
+                if j.get("id") == selected_id:
+                    j["status"] = "Chờ xử lý"
+                    j["output"] = ""
+                    self.log(f"🔄 Đã đặt lại trạng thái video '{j.get('name', selected_id)}' về 'Chờ xử lý'.")
+                    break
+        self._refresh_queue_table()
+
+    def clear_all_queue(self):
+        """Xóa toàn bộ hàng đợi chia part sau khi xác nhận."""
+        if not self.queue_items:
+            return
+        if self.queue_running:
+            messagebox.showwarning("Đang chạy", "Hàng đợi đang xử lý, vui lòng dừng trước khi xóa tất cả.")
+            return
+        if messagebox.askyesno("Xóa tất cả", "Bạn có chắc muốn xóa sạch toàn bộ danh sách chia part?"):
+            with self._queue_lock:
+                self.queue_items.clear()
+            self._refresh_queue_table()
+            self.log("🗑️ Đã xóa sạch toàn bộ danh sách chia part.")
+
     def _refresh_queue_table(self):
+        sel = self.queue_tree.selection()
+        selected_id = sel[0] if sel else ""
+
         for item in self.queue_tree.get_children():
             self.queue_tree.delete(item)
-        for idx, job in enumerate(self.queue_items, 1):
+
+        with self._queue_lock:
+            items_snapshot = list(self.queue_items)
+
+        for idx, job in enumerate(items_snapshot, 1):
             if job.get("job_type") == "compilation" or job.get("workflow_mode") == "compilation":
-                src_name = f"🏆 Top {job.get('compilation_clip_count', 5)}: {os.path.basename(job['source']) if job['source_mode'] == 'local' else job['source']}"
+                src_name = f"🏆 Top {job.get('compilation_clip_count', 5)}: {os.path.basename(job.get('source', '')) if job.get('source_mode') == 'local' else job.get('source', '')}"
                 parts_str = f"{job.get('compilation_clip_count', 5)} Top"
                 prune_str = "Countdown"
                 hook_str = "No. N ➔ 1"
             else:
-                src_name = os.path.basename(job["source"]) if job["source_mode"] == "local" else job["source"]
-                parts_str = str(job["parts"])
-                prune_str = job["prune"] if job["config_snapshot"].get("prune_enabled") else "Tắt"
-                hook_str = str(job["hook"])
+                src_name = os.path.basename(job.get("source", "")) if job.get("source_mode") == "local" else job.get("source", "")
+                parts_str = str(job.get("parts", 4))
+                cfg_snap = job.get("config_snapshot", {})
+                prune_str = job.get("prune", "") if cfg_snap.get("prune_enabled", True) else "Tắt"
+                hook_str = str(job.get("hook", "individual"))
+
+            st = str(job.get("status", "Chờ xử lý"))
+            tag = "pending"
+            if st in ("Hoàn thành", "Hoàn tất"):
+                tag = "completed"
+            elif st in ("Lỗi", "Thất bại"):
+                tag = "failed"
+            elif st.startswith("Đang "):
+                tag = "running"
 
             self.queue_tree.insert(
                 "", tk.END, iid=job["id"],
+                tags=(tag,),
                 values=(
                     idx,
                     src_name[:40],
                     parts_str,
                     prune_str,
                     hook_str,
-                    job["status"],
-                    job["output"],
+                    st,
+                    job.get("output", ""),
                 )
             )
+
+        if selected_id and self.queue_tree.exists(selected_id):
+            self.queue_tree.selection_set(selected_id)
+
+        self._save_queue_to_disk()
 
     def delete_selected_queue(self):
         sel = self.queue_tree.selection()
         if not sel:
             return
         selected_id = sel[0]
-        self.queue_items = [j for j in self.queue_items if j["id"] != selected_id]
-        self._refresh_queue_table()
+        job = next((j for j in self.queue_items if j.get("id") == selected_id), None)
+        job_name = job.get("name", selected_id) if job else selected_id
+        if messagebox.askyesno("Xóa Job", f"Bạn có chắc muốn xóa video '{job_name}' khỏi hàng đợi?"):
+            with self._queue_lock:
+                self.queue_items = [j for j in self.queue_items if j.get("id") != selected_id]
+            self._refresh_queue_table()
+            self.log(f"🗑️ Đã xóa video khỏi hàng đợi: {job_name}")
 
     def move_queue_item(self, delta: int):
         sel = self.queue_tree.selection()
         if not sel:
             return
         selected_id = sel[0]
-        idx = next((i for i, j in enumerate(self.queue_items) if j["id"] == selected_id), -1)
-        if idx == -1:
-            return
-        new_idx = idx + delta
-        if 0 <= new_idx < len(self.queue_items):
-            self.queue_items[idx], self.queue_items[new_idx] = self.queue_items[new_idx], self.queue_items[idx]
-            self._refresh_queue_table()
+        with self._queue_lock:
+            idx = next((i for i, j in enumerate(self.queue_items) if j.get("id") == selected_id), -1)
+            if idx == -1:
+                return
+            new_idx = idx + delta
+            if 0 <= new_idx < len(self.queue_items):
+                self.queue_items[idx], self.queue_items[new_idx] = self.queue_items[new_idx], self.queue_items[idx]
+        self._refresh_queue_table()
+        if self.queue_tree.exists(selected_id):
             self.queue_tree.selection_set(selected_id)
 
     # =========================================================================
@@ -1683,7 +1850,8 @@ class PartSplitterFrame(ttk.Frame):
             messagebox.showinfo("Đang chạy", "Hàng đợi đang được xử lý.")
             return
 
-        pending_jobs = [j for j in self.queue_items if j["status"] in ("Chờ xử lý", "Lỗi")]
+        with self._queue_lock:
+            pending_jobs = [j for j in self.queue_items if j.get("status") in ("Chờ xử lý", "Lỗi")]
         if not pending_jobs:
             messagebox.showinfo("Trống", "Không có video nào cần chia part. Hãy thêm video vào hàng đợi!")
             return
@@ -1704,10 +1872,12 @@ class PartSplitterFrame(ttk.Frame):
             self.log("⚠️ Yêu cầu dừng hàng đợi đã được gửi.")
 
     def _worker_loop(self):
-        for job in self.queue_items:
+        with self._queue_lock:
+            jobs_to_run = list(self.queue_items)
+        for job in jobs_to_run:
             if self.stop_requested:
                 break
-            if job["status"] not in ("Chờ xử lý", "Lỗi"):
+            if job.get("status") not in ("Chờ xử lý", "Lỗi"):
                 continue
 
             try:

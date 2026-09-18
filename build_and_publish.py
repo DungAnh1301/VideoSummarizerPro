@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.20"
+VERSION = "1.3.21"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.20: (1) Thêm nút Bật / Tắt phụ đề Subtitle (✅ Hiển thị Phụ đề) và Tiêu đề Title Banner (✅ Hiển thị Tiêu đề) trực tiếp trong popup '🔤 Title & Sub'; (2) Áp dụng đồng bộ cho CẢ 2 TRƯỜNG HỢP: Chế độ Tóm Tắt Video (EditorProcessor) và Chế độ Tuyển tập Top / Playlist Highlight (CompilationProcessor) - người dùng có thể chủ động tắt hoàn toàn phụ đề hoặc tiêu đề khi không có nhu cầu; (3) Lưu chuẩn xác vào config.json và preset cấu hình."
+NOTES = "Bản phát hành v1.3.21: (1) Tự động lưu và khôi phục danh sách hàng đợi Chia Part (data/part_queue.json), đảm bảo khi thoát app hay mở lại ứng dụng, danh sách video chia part vẫn được giữ nguyên vẹn 100% giống hệt chế độ Tóm Tắt (data/queue.json); (2) Bổ sung nút '↻ Chạy lại' (Retry) để dễ dàng chạy lại job lỗi hoặc đã hoàn thành; (3) Thêm tính năng nhấp đúp vào danh sách để tải lại link/file nguồn và click để sao chép link; (4) Tự động khôi phục các job bị gián đoạn về trạng thái 'Chờ xử lý'; (5) Tích hợp giao thức thoát an toàn WM_DELETE_WINDOW lưu tự động toàn bộ cấu hình và hàng đợi cả 2 bên."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

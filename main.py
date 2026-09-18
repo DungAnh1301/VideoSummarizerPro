@@ -131,6 +131,20 @@ class ProfessionalVideoApp:
         self._fit_window_to_screen()
         if bool(self.config.get("auto_check_updates", True)):
             self.root.after(1800, lambda: self.check_updates(manual=False))
+        self.root.protocol("WM_DELETE_WINDOW", self.on_app_closing)
+
+    def on_app_closing(self):
+        """Xử lý an toàn khi người dùng thoát ứng dụng: lưu cấu hình và hàng đợi cả 2 bên."""
+        try:
+            self.save_configs_to_json()
+        except Exception:
+            pass
+        if hasattr(self, "part_splitter_frame") and hasattr(self.part_splitter_frame, "on_closing"):
+            try:
+                self.part_splitter_frame.on_closing()
+            except Exception:
+                pass
+        self.root.destroy()
         
     def setup_styles(self):
         style = ttk.Style()
