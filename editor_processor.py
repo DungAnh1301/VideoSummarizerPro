@@ -2188,11 +2188,11 @@ class EditorProcessor:
         pad_x = 4
         pad_y = 4
         
-        # Tính toán độ mờ Gaussian blur linh hoạt từ thanh trượt (10% - 100%, 100% -> sigma=12.0)
+        # Tính toán độ mờ Blur linh hoạt từ thanh trượt (10% - 100%, 100% -> radius 12), dùng avgblur tối ưu AVX2
         blur_val = max(10, min(100, int(qc_blur_strength or 75)))
-        sigma_val = max(1.0, round((blur_val / 100.0) * 12.0, 1))
-        blur_filter_spec = f"gblur=sigma={sigma_val}:steps=1"
-        _log(f"🛡️ [BLUR INTENSITY] Độ mờ che AI: {blur_val}% (Gaussian sigma={sigma_val})")
+        blur_radius = max(2, int(round((blur_val / 100.0) * 12.0)))
+        blur_filter_spec = f"avgblur={blur_radius}"
+        _log(f"🛡️ [BLUR INTENSITY] Độ mờ che AI: {blur_val}% (AVX2 Blur radius={blur_radius})")
         
         clean_chain_filters = []
         filter_seq = 0

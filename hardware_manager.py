@@ -237,8 +237,15 @@ def get_part_render_strategy() -> dict:
         chosen_encoder = "libx264"
         chosen_opts = ["-preset", "ultrafast", "-crf", "19"]
 
-    # 3. Phân loại cấu hình máy HIGH / MEDIUM / LOW và quyết định chế độ render
-    if chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
+    # 3. Phân loại cấu hình máy ULTRA / HIGH / MEDIUM / LOW và quyết định chế độ render
+    if chosen_encoder == "h264_nvenc" and vram_gb >= 10.0 and cores >= 12 and ram >= 16.0:
+        tier = "ULTRA"
+        tier_label = "CỰC ĐẠI (ULTRA)"
+        render_mode = "Cực đại (4 Part song song)"
+        max_workers = 4
+        filter_threads = 4
+        strategy_reason = f"GPU rời rất mạnh {gpu_name} ({vram_gb:.1f}GB VRAM >= 10GB, {cores} CPU) -> Kích hoạt Quad-Render 4 Part song song"
+    elif chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
         tier = "HIGH"
         tier_label = "CAO (HIGH)"
         render_mode = "Siêu tốc (2 Part song song)"
@@ -282,6 +289,7 @@ def get_part_render_strategy() -> dict:
         "filter_threads": filter_threads,
         "ffmpeg_threads": str(cores),
         "hardware_summary": summary,
+        "strategy_reason": strategy_reason,
         "vram_gb": vram_gb,
         "cpu_cores": cores,
         "ram_gb": ram,
