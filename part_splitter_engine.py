@@ -32,8 +32,8 @@ if not logger.handlers:
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
-def _ff_run(cmd: List[str], log_fn=None, timeout: int = 1800) -> subprocess.CompletedProcess:
-    """Chạy lệnh FFmpeg an toàn ẩn cửa sổ và bắt lỗi."""
+def _ff_run(cmd: List[str], log_fn=None, timeout: int = 1800, label: str = "chia_part") -> subprocess.CompletedProcess:
+    """Chạy lệnh FFmpeg an toàn theo chuẩn tự động nhận diện phần cứng (run_ffmpeg_auto của Tóm Tắt Video)."""
     cmd_str = " ".join(cmd)
     logger.info(f"🎬 [FFMPEG] Chạy: {cmd_str[:160]}...")
     if callable(log_fn):
@@ -41,6 +41,17 @@ def _ff_run(cmd: List[str], log_fn=None, timeout: int = 1800) -> subprocess.Comp
             log_fn(f"🎬 [FFMPEG] {cmd[0]} {cmd[1] if len(cmd) > 1 else ''}...")
         except Exception:
             pass
+
+    if "-c:v" in cmd:
+        from hardware_manager import run_ffmpeg_auto
+        try:
+            return run_ffmpeg_auto(
+                cmd, label=label, logger=logger, timeout=timeout,
+                check=True, creationflags=CREATE_NO_WINDOW
+            )
+        except Exception as auto_err:
+            logger.warning(f"⚠️ [RUN_FFMPEG_AUTO] {auto_err} -> fallback subprocess.")
+
     res = subprocess.run(
         cmd,
         capture_output=True,

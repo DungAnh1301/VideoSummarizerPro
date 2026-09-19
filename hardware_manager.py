@@ -275,12 +275,26 @@ def get_part_render_strategy() -> dict:
     }
 
 
+_NVENC_EXTRAS_CACHE = None
+
+def _get_nvenc_extras() -> list[str]:
+    global _NVENC_EXTRAS_CACHE
+    if _NVENC_EXTRAS_CACHE is not None:
+        return _NVENC_EXTRAS_CACHE
+    fast_opts = ["-preset", "p1", "-cq", "19", "-spatial-aq", "1"]
+    if test_encoder_with_options("h264_nvenc", fast_opts):
+        _NVENC_EXTRAS_CACHE = fast_opts
+    else:
+        _NVENC_EXTRAS_CACHE = ["-preset", "p4", "-rc", "vbr", "-cq", "17", "-b:v", "12M", "-maxrate", "16M", "-bufsize", "24M"]
+    return _NVENC_EXTRAS_CACHE
+
+
 def _encoder_command(command: list, encoder: str) -> list:
     cmd = list(command)
     if "-c:v" not in cmd:
         return cmd
     remove_flags = {"-preset", "-rc", "-cq", "-b:v", "-maxrate", "-bufsize",
-                    "-crf", "-quality", "-qp_i", "-qp_p"}
+                    "-crf", "-quality", "-qp_i", "-qp_p", "-spatial-aq"}
     cleaned, i = [], 0
     while i < len(cmd):
         if cmd[i] in remove_flags and i + 1 < len(cmd):
@@ -291,7 +305,7 @@ def _encoder_command(command: list, encoder: str) -> list:
     idx = cleaned.index("-c:v")
     cleaned[idx + 1] = encoder
     extras = {
-        "h264_nvenc": ["-preset", "p4", "-rc", "vbr", "-cq", "17", "-b:v", "12M", "-maxrate", "16M", "-bufsize", "24M"],
+        "h264_nvenc": _get_nvenc_extras(),
         "h264_qsv": ["-preset", "veryfast", "-global_quality", "18"],
         "h264_amf": ["-quality", "speed", "-qp_i", "18", "-qp_p", "20"],
         "libx264": ["-preset", "veryfast", "-crf", "18"],

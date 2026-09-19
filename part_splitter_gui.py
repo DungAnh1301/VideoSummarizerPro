@@ -2245,11 +2245,18 @@ class PartSplitterFrame(ttk.Frame):
                         p_blurs.append(b_c)
                 parts_blurs_map[i] = p_blurs
 
-        # 6.6. Tự động kiểm tra cấu hình máy & kích hoạt chiến lược render tối ưu (Hardware Adaptive)
-        from hardware_manager import get_part_render_strategy
+        # 6.6. Tự động kiểm tra cấu hình máy & kích hoạt chiến lược render tối ưu theo chuẩn Tóm Tắt Video
+        from hardware_manager import get_hardware_profile, get_part_render_strategy
+        hw = get_hardware_profile()
         hw_strategy = get_part_render_strategy()
-        self.log(f"🖥️ [PHẦN CỨNG TỰ ĐỘNG] {hw_strategy['hardware_summary']}")
-        self.log(f"⚙️ [CHIẾN LƯỢC RENDER] Encoder: {hw_strategy['encoder']} {' '.join(hw_strategy['encoder_opts'])} | Tiến trình: {hw_strategy['max_parallel_workers']} Part song song | Filter threads: {hw_strategy['filter_threads']}")
+        max_render_workers = hw_strategy["max_parallel_workers"] if len(parts_info) > 1 else 1
+
+        self.log(
+            f"🖥️ [MÁY - CHUẨN TÓM TẮT] {hw.get('strength', 'auto')} | "
+            f"Encoder: {hw_strategy['encoder']} | {max_render_workers} nhánh render song song | "
+            f"{hw.get('cpu_cores', 4)} CPU cores | {hw.get('ram_gb', 8.0):.1f}GB RAM"
+        )
+        self.log(f"⚙️ [CHIẾN LƯỢC RENDER] {hw_strategy['hardware_summary']}")
 
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
         # Render song song (Dual GPU nếu card >= 6GB VRAM, hoặc 1 Part tuần tự nếu card yếu/iGPU/CPU)
@@ -2293,7 +2300,6 @@ class PartSplitterFrame(ttk.Frame):
             )
             return i_idx, final_out
 
-        max_render_workers = hw_strategy["max_parallel_workers"] if len(parts_info) > 1 else 1
         self.log(f"⚡ [TIẾN HÀNH RENDER] Hậu kỳ {len(parts_info)} Parts ({max_render_workers} tiến trình song song theo cấu hình máy)...")
 
         rendered_results = []
