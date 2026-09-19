@@ -105,22 +105,85 @@ def probe_video_dimensions(path: str) -> Tuple[int, int]:
 
 
 def get_best_video_encoder() -> Tuple[str, List[str]]:
-    """Tự động chọn encoder card rời (NVENC) nếu có, fallback libx264."""
+    """Tự động chọn encoder card rời (NVENC) nếu có, fallback libx264 với preset ultrafast siêu tốc."""
     try:
         from hardware_manager import detect_hardware
         hw = detect_hardware()
         enc = hw.get("encoder", "libx264")
         if enc == "h264_nvenc":
-            return "h264_nvenc", ["-preset", "p4", "-cq", "20"]
+            return "h264_nvenc", ["-preset", "p2", "-cq", "18"]
         elif enc == "h264_qsv":
-            return "h264_qsv", ["-preset", "veryfast", "-global_quality", "20"]
+            return "h264_qsv", ["-preset", "veryfast", "-global_quality", "18"]
     except Exception:
         pass
-    return "libx264", ["-preset", "veryfast", "-crf", "19"]
+    return "libx264", ["-preset", "ultrafast", "-crf", "18"]
 
 
 class PartSplitterEngine:
     """Engine xử lý video chuyên biệt cho Chia Part & Tinh Lược."""
+
+    @classmethod
+    def map_orig_to_clean_time(cls, t_orig: float, keep_ranges: List[Tuple[float, float]]) -> float:
+        """Ánh xạ mốc thời gian từ video gốc sang video sạch sau khi tinh lược."""
+        if not keep_ranges:
+            return float(t_orig)
+        t_clean = 0.0
+        for k_s, k_e in keep_ranges:
+            if t_orig < k_s:
+                return round(t_clean, 2)
+            elif k_s <= t_orig <= k_e:
+                return round(t_clean + (t_orig - k_s), 2)
+            else:
+                t_clean += (k_e - k_s)
+        return round(t_clean, 2)
+
+    @classmethod
+    def sanitize_part_splits(
+        cls,
+        splits: List[float],
+        total_duration: float,
+        part_count: int,
+        min_part_dur: float = 60.0
+    ) -> List[float]:
+        """Đảm bảo các mốc cắt chia Part hợp lý, giữ trọn nội dung kịch bản và mỗi Part >= 60s."""
+        total_dur = float(total_duration)
+        min_part_dur = max(60.0, float(min_part_dur))
+        if total_dur <= min_part_dur * 1.5:
+            return []
+        
+        needed = max(1, part_count - 1)
+        raw_splits = sorted([float(s) for s in splits if 0.0 < float(s) < total_dur])
+
+        # Nếu không có mốc nào hoặc số mốc không đủ, phân bổ đều làm mốc cơ bản
+        if len(raw_splits) != needed:
+            step = total_dur / float(part_count)
+            raw_splits = [round(step * i, 2) for i in range(1, part_count)]
+
+        # Rà soát từng mốc: đảm bảo mỗi part >= min_part_dur (60s)
+        final_splits = []
+        last_t = 0.0
+        for i, pt in enumerate(raw_splits):
+            remaining_parts = needed - i
+            max_allowed = total_dur - (remaining_parts * min_part_dur)
+            min_allowed = last_t + min_part_dur
+
+            if max_allowed < min_allowed:
+                pt = (last_t + total_dur) / 2.0
+            else:
+                pt = max(min_allowed, min(max_allowed, pt))
+            
+            final_splits.append(round(pt, 2))
+            last_t = pt
+
+        # Kiểm tra đoạn cuối cùng, không để bị cụt dưới min_part_dur
+        if final_splits and (total_dur - final_splits[-1]) < min_part_dur:
+            if len(final_splits) > 1:
+                prev_limit = final_splits[-2] + min_part_dur
+                final_splits[-1] = max(prev_limit, round(total_dur - min_part_dur, 2))
+            else:
+                final_splits[-1] = round(max(min_part_dur, total_dur - min_part_dur), 2)
+
+        return final_splits
 
     @classmethod
     def refine_cuts_with_opencv_and_audio(
@@ -651,12 +714,13 @@ class PartSplitterEngine:
                 qc_frames_dir = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
                 os.makedirs(qc_frames_dir, exist_ok=True)
 
-                # Trích xuất 1fps frame 540x960 theo đúng 100% tỷ lệ 9:16 và zoom in của Tóm Tắt Video
-                qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_1fps]")
+                # Trích xuất 8-10 frame đại diện bằng fps={kf_fps} siêu tốc (<1-2s) thay vì giải mã toàn bộ video 1fps
+                kf_fps = max(0.02, min(1.0, 10.0 / max(10.0, part_dur)))
+                qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
                 cmd_kf = [
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-i", raw_part,
-                    "-filter_complex", f"[0:v]fps=1[v_1fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                    "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
                     "-map", "[outkf]",
                     os.path.join(qc_frames_dir, "frame_%04d.jpg")
                 ]
@@ -664,16 +728,18 @@ class PartSplitterEngine:
 
                 frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
                 if frame_files:
-                    _log(f"🔍 [AI QC PART {p_idx}] Đang quét bản quyền, logo, sub cũ, banner & máu vi phạm...")
-                    step = max(1, len(frame_files) // 12)
-                    sampled_frames = frame_files[::step][:15]
+                    _log(f"🔍 [AI QC PART {p_idx}] Đang quét bản quyền, logo, sub cũ, banner & máu vi phạm trên {len(frame_files)} keyframes...")
+                    n_frames = len(frame_files)
+                    step_dur = part_dur / float(n_frames)
                     kf_items = []
-                    for s_idx, fp in enumerate(sampled_frames, start=1):
-                        sec = float(s_idx * step)
+                    for idx, fp in enumerate(frame_files):
+                        st = idx * step_dur
+                        en = min(part_dur, (idx + 1) * step_dur)
                         kf_items.append({
                             "path": fp,
-                            "start_sec": max(0.0, sec - (step / 2.0)),
-                            "end_sec": min(part_dur, sec + (step / 2.0))
+                            "start_sec": max(0.0, st),
+                            "end_sec": min(part_dur, en),
+                            "sample_sec": (st + en) / 2.0
                         })
 
                     model_name = str(cfg.get("gemini_model") or cfg.get("ai_model") or "")

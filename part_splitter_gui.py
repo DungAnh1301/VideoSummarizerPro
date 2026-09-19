@@ -2008,11 +2008,43 @@ class PartSplitterFrame(ttk.Frame):
         self.log(f"✂️ AI đề xuất lược {len(ai_plan.get('prune_plan', []))} đoạn thừa")
         self.log(f"📍 Điểm chia Part Cliffhanger: {ai_plan.get('part_splits', [])}")
 
-        # 4. Tinh chỉnh các mốc cắt với Scene Transitions & Silence Gap
+        # 4. Cắt bỏ đoạn thừa & Ghép video gốc sạch
+        cleaned_video = video_path
+        keep_ranges = [(0.0, total_dur)]
+        if cfg.get("prune_enabled") and ai_plan.get("prune_plan"):
+            job["status"] = "Đang tinh lược video..."
+            self.after(0, self._refresh_queue_table)
+            self.log("✂️ Đang áp dụng FFmpeg concat stream cắt bỏ đoạn thừa...")
+            clean_out = os.path.join(work_dir, "cleaned_source.mp4")
+            cleaned_video, keep_ranges = PartSplitterEngine.prune_and_build_cleaned_source(
+                source_video=video_path,
+                drop_ranges=ai_plan.get("prune_plan", []),
+                output_clean=clean_out,
+                log_fn=self.log
+            )
+
+        clean_dur = probe_duration_sec(cleaned_video)
+        self.log(f"⏱️ Thời lượng video sạch sau tinh lược: {clean_dur:.1f}s ({clean_dur/60:.1f} phút)")
+
+        # 5. Ánh xạ mốc chia Part sang timeline của video sạch & bảo đảm mỗi Part >= 60s
+        mapped_splits = [
+            PartSplitterEngine.map_orig_to_clean_time(pt, keep_ranges)
+            for pt in ai_plan.get("part_splits", [])
+        ]
+        min_p_dur = max(60.0, float(cfg.get("min_part_duration_sec", 60.0)))
+        sanitized_splits = PartSplitterEngine.sanitize_part_splits(
+            splits=mapped_splits,
+            total_duration=clean_dur,
+            part_count=cfg.get("part_count", 4),
+            min_part_dur=min_p_dur
+        )
+        self.log(f"📍 Điểm chia Part trên video sạch: {[round(s, 1) for s in sanitized_splits]}")
+
+        # 6. Tinh chỉnh các mốc cắt với Scene Transitions & Silence Gap
         job["status"] = "Soát mốc OpenCV & Audio..."
         self.after(0, self._refresh_queue_table)
         refined_splits = PartSplitterEngine.refine_cuts_with_opencv_and_audio(
-            ai_cuts=ai_plan.get("part_splits", []),
+            ai_cuts=sanitized_splits,
             scene_map=None,
             srt_cues=cues,
             tolerance=0.5,
@@ -2020,21 +2052,7 @@ class PartSplitterFrame(ttk.Frame):
             log_fn=self.log
         )
 
-        # 5. Cắt bỏ đoạn thừa & Ghép video gốc sạch
-        cleaned_video = video_path
-        if cfg.get("prune_enabled") and ai_plan.get("prune_plan"):
-            job["status"] = "Đang tinh lược video..."
-            self.after(0, self._refresh_queue_table)
-            self.log("✂️ Đang áp dụng FFmpeg concat stream cắt bỏ đoạn thừa...")
-            clean_out = os.path.join(work_dir, "cleaned_source.mp4")
-            cleaned_video, _ = PartSplitterEngine.prune_and_build_cleaned_source(
-                source_video=video_path,
-                drop_ranges=ai_plan.get("prune_plan", []),
-                output_clean=clean_out,
-                log_fn=self.log
-            )
-
-        # 6. Chia Part
+        # 7. Chia Part
         job["status"] = "Đang chia Part..."
         self.after(0, self._refresh_queue_table)
         self.log(f"📂 Đang chia video thành {cfg.get('part_count', 4)} part...")

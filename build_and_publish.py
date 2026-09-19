@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.27"
+VERSION = "1.3.28"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.27: (1) Khắc phục lỗi 'type object PartPrunerAI has no attribute analyze_and_plan' trong tiến trình Chia Part & Tinh Lược; (2) Tích hợp liền mạch Gemini AI qua Antigravity CLI và Gemini API cho PartPrunerAI.analyze_and_plan; (3) Hỗ trợ đầy đủ tham số radius/tolerance trong bộ soát mốc cắt PartSplitterEngine.refine_cuts_with_opencv_and_audio."
+NOTES = "Bản phát hành v1.3.28: (1) Nâng cấp AI QC & OpenCV: Mở rộng padding an toàn (+1.5%), không co hẹp dưới box AI, nâng độ mờ lên boxblur=15:15 sạch 100% logo và watermark; (2) Tối ưu hóa tốc độ: Giảm thời gian trích xuất keyframe AI QC từ 40s xuống 1s, dùng preset ultrafast/p2 cho video tinh lược; (3) Khắc phục triệt để lệch mốc chia Part sau tinh lược: Tự động ánh xạ mốc thời gian sang video sạch, bảo đảm mỗi Part >= 60s theo mạch truyện tự nhiên, không bị part cụt."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

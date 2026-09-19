@@ -2162,20 +2162,28 @@ Return JSON only:
             try:
                 from antigravity_processor import AntigravityProcessor
                 if AntigravityProcessor.executable():
-                    # Tối ưu cho Antigravity CLI: hỗ trợ trọn vẹn lên tới 6 keyframes (Top 5 clip chỉ 5 keyframes ~40k tokens)
+                    # Hỗ trợ trọn vẹn lên tới 10 keyframes cho Antigravity CLI
                     sample_kf = valid_kf
                     sample_prompt = prompt_unified
-                    if len(valid_kf) > 6:
-                        step = len(valid_kf) / 5.0
-                        chosen_indices = sorted(list({int(i * step) for i in range(5)} | {len(valid_kf) - 1}))
+                    if len(valid_kf) > 10:
+                        step = len(valid_kf) / 9.0
+                        chosen_indices = sorted(list({int(i * step) for i in range(9)} | {len(valid_kf) - 1}))
                         sample_kf = [valid_kf[i] for i in chosen_indices]
-                        # Đồng bộ lại danh sách metadata trong prompt khớp chính xác với số ảnh thực tế
-                        sub_meta = []
-                        for s_i, fp in enumerate(sample_kf, start=1):
-                            bn = os.path.basename(fp)
-                            sub_meta.append(f"- Image #{s_i} ({bn}): Sampled representative shot #{s_i}")
-                        sample_prompt = prompt_unified.replace(shot_metadata_str, "\n".join(sub_meta))
-                        sample_prompt = sample_prompt.replace(f"analyzing {len(valid_kf)} full-frame", f"analyzing {len(sample_kf)} full-frame")
+
+                    # Đồng bộ lại danh sách metadata trong prompt kèm timeline chính xác
+                    sub_meta = []
+                    for s_i, fp in enumerate(sample_kf, start=1):
+                        bn = os.path.basename(fp)
+                        kf_match = next((k for k in (keyframe_items or []) if k.get("path") == fp), None)
+                        if kf_match:
+                            k_st = float(kf_match.get("start_sec", 0.0))
+                            k_en = float(kf_match.get("end_sec", 0.0))
+                            sub_meta.append(f"- Image #{s_i} ({bn}): Shot #{s_i}, active timeline [{k_st:.1f}s -> {k_en:.1f}s]")
+                        else:
+                            sub_meta.append(f"- Image #{s_i} ({bn}): Shot #{s_i}")
+
+                    sample_prompt = prompt_unified.replace(shot_metadata_str, "\n".join(sub_meta))
+                    sample_prompt = sample_prompt.replace(f"analyzing {len(valid_kf)} full-frame", f"analyzing {len(sample_kf)} full-frame")
 
                     logger.info(f"🔍 [AI QC KEYFRAMES] Đang gửi {len(sample_kf)} shot keyframes tới Antigravity CLI...")
                     raw_resp = AntigravityProcessor.inspect_safety_sheets(sample_kf, sample_prompt)

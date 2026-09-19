@@ -1978,18 +1978,25 @@ class EditorProcessor:
                             active_cols = np.where(h_proj > thresh_h)[0]
 
                             if len(active_rows) > 4:
-                                tight_y1 = y1 + active_rows[0] - 4
-                                tight_y2 = y1 + active_rows[-1] + 4
-                                ymin = max(0.0, tight_y1 / float(h))
-                                ymax = min(1.0, tight_y2 / float(h))
+                                tight_y1 = y1 + active_rows[0] - 8
+                                tight_y2 = y1 + active_rows[-1] + 8
+                                ymin = min(ymin, max(0.0, tight_y1 / float(h)))
+                                ymax = max(ymax, min(1.0, tight_y2 / float(h)))
 
                             if len(active_cols) > 10 and "ticker" not in lbl:
-                                tight_x1 = x1 + active_cols[0] - 8
-                                tight_x2 = x1 + active_cols[-1] + 8
-                                xmin = max(0.0, tight_x1 / float(w))
-                                xmax = min(1.0, tight_x2 / float(w))
+                                tight_x1 = x1 + active_cols[0] - 12
+                                tight_x2 = x1 + active_cols[-1] + 12
+                                xmin = min(xmin, max(0.0, tight_x1 / float(w)))
+                                xmax = max(xmax, min(1.0, tight_x2 / float(w)))
 
-                            refined_box = [round(ymin, 4), round(xmin, 4), round(ymax, 4), round(xmax, 4)]
+                            # Thêm lề an toàn nhẹ để che trọn vẹn bóng chữ/viền icon
+                            pad_margin = 0.015
+                            refined_box = [
+                                round(max(0.0, ymin - pad_margin), 4),
+                                round(max(0.0, xmin - pad_margin), 4),
+                                round(min(1.0, ymax + pad_margin), 4),
+                                round(min(1.0, xmax + pad_margin), 4),
+                            ]
 
                 refined_list.append({
                     "label": lbl,
@@ -1999,13 +2006,20 @@ class EditorProcessor:
                     "description": desc
                 })
 
-            # 3. LOGO VÀ BẢNG ĐIỂM: BẢO TOÀN VỊ TRÍ, BỔ SUNG LỀ NHỎ (+4px)
+            # 3. LOGO VÀ BẢNG ĐIỂM: BẢO TOÀN VỊ TRÍ, BỔ SUNG LỀ AN TOÀN (+1.5%)
             else:
+                pad_margin = 0.015
+                safe_box = [
+                    round(max(0.0, ymin - pad_margin), 4),
+                    round(max(0.0, xmin - pad_margin), 4),
+                    round(min(1.0, ymax + pad_margin), 4),
+                    round(min(1.0, xmax + pad_margin), 4),
+                ]
                 refined_list.append({
                     "label": lbl,
                     "start_sec": st,
                     "end_sec": en,
-                    "box": box,
+                    "box": safe_box,
                     "description": desc
                 })
 
@@ -2114,9 +2128,9 @@ class EditorProcessor:
                     "intervals": [(st, en)],
                 })
 
-        pad_x = 4
-        pad_y = 4
-        blur_filter_spec = "gblur=sigma=6.0:steps=1"
+        pad_x = 6
+        pad_y = 6
+        blur_filter_spec = "boxblur=15:15"
         clean_chain_filters = []
         filter_seq = 0
 
@@ -2145,7 +2159,7 @@ class EditorProcessor:
                 continue
 
             tot_blur_time = sum(e - s for s, e in merged_intervals)
-            if tot_blur_time >= duration_sec * 0.60:
+            if tot_blur_time >= duration_sec * 0.35 or len(merged_intervals) >= 2:
                 enable_str = ""
                 cond = "toàn video"
             else:
