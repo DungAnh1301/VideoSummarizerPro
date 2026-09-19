@@ -237,21 +237,16 @@ def get_part_render_strategy() -> dict:
         chosen_encoder = "libx264"
         chosen_opts = ["-preset", "ultrafast", "-crf", "19"]
 
-    # 3. Phân loại cấu hình máy ULTRA / HIGH / MEDIUM / LOW và quyết định chế độ render
-    if chosen_encoder == "h264_nvenc" and vram_gb >= 10.0 and cores >= 12 and ram >= 16.0:
-        tier = "ULTRA"
-        tier_label = "CỰC ĐẠI (ULTRA)"
-        render_mode = "Cực đại (4 Part song song)"
-        max_workers = 4
-        filter_threads = 4
-        strategy_reason = f"GPU rời rất mạnh {gpu_name} ({vram_gb:.1f}GB VRAM >= 10GB, {cores} CPU) -> Kích hoạt Quad-Render 4 Part song song"
-    elif chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
+    # 3. Phân loại cấu hình máy HIGH / MEDIUM / LOW và quyết định chế độ render
+    # Chuẩn an toàn: Tối đa 2 Part song song để đảm bảo máy luôn êm ái, mát mẻ, không bao giờ bị đơ lag hay hú quạt
+    if chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
         tier = "HIGH"
         tier_label = "CAO (HIGH)"
-        render_mode = "Siêu tốc (2 Part song song)"
+        render_mode = "Siêu tốc (2 Part song song - Êm mát)"
         max_workers = 2
-        filter_threads = min(8, max(2, cores // 2))
-        strategy_reason = f"GPU rời mạnh {gpu_name} ({vram_gb:.1f}GB VRAM >= 6GB) -> Kích hoạt Dual GPU render song song 2 Part"
+        # Giới hạn luồng filter để luôn chừa ít nhất 40-50% CPU cho người dùng làm việc khác mượt mà
+        filter_threads = min(4, max(2, cores // 4)) if cores >= 8 else 2
+        strategy_reason = f"GPU rời {gpu_name} ({vram_gb:.1f}GB VRAM) -> Kích hoạt Dual GPU render 2 Part song song (Êm ái, không quá tải CPU/GPU)"
     elif (chosen_encoder in ("h264_nvenc", "h264_qsv", "h264_amf") or cores >= 6) and ram >= 10.0:
         tier = "MEDIUM"
         tier_label = "TRUNG BÌNH (MEDIUM)"

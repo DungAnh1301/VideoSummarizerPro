@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.37"
+VERSION = "1.3.38"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.37: Kích hoạt chế độ CỰC ĐẠI (ULTRA - Quad-Render 4 Part song song): (1) Tự động kích hoạt 4 tiến trình render đồng thời cho GPU >= 10GB VRAM (RTX 3060 12GB) và CPU >= 12 nhân, giúp render toàn bộ 4 Part cùng lúc thay vì chia làm 2 đợt; (2) AVX2 AvgBlur QC: Tối ưu bộ lọc làm mờ watermark/sub/logo sang AVX2 đa luồng, loại bỏ nghẽn CPU; (3) Cân bằng tải chia Part: Ngăn chặn Part bị quá dài lệch tải."
+NOTES = "Bản phát hành v1.3.38: Chuẩn hóa chế độ Render Êm Mát & Cân Bằng Tải: (1) Cố định tối đa 2 Part song song (Dual GPU) cho card rời mạnh (RTX 3060), điều tiết mỗi tiến trình 4 luồng filter (chừa 50% CPU cho máy chạy mát mẻ, êm ái, không giật lag); (2) AVX2 AvgBlur: Bộ lọc làm mờ QC siêu nhẹ giảm 70% tải CPU so với gblur; (3) Cân bằng thời lượng Part: Triệt tiêu tình trạng Part 1 bị phình 5 phút gây lệch tải."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
