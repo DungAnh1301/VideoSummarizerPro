@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.25"
+VERSION = "1.3.26"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.25: (1) Chuẩn hóa 100% tư duy AI QC trong Tuyển tập Playlist Highlight theo đúng chuẩn Tóm Tắt Video (EditorProcessor): Trích xuất 1 keyframe 540x960 tại điểm giữa (midpoint) của từng Shot/Clip đại diện gửi cho AI, phân tích chính xác từng mốc timeline và tinh chỉnh box bằng OpenCV; (2) Quy trình dựng 2 Pass hoàn chỉnh: Pass 1 dựng footage 9:16 gốc sạch -> Concat copy siêu tốc -> Quét AI QC & làm mờ kính mờ -> Pass 2 lắp ráp Subtitle, Top Banner và Badge No. X đè lên trên kính mờ QC; (3) Làm sạch triệt để các thẻ [Music], (music), ♪, tiếng vỗ tay khỏi phụ đề, đồng thời khử triệt để overlap giữa các cue giúp chữ không bị nhảy loạn xạ hay chồng 2 dòng; (4) Tôn trọng tuyệt đối công tắc tắt/bật Subtitle (enable_sub) trong cả Tóm Tắt và Tuyển tập Playlist."
+NOTES = "Bản phát hành v1.3.26: (1) Khắc phục triệt để lỗi 'DownloaderProcessor() takes no arguments' khi tải video YouTube trong tab Chia Part & Tinh Lược Video Gốc; (2) Bổ sung hàm khởi tạo instance DownloaderProcessor(output_dir, log_fn) và phương thức download() tích hợp tự động bóc tách phụ đề caption.srt; (3) Nâng cấp bộ quét Smart Fluff Cut & Intro Bumper tránh cắt lẹm và tối ưu hóa keyframe AI QC cho video dài."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
