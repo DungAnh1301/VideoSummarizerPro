@@ -78,6 +78,97 @@ class DownloaderProcessor:
     
     TEMP_DIR = "temp"
 
+    def __init__(self, output_dir: str = None, log_fn = None):
+        self.output_dir = output_dir or self.TEMP_DIR
+        self.log_fn = log_fn or logger.info
+
+    def download(self_or_cls, url: str, output_dir: str = None) -> dict:
+        """
+        Tải video YouTube và trả về dict chứa:
+        - video_path: đường dẫn file MP4 nguồn
+        - subtitle_path: đường dẫn file phụ đề SRT nếu có (hoặc "")
+        - title: tiêu đề video
+        - duration: thời lượng video (giây)
+        - output_dir: thư mục chứa file
+        Hỗ trợ gọi qua instance dl.download(url) hoặc class DownloaderProcessor.download(url, output_dir=...)
+        """
+        if isinstance(self_or_cls, type):
+            out_dir = output_dir or getattr(self_or_cls, "TEMP_DIR", "temp")
+            log = logger.info
+            cls_ref = self_or_cls
+        else:
+            out_dir = output_dir or getattr(self_or_cls, "output_dir", None) or getattr(self_or_cls, "TEMP_DIR", "temp")
+            log = getattr(self_or_cls, "log_fn", None) or logger.info
+            cls_ref = self_or_cls.__class__
+        return cls_ref.download_video(url, output_dir=out_dir, log_fn=log)
+
+    @classmethod
+    def download_video(cls, url: str, output_dir: str = None, log_fn = None) -> dict:
+        """
+        Tải video YouTube chất lượng cao vào output_dir, lấy kèm phụ đề SRT nếu có.
+        """
+        out_dir = os.path.abspath(output_dir or cls.TEMP_DIR)
+        os.makedirs(out_dir, exist_ok=True)
+        log = log_fn or logger.info
+
+        # 1. Trích xuất metadata
+        try:
+            info_meta = cls.get_video_info(url)
+            video_title = cls.clean_source_title(
+                info_meta.get("title", "Unknown Title"), info_meta.get("uploader", "")
+            )
+        except Exception:
+            info_meta = {}
+            video_title = "video_task"
+
+        try:
+            title_file = os.path.join(out_dir, "original_title.txt")
+            with open(title_file, "w", encoding="utf-8") as f:
+                f.write(video_title)
+        except Exception:
+            pass
+
+        # 2. Tải video HD (source_video.mp4)
+        target_video = os.path.join(out_dir, "source_video.mp4")
+        dl_info = cls.download_high_res_video(url, target_video, log_fn=log)
+        duration = float(dl_info.get("duration") or cls.probe_duration_sec(target_video) or 0.0)
+
+        # 3. Lấy phụ đề (Subtitle) bằng YouTube API nếu có
+        srt_out = os.path.join(out_dir, "caption.srt")
+        found_srt = ""
+        if not os.path.exists(srt_out) or os.path.getsize(srt_out) == 0:
+            try:
+                from ai_processor import AIProcessor
+                AIProcessor.transcribe_audio(
+                    video_url=url,
+                    output_dir=out_dir,
+                    srt_output_path=srt_out,
+                    youtube_caption_only=True
+                )
+            except Exception as sub_err:
+                log(f"ℹ️ [SUBTITLE] Video không có sẵn sub YouTube: {sub_err}")
+
+        if os.path.exists(srt_out) and os.path.getsize(srt_out) > 0:
+            found_srt = srt_out
+            log(f"✅ [SUB READY] Đã sẵn sàng phụ đề YouTube: {os.path.basename(srt_out)}")
+        else:
+            # Tìm file sub có sẵn trong thư mục
+            for f in os.listdir(out_dir):
+                if f.endswith((".srt", ".vtt")) and os.path.getsize(os.path.join(out_dir, f)) > 0:
+                    found_srt = os.path.join(out_dir, f)
+                    log(f"📁 [SUB READY] Đã tìm thấy phụ đề có sẵn: {f}")
+                    break
+
+        return {
+            "video_path": target_video,
+            "subtitle_path": found_srt,
+            "audio_path": "",
+            "title": video_title,
+            "duration": duration,
+            "output_dir": out_dir,
+            "specific_dir": out_dir,
+        }
+
     @classmethod
     def get_cookie_file_path(cls) -> str:
         """

@@ -1949,12 +1949,17 @@ class PartSplitterFrame(ttk.Frame):
             self.after(0, self._refresh_queue_table)
             self.log(f"📥 Đang tải source YouTube qua DownloaderProcessor...")
             if DownloaderProcessor is not None:
-                dl = DownloaderProcessor(output_dir=work_dir)
+                dl = DownloaderProcessor(output_dir=work_dir, log_fn=self.log)
                 meta = dl.download(source)
                 video_path = meta.get("video_path")
                 srt_path = meta.get("subtitle_path", "")
             else:
                 raise RuntimeError("Không tìm thấy DownloaderProcessor.")
+        else:
+            if not srt_path and video_path:
+                cand = os.path.splitext(video_path)[0] + ".srt"
+                if os.path.isfile(cand):
+                    srt_path = cand
 
         if not video_path or not os.path.isfile(video_path):
             raise FileNotFoundError(f"Không tìm thấy video nguồn: {video_path}")

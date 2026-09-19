@@ -977,11 +977,17 @@ class CompilationProcessor:
         """
         AI & Computer Vision tự động dò tìm và cắt bỏ đoạn thừa (Smart Fluff Trimming):
         1. Intro Bumper / Title Sequence / Logo Card:
-           - Quét scene cuts trong 12 giây đầu (select='gt(scene,0.22)').
-           - Nếu có scene cut trong dải [0.9s, 8.5s], điểm cut đầu tiên chính là kết thúc của
-             Intro Bumper (như logo Gypsy Sisters, intro TLC, bumper đài truyền hình, title card).
-           - Tự động cắt bỏ trọn vẹn intro bumper, bắt đầu từ t_cut + 0.12s.
-           - Nếu không có scene cut và video đủ dài (>= 20s), tự động skip 2.0s đầu an toàn.
+           - Quét blackdetect trong 14 giây đầu để phát hiện Black Lead-in (màn hình đen mở đầu).
+           - Quét scene cuts trong 14 giây đầu (select='gt(scene,0.20)').
+           - Xử lý thông minh:
+             + Nếu video có màn hình đen từ 0s -> T_black (vd: 1.0s):
+               Cut tại T_black chỉ là điểm thoát khỏi màn hình đen và BẮT ĐẦU Logo Bumper.
+               Điểm KẾT THÚC thực sự của Logo Bumper là Scene Cut tiếp theo trong khoảng [T_black + 0.8s, T_black + 6.0s].
+             + Nếu không có màn hình đen:
+               Bumper đài truyền hình / Title Card thường dài 1.5s - 5.0s.
+               Nếu có cut quá sớm (< 1.2s) kèm theo cut tiếp theo trong [1.5s, 6.0s], chọn cut thứ hai để gạt bỏ hoàn toàn logo.
+               Nếu cut đầu tiên nằm trong [1.2s, 6.0s], đó chính là điểm kết thúc của Logo Bumper.
+           - Thêm lề an toàn +0.12s để gạt sạch 100% tàn dư fade-out của logo.
         2. Outro / End Card / Subscribe Prompt:
            - Quét scene cuts trong 8 giây cuối.
            - Nếu có scene cut trong dải [total_dur - 6.5s, total_dur - 1.2s],
@@ -997,24 +1003,70 @@ class CompilationProcessor:
             if total_dur <= 5.0:
                 return 0.0, total_dur
 
-            # 1. Quét Intro Scene Cuts trong 12s đầu
-            scan_t = min(12.0, max(4.0, total_dur * 0.4))
-            cmd_intro = [
-                "ffmpeg", "-hide_banner", "-i", video_path, "-t", f"{scan_t:.2f}",
-                "-vf", "select=gt(scene\\,0.22),metadata=print", "-f", "null", "-"
-            ]
             run_kwargs = {"capture_output": True, "text": True}
             if CREATE_NO_WINDOW:
                 run_kwargs["creationflags"] = CREATE_NO_WINDOW
+
+            scan_t = min(14.0, max(5.0, total_dur * 0.4))
+
+            # 1.1 Quét Blackdetect tìm Black Lead-in mở đầu video (nhiều video TV có 0.5s - 1.5s màn hình đen trước khi logo hiện)
+            cmd_black = [
+                "ffmpeg", "-hide_banner", "-i", video_path, "-t", f"{scan_t:.2f}",
+                "-vf", "blackdetect=d=0.2:pix_th=0.10", "-f", "null", "-"
+            ]
+            p_b = subprocess.run(cmd_black, **run_kwargs)
+            blacks = re.findall(r"black_start:([0-9.]+).*?black_end:([0-9.]+)", p_b.stderr or "")
+            black_lead_in = 0.0
+            for bs, be in blacks:
+                if float(bs) <= 0.25:
+                    black_lead_in = max(black_lead_in, float(be))
+
+            # 1.2 Quét Scene Cuts trong 14s đầu
+            cmd_intro = [
+                "ffmpeg", "-hide_banner", "-i", video_path, "-t", f"{scan_t:.2f}",
+                "-vf", "select=gt(scene\\,0.20),metadata=print", "-f", "null", "-"
+            ]
             res_intro = subprocess.run(cmd_intro, **run_kwargs)
             raw_intro = [float(x) for x in re.findall(r"pts_time:([0-9.]+)", res_intro.stderr or "")]
 
             intro_end = 0.0
-            for c in raw_intro:
-                if 0.9 <= c <= 8.5:
-                    intro_end = round(c + 0.12, 2)
-                    logger.info(f"✂️ [SMART FLUFF CUT] Phát hiện Intro Bumper / Logo Card dài {c:.2f}s trong '{os.path.basename(video_path)}'. Tự động cắt bỏ, start={intro_end:.2f}s")
-                    break
+            if black_lead_in > 0.0:
+                # Video có màn hình đen từ đầu. Cut tại black_lead_in là điểm bắt đầu Bumper!
+                # Điểm kết thúc Bumper thực sự là scene cut kế tiếp sau black_lead_in (cách ít nhất 0.8s)
+                bumper_cuts = [c for c in raw_intro if c >= black_lead_in + 0.8 and c <= black_lead_in + 6.0]
+                if bumper_cuts:
+                    intro_end = round(bumper_cuts[0] + 0.12, 2)
+                    logger.info(
+                        f"✂️ [SMART FLUFF CUT] Phát hiện Black Lead-in ({black_lead_in:.2f}s) kèm Intro Bumper dài {bumper_cuts[0]:.2f}s "
+                        f"trong '{os.path.basename(video_path)}'. Cắt bỏ sạch logo, start={intro_end:.2f}s"
+                    )
+                else:
+                    intro_end = round(black_lead_in + 0.12, 2)
+                    logger.info(
+                        f"✂️ [SMART FLUFF CUT] Cắt bỏ Black Lead-in dài {black_lead_in:.2f}s trong '{os.path.basename(video_path)}', start={intro_end:.2f}s"
+                    )
+            else:
+                # Không có màn hình đen mở đầu
+                valid_cuts = [c for c in raw_intro if 0.5 <= c <= 7.0]
+                if valid_cuts:
+                    # Nếu cut đầu tiên quá sớm (< 1.2s - thường chỉ là flash/tiền tố) và có cut kế tiếp trong [1.5s, 6.0s]
+                    if len(valid_cuts) >= 2 and valid_cuts[0] < 1.2 and (1.5 <= valid_cuts[1] <= 6.0):
+                        intro_end = round(valid_cuts[1] + 0.12, 2)
+                        logger.info(
+                            f"✂️ [SMART FLUFF CUT] Bỏ flash đầu ({valid_cuts[0]:.2f}s) và nhận diện Intro Bumper dài {valid_cuts[1]:.2f}s "
+                            f"trong '{os.path.basename(video_path)}'. Cắt gọn start={intro_end:.2f}s"
+                        )
+                    elif valid_cuts[0] >= 1.2:
+                        intro_end = round(valid_cuts[0] + 0.12, 2)
+                        logger.info(
+                            f"✂️ [SMART FLUFF CUT] Phát hiện Intro Bumper / Logo Card dài {valid_cuts[0]:.2f}s "
+                            f"trong '{os.path.basename(video_path)}'. Cắt bỏ sạch logo, start={intro_end:.2f}s"
+                        )
+                    else:
+                        intro_end = round(valid_cuts[0] + 0.12, 2)
+                        logger.info(
+                            f"✂️ [SMART FLUFF CUT] Cắt bỏ đoạn đầu {valid_cuts[0]:.2f}s trong '{os.path.basename(video_path)}', start={intro_end:.2f}s"
+                        )
 
             if intro_end == 0.0 and total_dur >= 20.0:
                 intro_end = 2.0
@@ -1026,7 +1078,7 @@ class CompilationProcessor:
                 scan_start = max(0.0, total_dur - 8.0)
                 cmd_outro = [
                     "ffmpeg", "-hide_banner", "-ss", f"{scan_start:.2f}", "-i", video_path,
-                    "-vf", "select=gt(scene\\,0.22),metadata=print", "-f", "null", "-"
+                    "-vf", "select=gt(scene\\,0.20),metadata=print", "-f", "null", "-"
                 ]
                 res_outro = subprocess.run(cmd_outro, **run_kwargs)
                 raw_outro = [round(scan_start + float(x), 2) for x in re.findall(r"pts_time:([0-9.]+)", res_outro.stderr or "")]
@@ -1285,7 +1337,7 @@ class CompilationProcessor:
                 sample_count = 0
                 while probe_t + step <= end_limit and sample_count < 8:
                     cmd_vol = [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "ffmpeg", "-hide_banner", "-loglevel", "info", "-y",
                         "-ss", f"{probe_t:.2f}", "-t", f"{step:.2f}",
                         "-i", video_path,
                         "-af", "volumedetect",
@@ -1295,21 +1347,24 @@ class CompilationProcessor:
                         cmd_vol, capture_output=True, text=True,
                         creationflags=CREATE_NO_WINDOW if CREATE_NO_WINDOW else 0
                     )
-                    mean_vol = -50.0
+                    mean_vol = -100.0
                     for line in (p_vol.stderr or "").split("\n"):
                         if "mean_volume:" in line:
                             try:
                                 mean_vol = float(line.split("mean_volume:")[1].split("dB")[0].strip())
                             except Exception:
                                 pass
-                    if mean_vol > best_loudness:
+                    if mean_vol > best_loudness and mean_vol > -90.0:
                         best_loudness = mean_vol
                         best_t = probe_t + (step / 2.0)
                     probe_t += max(step, usable_dur / 8.0)
                     sample_count += 1
 
-                climax_center_t = best_t
-                logger.info(f"🔊 [AUDIO CLIMAX] Bắt trúng cao trào hội thoại / âm thanh tại {climax_center_t:.1f}s ({best_loudness:.1f}dB)")
+                if best_loudness > -90.0:
+                    climax_center_t = best_t
+                    logger.info(f"🔊 [AUDIO CLIMAX] Bắt trúng cao trào hội thoại / âm thanh tại {climax_center_t:.1f}s ({best_loudness:.1f}dB)")
+                else:
+                    climax_center_t = start_limit + usable_dur * 0.38
             except Exception as vol_err:
                 logger.debug(f"Audio volume scan error: {vol_err}")
 
@@ -2260,15 +2315,27 @@ class CompilationProcessor:
                         curr += step
 
                 kf_items = []
-                for idx, seg in enumerate(segs, start=1):
+                # Chia nhỏ các đoạn dài (> 16s) thành các khung phụ để đảm bảo chụp mẫu cả đầu và giữa đoạn, không bị điểm mù
+                inspection_shots = []
+                for seg in segs:
                     st = float(seg.get("start", 0.0))
                     en = float(seg.get("end", total_timeline_dur))
-                    mid_t = (st + en) / 2.0
+                    dur = en - st
+                    if dur > 16.0:
+                        p_mid = st + dur * 0.5
+                        inspection_shots.append({"start": st, "end": p_mid, "sample_t": min(en - 0.5, st + 2.0)})
+                        inspection_shots.append({"start": p_mid, "end": en, "sample_t": p_mid + (en - p_mid) * 0.5})
+                    else:
+                        inspection_shots.append({"start": st, "end": en, "sample_t": (st + en) / 2.0})
 
-                    f_idx = max(1, min(total_frames, int(math.floor(mid_t)) + 1)) if total_frames > 0 else 0
+                for idx, shot in enumerate(inspection_shots[:16], start=1):
+                    st = shot["start"]
+                    en = shot["end"]
+                    sample_t = shot["sample_t"]
+                    f_idx = max(1, min(total_frames, int(math.floor(sample_t)) + 1)) if total_frames > 0 else 0
                     target_src = os.path.join(qc_frames_dir, f"frame_{f_idx:04d}.jpg")
                     if os.path.isfile(target_src):
-                        dst_name = f"shot_{idx:02d}_t{int(mid_t)}s.jpg"
+                        dst_name = f"shot_{idx:02d}_t{int(sample_t)}s.jpg"
                         dst_path = os.path.join(qc_shot_dir, dst_name)
                         shutil.copy2(target_src, dst_path)
                         kf_items.append({
@@ -2276,7 +2343,7 @@ class CompilationProcessor:
                             "path": dst_path,
                             "start_sec": st,
                             "end_sec": en,
-                            "mid_sec": mid_t,
+                            "mid_sec": sample_t,
                             "mirror": False
                         })
 
