@@ -125,6 +125,27 @@ def _test_encoder(name: str) -> bool:
             pass
 
 
+def test_encoder_with_options(encoder: str, options: list[str]) -> bool:
+    """Kiểm tra xem cặp encoder + tham số có chạy thành công trên FFmpeg của máy không."""
+    target = Path(tempfile.gettempdir()) / f"vsp_test_{encoder}.mp4"
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "color=c=black:s=320x180:r=10:d=0.25",
+        "-an", "-c:v", encoder, *options,
+        "-frames:v", "2", str(target)
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW)
+        return result.returncode == 0 and target.is_file() and target.stat().st_size > 0
+    except Exception:
+        return False
+    finally:
+        try:
+            target.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def detect_hardware(force: bool = False, log=print) -> dict:
     path = profile_path()
     fingerprint = hardware_fingerprint()
@@ -167,6 +188,91 @@ def detect_hardware(force: bool = False, log=print) -> dict:
 
 def get_hardware_profile() -> dict:
     return detect_hardware(force=False, log=None)
+
+
+def get_part_render_strategy() -> dict:
+    """Tự động kiểm tra cấu hình phần cứng (CPU, RAM, GPU, VRAM, Driver)
+    để quyết định chiến lược render tối ưu nhất cho từng máy cá nhân:
+    - Encoder: h264_nvenc, h264_qsv, h264_amf, hoặc libx264
+    - Encoder options: tự kiểm tra và chọn preset tương thích tốt nhất
+    - max_parallel_workers: 1 hoặc 2 (dựa trên VRAM GPU và số nhân CPU)
+    - filter_threads: số luồng filter_complex cho mỗi tiến trình
+    - hardware_summary: chuỗi mô tả trực quan để log ra giao diện người dùng
+    """
+    hw = get_hardware_profile()
+    cores = int(hw.get("cpu_cores") or os.cpu_count() or 4)
+    ram = float(hw.get("ram_gb") or 8.0)
+    gpus = hw.get("gpus") or []
+    enc = hw.get("encoder") or "libx264"
+
+    # 1. Tìm thông tin GPU chính
+    primary_gpu = None
+    for g in gpus:
+        if g.get("vendor") == "NVIDIA":
+            primary_gpu = g
+            break
+    if not primary_gpu and gpus:
+        primary_gpu = gpus[0]
+
+    gpu_name = primary_gpu.get("name", "Không phát hiện GPU rời") if primary_gpu else "CPU only"
+    vram_gb = float(primary_gpu.get("vram_gb", 0.0)) if primary_gpu else 0.0
+
+    # 2. Xác định Encoder & Tham số kiểm tra
+    chosen_encoder = enc
+    chosen_opts = []
+
+    if enc == "h264_nvenc":
+        # Thử preset p1 + spatial-aq 1 trước
+        cand_opts = ["-preset", "p1", "-cq", "19", "-spatial-aq", "1"]
+        if test_encoder_with_options("h264_nvenc", cand_opts):
+            chosen_opts = cand_opts
+        else:
+            # Fallback preset phổ thông cho card NVIDIA thế hệ cũ hơn
+            chosen_opts = ["-preset", "fast", "-cq", "19"]
+    elif enc == "h264_qsv":
+        chosen_opts = ["-preset", "veryfast", "-global_quality", "19"]
+    elif enc == "h264_amf":
+        chosen_opts = ["-quality", "speed", "-qp_i", "19", "-qp_p", "21"]
+    else:
+        chosen_encoder = "libx264"
+        chosen_opts = ["-preset", "ultrafast", "-crf", "19"]
+
+    # 3. Quyết định số Part render song song (max_parallel_workers)
+    # Nguyên tắc an toàn:
+    # - NVIDIA GPU với VRAM >= 6GB VÀ CPU >= 6 nhân VÀ RAM >= 12GB: Cho phép 2 Part song song (RTX 3060, 4060, 3070...)
+    # - Mọi trường hợp khác (GTX 1650 4GB, iGPU Intel QSV, AMD AMF, hoặc CPU libx264): Chạy 1 Part tuần tự
+    #   để tránh lỗi Out of Memory VRAM, lỗi quá tải NVENC session limit, hoặc quá tải 100% CPU gây đơ máy.
+    if chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
+        max_workers = 2
+        filter_threads = min(8, max(2, cores // 2))
+        strategy_reason = f"GPU rời {gpu_name} ({vram_gb:.1f}GB VRAM >= 6GB) -> Kích hoạt Dual GPU render song song 2 Part"
+    else:
+        max_workers = 1
+        # Nếu chạy 1 Part, phân bổ luồng hợp lý cho tiến trình đó
+        filter_threads = min(8, max(2, cores - 1 if cores > 2 else cores))
+        if chosen_encoder == "h264_nvenc":
+            strategy_reason = f"GPU {gpu_name} ({vram_gb:.1f}GB VRAM < 6GB) -> 1 Part an toàn chống tràn VRAM"
+        elif chosen_encoder == "h264_qsv":
+            strategy_reason = f"Đồ họa tích hợp {gpu_name} (Intel QSV) -> 1 Part tối ưu hóa phần cứng iGPU"
+        elif chosen_encoder == "h264_amf":
+            strategy_reason = f"Đồ họa AMD {gpu_name} (AMF) -> 1 Part tăng tốc phần cứng"
+        else:
+            strategy_reason = f"CPU {cores} nhân, {ram:.1f}GB RAM (libx264) -> 1 Part đa luồng tối đa"
+
+    summary = f"{gpu_name} ({vram_gb:.1f}GB VRAM) | {cores} CPU | {ram:.1f}GB RAM => {strategy_reason}"
+
+    return {
+        "encoder": chosen_encoder,
+        "encoder_opts": chosen_opts,
+        "max_parallel_workers": max_workers,
+        "filter_threads": filter_threads,
+        "ffmpeg_threads": str(cores),
+        "hardware_summary": summary,
+        "vram_gb": vram_gb,
+        "cpu_cores": cores,
+        "ram_gb": ram,
+        "gpu_name": gpu_name,
+    }
 
 
 def _encoder_command(command: list, encoder: str) -> list:

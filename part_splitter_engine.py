@@ -107,15 +107,11 @@ def probe_video_dimensions(path: str) -> Tuple[int, int]:
 
 
 def get_best_video_encoder() -> Tuple[str, List[str]]:
-    """Tự động chọn encoder card rời (NVENC) nếu có, fallback libx264 với preset ultrafast siêu tốc."""
+    """Tự động kiểm tra phần cứng (NVIDIA/Intel/AMD/CPU) và chọn encoder tối ưu nhất thích ứng từng máy."""
     try:
-        from hardware_manager import detect_hardware
-        hw = detect_hardware()
-        enc = hw.get("encoder", "libx264")
-        if enc == "h264_nvenc":
-            return "h264_nvenc", ["-preset", "p1", "-cq", "19", "-spatial-aq", "1"]
-        elif enc == "h264_qsv":
-            return "h264_qsv", ["-preset", "veryfast", "-global_quality", "19"]
+        from hardware_manager import get_part_render_strategy
+        st = get_part_render_strategy()
+        return st["encoder"], st["encoder_opts"]
     except Exception:
         pass
     return "libx264", ["-preset", "ultrafast", "-crf", "19"]
@@ -660,9 +656,16 @@ class PartSplitterEngine:
 
         _log(f"🎬 [HẬU KỲ PART {p_idx}] Bắt đầu hoàn thiện: Canvas 9:16 | Tốc độ {speed}x | Limiter +20dB ({audio_boost}dB) | Màu sắc & Crop Studio...")
 
-        # Cấu hình luồng đa nhiệm FFmpeg tối đa để CPU và SIMD không bị nghẽn
-        cpu_threads = min(8, os.cpu_count() or 4)
-        ff_threads = ["-threads", "0", "-filter_complex_threads", str(cpu_threads)]
+        # Cấu hình luồng đa nhiệm FFmpeg tối ưu thích ứng theo cấu hình máy
+        filter_threads = kwargs.get("filter_threads")
+        if not filter_threads:
+            try:
+                from hardware_manager import get_part_render_strategy
+                st = get_part_render_strategy()
+                filter_threads = st["filter_threads"]
+            except Exception:
+                filter_threads = min(8, os.cpu_count() or 4)
+        ff_threads = ["-threads", "0", "-filter_complex_threads", str(filter_threads)]
 
         # Luôn đặt các file tạm (banner, hook teaser, processed part, qc_frames) trong work_dir hoặc thư mục chứa raw_part
         # Tuyệt đối KHÔNG tạo trong thư mục xuất thành phẩm (output_final) để thư mục xuất chỉ chứa video sạch 100%

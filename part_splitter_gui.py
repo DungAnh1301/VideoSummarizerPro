@@ -2245,8 +2245,14 @@ class PartSplitterFrame(ttk.Frame):
                         p_blurs.append(b_c)
                 parts_blurs_map[i] = p_blurs
 
+        # 6.6. Tự động kiểm tra cấu hình máy & kích hoạt chiến lược render tối ưu (Hardware Adaptive)
+        from hardware_manager import get_part_render_strategy
+        hw_strategy = get_part_render_strategy()
+        self.log(f"🖥️ [PHẦN CỨNG TỰ ĐỘNG] {hw_strategy['hardware_summary']}")
+        self.log(f"⚙️ [CHIẾN LƯỢC RENDER] Encoder: {hw_strategy['encoder']} {' '.join(hw_strategy['encoder_opts'])} | Tiến trình: {hw_strategy['max_parallel_workers']} Part song song | Filter threads: {hw_strategy['filter_threads']}")
+
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
-        # Render song song tối đa 2 part đồng thời (Dual NVENC/CPU) để ép thời gian xuống dưới 4 phút
+        # Render song song (Dual GPU nếu card >= 6GB VRAM, hoặc 1 Part tuần tự nếu card yếu/iGPU/CPU)
         job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
         part_prefix = str(cfg.get("part_label_prefix", "Part")).strip() or "Part"
@@ -2282,12 +2288,13 @@ class PartSplitterFrame(ttk.Frame):
                 config=cfg,
                 log_fn=self.log,
                 work_dir=work_dir,
-                watermark_blurs=p_blurs
+                watermark_blurs=p_blurs,
+                filter_threads=hw_strategy.get("filter_threads")
             )
             return i_idx, final_out
 
-        max_render_workers = 2 if len(parts_info) > 1 else 1
-        self.log(f"⚡ [RENDER ĐA NHIỆM] Tiến hành hậu kỳ {len(parts_info)} Parts (tối đa {max_render_workers} luồng GPU song song)...")
+        max_render_workers = hw_strategy["max_parallel_workers"] if len(parts_info) > 1 else 1
+        self.log(f"⚡ [TIẾN HÀNH RENDER] Hậu kỳ {len(parts_info)} Parts ({max_render_workers} tiến trình song song theo cấu hình máy)...")
 
         rendered_results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_render_workers) as executor:
