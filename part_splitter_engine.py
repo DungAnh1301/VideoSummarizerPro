@@ -168,17 +168,13 @@ class PartSplitterEngine:
             step = total_dur / float(part_count)
             raw_splits = [round(step * i, 2) for i in range(1, part_count)]
 
-        # Rà soát từng mốc: đảm bảo mỗi part >= min_part_dur và cân bằng tải (không lệch quá +-50% trung bình)
-        ideal_step = total_dur / float(part_count)
-        max_single_part = ideal_step * 1.50
-        min_single_part = max(min_part_dur, ideal_step * 0.50)
-
+        # Rà soát từng mốc: tôn trọng 100% mốc cắt phân cảnh và cliffhanger của AI, chỉ đảm bảo mỗi part >= min_part_dur (60s)
         final_splits = []
         last_t = 0.0
         for i, pt in enumerate(raw_splits):
             remaining_parts = needed - i
-            max_allowed = min(last_t + max_single_part, total_dur - (remaining_parts * min_part_dur))
-            min_allowed = max(last_t + min_single_part, last_t + min_part_dur)
+            max_allowed = total_dur - (remaining_parts * min_part_dur)
+            min_allowed = last_t + min_part_dur
 
             if max_allowed < min_allowed:
                 pt = (last_t + total_dur) / 2.0

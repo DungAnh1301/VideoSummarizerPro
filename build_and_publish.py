@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.39"
+VERSION = "1.3.40"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.39: Chuyển sang chế độ Render tuần tự từng Part 1 (1 Part at a time) theo chuẩn cấu hình máy: (1) Render tuần tự từng Part một giúp máy chạy cực kỳ êm ái, mát mẻ, dành toàn bộ tài nguyên GPU/CPU chuyên biệt cho 1 Part duy nhất; (2) Tối ưu hóa 8 luồng filter FFmpeg cho tiến trình đơn; (3) Giữ nguyên AVX2 AvgBlur và Stream Copy."
+NOTES = "Bản phát hành v1.3.40: Tôn trọng 100% mốc cắt tách cảnh tự nhiên của AI & Render tuần tự từng Part 1 theo cấu hình máy: (1) Khôi phục trọn vẹn thuật toán cắt theo phân cảnh, cao trào và cliffhanger nghệ thuật của AI, không ép buộc thời lượng cố định; (2) Render tuần tự 1 Part duy nhất (max_workers = 1) thích ứng cấu hình máy, dồn toàn bộ GPU/CPU êm mát; (3) Giữ nguyên Pruner Stream Copy và Fast Seek QC."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
