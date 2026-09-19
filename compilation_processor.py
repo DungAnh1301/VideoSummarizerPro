@@ -2362,21 +2362,8 @@ class CompilationProcessor:
                     else:
                         watermark_blurs = detected_items or []
 
-                    # SAFEGUARD: Bảo vệ vùng Header và Subtitle
-                    safe_blurs = []
-                    for item in (watermark_blurs or []):
-                        box = item.get("box", [0, 0, 0, 0])
-                        ymin, xmin, ymax, xmax = box
-                        if ymin < 0.22 and ymax < 0.30:
-                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Title Header)")
-                            continue
-                        if ymin >= 0.42 and ymax <= 0.62:
-                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Badge No. X)")
-                            continue
-                        if ymin >= 0.78:
-                            logger.info(f"🚫 [AI QC SAFEGUARD] Bỏ qua box {box} (vùng Subtitle)")
-                            continue
-                        safe_blurs.append(item)
+                    safe_blurs = list(watermark_blurs or [])
+                    logger.info(f"🛡️ [AI QC APPLIED] Tiếp nhận {len(safe_blurs)} vùng vi phạm (logo/banner/sub/máu) để làm mờ.")
 
                     has_blood = any("blood" in str(item.get("label", "")).lower() for item in safe_blurs)
                     red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""

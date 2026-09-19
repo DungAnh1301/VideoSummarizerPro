@@ -1953,8 +1953,29 @@ class EditorProcessor:
                 mid_sec = int(round((st + en) / 2.0))
                 f_idx = max(1, mid_sec + 1)
                 f_path = os.path.join(frames_dir, f"frame_{f_idx:04d}.jpg")
-                refined_box = list(box)
+                if not os.path.isfile(f_path) and os.path.isdir(frames_dir):
+                    # Tìm frame thay thế phù hợp trong frames_dir (hỗ trợ cả shot_*.jpg hoặc frame_*.jpg)
+                    all_imgs = [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".png"))]
+                    if all_imgs:
+                        shot_match = None
+                        min_diff = 999999.0
+                        for fn in all_imgs:
+                            m = re.search(r"_t(\d+)s", fn)
+                            if m:
+                                diff = abs(float(m.group(1)) - mid_sec)
+                                if diff < min_diff:
+                                    min_diff = diff
+                                    shot_match = os.path.join(frames_dir, fn)
+                        if shot_match and min_diff < 15.0:
+                            f_path = shot_match
+                        else:
+                            frame_files = sorted([f for f in all_imgs if f.startswith("frame_")])
+                            if frame_files:
+                                idx = int(round((mid_sec / max(1.0, duration_sec)) * (len(frame_files) - 1)))
+                                idx = max(0, min(len(frame_files) - 1, idx))
+                                f_path = os.path.join(frames_dir, frame_files[idx])
 
+                refined_box = list(box)
                 if os.path.isfile(f_path):
                     img = cv2.imread(f_path)
                     if img is not None:
@@ -1978,25 +1999,18 @@ class EditorProcessor:
                             active_cols = np.where(h_proj > thresh_h)[0]
 
                             if len(active_rows) > 4:
-                                tight_y1 = y1 + active_rows[0] - 8
-                                tight_y2 = y1 + active_rows[-1] + 8
-                                ymin = min(ymin, max(0.0, tight_y1 / float(h)))
-                                ymax = max(ymax, min(1.0, tight_y2 / float(h)))
+                                tight_y1 = y1 + active_rows[0] - 4
+                                tight_y2 = y1 + active_rows[-1] + 4
+                                ymin = max(0.0, tight_y1 / float(h))
+                                ymax = min(1.0, tight_y2 / float(h))
 
                             if len(active_cols) > 10 and "ticker" not in lbl:
-                                tight_x1 = x1 + active_cols[0] - 12
-                                tight_x2 = x1 + active_cols[-1] + 12
-                                xmin = min(xmin, max(0.0, tight_x1 / float(w)))
-                                xmax = max(xmax, min(1.0, tight_x2 / float(w)))
+                                tight_x1 = x1 + active_cols[0] - 8
+                                tight_x2 = x1 + active_cols[-1] + 8
+                                xmin = max(0.0, tight_x1 / float(w))
+                                xmax = min(1.0, tight_x2 / float(w))
 
-                            # Thêm lề an toàn nhẹ để che trọn vẹn bóng chữ/viền icon
-                            pad_margin = 0.015
-                            refined_box = [
-                                round(max(0.0, ymin - pad_margin), 4),
-                                round(max(0.0, xmin - pad_margin), 4),
-                                round(min(1.0, ymax + pad_margin), 4),
-                                round(min(1.0, xmax + pad_margin), 4),
-                            ]
+                            refined_box = [round(ymin, 4), round(xmin, 4), round(ymax, 4), round(xmax, 4)]
 
                 refined_list.append({
                     "label": lbl,
@@ -2006,20 +2020,13 @@ class EditorProcessor:
                     "description": desc
                 })
 
-            # 3. LOGO VÀ BẢNG ĐIỂM: BẢO TOÀN VỊ TRÍ, BỔ SUNG LỀ AN TOÀN (+1.5%)
+            # 3. LOGO VÀ BẢNG ĐIỂM: BẢO TOÀN TỌA ĐỘ CHUẨN XÁC CỦA AI VISION
             else:
-                pad_margin = 0.015
-                safe_box = [
-                    round(max(0.0, ymin - pad_margin), 4),
-                    round(max(0.0, xmin - pad_margin), 4),
-                    round(min(1.0, ymax + pad_margin), 4),
-                    round(min(1.0, xmax + pad_margin), 4),
-                ]
                 refined_list.append({
                     "label": lbl,
                     "start_sec": st,
                     "end_sec": en,
-                    "box": safe_box,
+                    "box": list(box),
                     "description": desc
                 })
 
@@ -2128,9 +2135,9 @@ class EditorProcessor:
                     "intervals": [(st, en)],
                 })
 
-        pad_x = 6
-        pad_y = 6
-        blur_filter_spec = "boxblur=15:15"
+        pad_x = 4
+        pad_y = 4
+        blur_filter_spec = "gblur=sigma=6.0:steps=1"
         clean_chain_filters = []
         filter_seq = 0
 
@@ -2159,7 +2166,8 @@ class EditorProcessor:
                 continue
 
             tot_blur_time = sum(e - s for s, e in merged_intervals)
-            if tot_blur_time >= duration_sec * 0.35 or len(merged_intervals) >= 2:
+            is_static_logo = any(k in lbl.lower() for k in ("logo", "watermark"))
+            if is_static_logo and tot_blur_time >= duration_sec * 0.60:
                 enable_str = ""
                 cond = "toàn video"
             else:

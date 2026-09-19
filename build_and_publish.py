@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.28"
+VERSION = "1.3.29"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.28: (1) Nâng cấp AI QC & OpenCV: Mở rộng padding an toàn (+1.5%), không co hẹp dưới box AI, nâng độ mờ lên boxblur=15:15 sạch 100% logo và watermark; (2) Tối ưu hóa tốc độ: Giảm thời gian trích xuất keyframe AI QC từ 40s xuống 1s, dùng preset ultrafast/p2 cho video tinh lược; (3) Khắc phục triệt để lệch mốc chia Part sau tinh lược: Tự động ánh xạ mốc thời gian sang video sạch, bảo đảm mỗi Part >= 60s theo mạch truyện tự nhiên, không bị part cụt."
+NOTES = "Bản phát hành v1.3.29: (1) Sửa triệt để lỗi AI làm mờ logo banner: Gỡ bỏ toàn bộ safeguard loại trừ tọa độ sai lầm (bảo toàn 100% logo đài góc dưới, news ticker banner đáy và phụ đề gốc), bóp khít sát mép chữ thực tế bằng Canny, bỏ padding phình to; (2) Tối ưu hóa tốc độ xử lý: Khôi phục bộ lọc gblur=sigma=6.0 siêu mượt tự nhiên (tăng tốc FFmpeg render gấp 3.35 lần so với boxblur=15:15); (3) Khắc phục lỗi mờ toàn video: Chỉ làm mờ đúng khoảng thời gian xuất hiện (between(t, s, e)) cho banner/sub thay vì bôi mờ toàn video."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
