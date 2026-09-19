@@ -237,31 +237,45 @@ def get_part_render_strategy() -> dict:
         chosen_encoder = "libx264"
         chosen_opts = ["-preset", "ultrafast", "-crf", "19"]
 
-    # 3. Quyết định số Part render song song (max_parallel_workers)
-    # Nguyên tắc an toàn:
-    # - NVIDIA GPU với VRAM >= 6GB VÀ CPU >= 6 nhân VÀ RAM >= 12GB: Cho phép 2 Part song song (RTX 3060, 4060, 3070...)
-    # - Mọi trường hợp khác (GTX 1650 4GB, iGPU Intel QSV, AMD AMF, hoặc CPU libx264): Chạy 1 Part tuần tự
-    #   để tránh lỗi Out of Memory VRAM, lỗi quá tải NVENC session limit, hoặc quá tải 100% CPU gây đơ máy.
+    # 3. Phân loại cấu hình máy HIGH / MEDIUM / LOW và quyết định chế độ render
     if chosen_encoder == "h264_nvenc" and vram_gb >= 6.0 and cores >= 6 and ram >= 12.0:
+        tier = "HIGH"
+        tier_label = "CAO (HIGH)"
+        render_mode = "Siêu tốc (2 Part song song)"
         max_workers = 2
         filter_threads = min(8, max(2, cores // 2))
-        strategy_reason = f"GPU rời {gpu_name} ({vram_gb:.1f}GB VRAM >= 6GB) -> Kích hoạt Dual GPU render song song 2 Part"
-    else:
+        strategy_reason = f"GPU rời mạnh {gpu_name} ({vram_gb:.1f}GB VRAM >= 6GB) -> Kích hoạt Dual GPU render song song 2 Part"
+    elif (chosen_encoder in ("h264_nvenc", "h264_qsv", "h264_amf") or cores >= 6) and ram >= 10.0:
+        tier = "MEDIUM"
+        tier_label = "TRUNG BÌNH (MEDIUM)"
+        render_mode = "Cân bằng (1 Part tuần tự)"
         max_workers = 1
-        # Nếu chạy 1 Part, phân bổ luồng hợp lý cho tiến trình đó
-        filter_threads = min(8, max(2, cores - 1 if cores > 2 else cores))
+        filter_threads = min(6, max(2, cores - 1 if cores > 2 else cores))
         if chosen_encoder == "h264_nvenc":
             strategy_reason = f"GPU {gpu_name} ({vram_gb:.1f}GB VRAM < 6GB) -> 1 Part an toàn chống tràn VRAM"
         elif chosen_encoder == "h264_qsv":
-            strategy_reason = f"Đồ họa tích hợp {gpu_name} (Intel QSV) -> 1 Part tối ưu hóa phần cứng iGPU"
+            strategy_reason = f"Đồ họa tích hợp {gpu_name} (Intel QSV) -> 1 Part tăng tốc phần cứng iGPU"
         elif chosen_encoder == "h264_amf":
             strategy_reason = f"Đồ họa AMD {gpu_name} (AMF) -> 1 Part tăng tốc phần cứng"
         else:
-            strategy_reason = f"CPU {cores} nhân, {ram:.1f}GB RAM (libx264) -> 1 Part đa luồng tối đa"
+            strategy_reason = f"CPU {cores} nhân, {ram:.1f}GB RAM (libx264) -> 1 Part cân bằng"
+    else:
+        tier = "LOW"
+        tier_label = "THẤP (LOW)"
+        render_mode = "Tiết kiệm / An toàn (1 Part tuần tự)"
+        max_workers = 1
+        filter_threads = min(4, max(2, cores - 1 if cores > 2 else cores))
+        if chosen_encoder == "h264_qsv":
+            strategy_reason = f"{gpu_name} (Intel QSV) -> 1 Part tiết kiệm tài nguyên"
+        else:
+            strategy_reason = f"CPU {cores} nhân, {ram:.1f}GB RAM (libx264) -> 1 Part an toàn chống đơ máy"
 
-    summary = f"{gpu_name} ({vram_gb:.1f}GB VRAM) | {cores} CPU | {ram:.1f}GB RAM => {strategy_reason}"
+    summary = f"Cấu hình {tier_label} | {gpu_name} ({vram_gb:.1f}GB VRAM) | {cores} CPU | {ram:.1f}GB RAM => {strategy_reason}"
 
     return {
+        "tier": tier,
+        "tier_label": tier_label,
+        "render_mode": render_mode,
         "encoder": chosen_encoder,
         "encoder_opts": chosen_opts,
         "max_parallel_workers": max_workers,

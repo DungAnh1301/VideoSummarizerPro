@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.34"
+VERSION = "1.3.35"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.34: Đồng bộ 100% cơ chế nhận diện phần cứng theo chuẩn Chế độ Tóm Tắt Video (main.py): (1) Sử dụng run_ffmpeg_auto để tự động kiểm tra cấu hình máy (strength, encoder, parallel_pipeline) và tự động chuyển đổi encoder dự phòng (auto fallback) nếu gặp sự cố phần cứng; (2) Tự động điều tiết số nhánh render (parallel_pipeline=True -> 2 nhánh song song, máy yếu/CPU -> 1 nhánh tuần tự) chuẩn xác từng máy."
+NOTES = "Bản phát hành v1.3.35: Tự động phân loại cấu hình máy HIGH / MEDIUM / LOW để lựa chọn chế độ render (nhanh/chậm/an toàn) cho công cụ Chia Part: (1) Cấp độ CAO (HIGH - RTX >= 6GB VRAM): Kích hoạt chế độ Siêu Tốc render 2 Part song song với NVENC p1 + spatial-aq; (2) Cấp độ TRUNG BÌNH (MEDIUM - card 3-4GB VRAM, Intel iGPU QSV, AMD AMF): Tự chọn chế độ Cân Bằng render 1 Part tuần tự chống tràn VRAM; (3) Cấp độ THẤP (LOW - laptop văn phòng, CPU <= 4 nhân, RAM < 10GB): Tự chọn chế độ Tiết Kiệm an toàn, điều tiết luồng CPU chống đơ máy."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

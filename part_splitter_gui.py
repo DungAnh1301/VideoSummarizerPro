@@ -2245,18 +2245,17 @@ class PartSplitterFrame(ttk.Frame):
                         p_blurs.append(b_c)
                 parts_blurs_map[i] = p_blurs
 
-        # 6.6. Tự động kiểm tra cấu hình máy & kích hoạt chiến lược render tối ưu theo chuẩn Tóm Tắt Video
-        from hardware_manager import get_hardware_profile, get_part_render_strategy
-        hw = get_hardware_profile()
+        # 6.6. Tự động kiểm tra cấu hình máy (HIGH / MEDIUM / LOW) và lựa chọn chế độ render tối ưu
+        from hardware_manager import get_part_render_strategy
         hw_strategy = get_part_render_strategy()
         max_render_workers = hw_strategy["max_parallel_workers"] if len(parts_info) > 1 else 1
 
         self.log(
-            f"🖥️ [MÁY - CHUẨN TÓM TẮT] {hw.get('strength', 'auto')} | "
-            f"Encoder: {hw_strategy['encoder']} | {max_render_workers} nhánh render song song | "
-            f"{hw.get('cpu_cores', 4)} CPU cores | {hw.get('ram_gb', 8.0):.1f}GB RAM"
+            f"🖥️ [KIỂM TRA CẤU HÌNH MÁY] Mức: {hw_strategy['tier_label']} | "
+            f"{hw_strategy['gpu_name']} ({hw_strategy['vram_gb']:.1f}GB VRAM) | "
+            f"{hw_strategy['cpu_cores']} CPU cores | {hw_strategy['ram_gb']:.1f}GB RAM"
         )
-        self.log(f"⚙️ [CHIẾN LƯỢC RENDER] {hw_strategy['hardware_summary']}")
+        self.log(f"⚡ [CHẾ ĐỘ RENDER TỰ ĐỘNG] {hw_strategy['render_mode']} | Encoder: {hw_strategy['encoder']} | Luồng filter: {hw_strategy['filter_threads']}")
 
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
         # Render song song (Dual GPU nếu card >= 6GB VRAM, hoặc 1 Part tuần tự nếu card yếu/iGPU/CPU)
@@ -2300,7 +2299,7 @@ class PartSplitterFrame(ttk.Frame):
             )
             return i_idx, final_out
 
-        self.log(f"⚡ [TIẾN HÀNH RENDER] Hậu kỳ {len(parts_info)} Parts ({max_render_workers} tiến trình song song theo cấu hình máy)...")
+        self.log(f"⚡ [TIẾN HÀNH RENDER] Hậu kỳ {len(parts_info)} Parts ({max_render_workers} tiến trình - Cấp độ: {hw_strategy['tier_label']})...")
 
         rendered_results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_render_workers) as executor:
