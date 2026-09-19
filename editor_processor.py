@@ -2033,6 +2033,53 @@ class EditorProcessor:
         return refined_list
 
     @classmethod
+    def generate_srt_for_script(cls, narration: str, duration_sec: float, output_srt: str) -> str:
+        """
+        Tạo file SRT phụ đề chuẩn xác cho kịch bản tóm tắt (chuẩn tư duy Top Compilation).
+        Chia các cụm từ ngắn 4-6 từ để hiển thị nhịp nhàng theo phong cách CapCut.
+        """
+        full_text = (narration or "").strip()
+        if not full_text or duration_sec <= 0:
+            return ""
+
+        words = full_text.split()
+        if not words:
+            return ""
+
+        chunks = []
+        curr = []
+        for w in words:
+            curr.append(w)
+            if len(curr) >= 5 or any(w.endswith(p) for p in [".", ",", "!", "?", ";"]):
+                chunks.append(" ".join(curr))
+                curr = []
+        if curr:
+            chunks.append(" ".join(curr))
+
+        num_chunks = len(chunks)
+        time_per_chunk = max(0.8, duration_sec / max(1, num_chunks))
+
+        def _fmt_time(s):
+            hrs = int(s // 3600)
+            mins = int((s % 3600) // 60)
+            secs = int(s % 60)
+            millis = int(round((s - int(s)) * 1000))
+            return f"{hrs:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+
+        srt_lines = []
+        for idx, text in enumerate(chunks, 1):
+            start = (idx - 1) * time_per_chunk
+            end = min(duration_sec, idx * time_per_chunk)
+            if start >= duration_sec:
+                break
+            srt_lines.append(f"{idx}\n{_fmt_time(start)} --> {_fmt_time(end)}\n{text}\n")
+
+        os.makedirs(os.path.dirname(output_srt), exist_ok=True)
+        with open(output_srt, "w", encoding="utf-8") as f:
+            f.write("\n".join(srt_lines))
+        return output_srt
+
+    @classmethod
     def build_clustered_qc_filters(
         cls,
         watermark_blurs: list,
@@ -2041,11 +2088,13 @@ class EditorProcessor:
         output_w: int = 1080,
         output_h: int = 1920,
         red_to_gray_lut_path: str = "",
-        log_fn=None
+        log_fn=None,
+        qc_blur_strength: int = 75
     ) -> tuple[str, str]:
         """
         Gom cụm không gian (Spatial Clustering) và hợp nhất thời gian theo chuẩn 100% của Tóm Tắt Video.
         Đảm bảo không bao giờ sinh ra hàng chục filter gblur/split/overlay chồng chéo gây lỗi FFmpeg.
+        Độ mờ gblur được điều khiển chính xác bằng thanh trượt qc_blur_strength (10% - 100%).
         Trả về: (qc_filters_str, final_v_label)
         """
         def _log(msg: str):
@@ -2137,7 +2186,13 @@ class EditorProcessor:
 
         pad_x = 4
         pad_y = 4
-        blur_filter_spec = "gblur=sigma=6.0:steps=1"
+        
+        # Tính toán độ mờ Gaussian blur linh hoạt từ thanh trượt (10% - 100%, 100% -> sigma=12.0)
+        blur_val = max(10, min(100, int(qc_blur_strength or 75)))
+        sigma_val = max(1.0, round((blur_val / 100.0) * 12.0, 1))
+        blur_filter_spec = f"gblur=sigma={sigma_val}:steps=1"
+        _log(f"🛡️ [BLUR INTENSITY] Độ mờ che AI: {blur_val}% (Gaussian sigma={sigma_val})")
+        
         clean_chain_filters = []
         filter_seq = 0
 
@@ -2820,22 +2875,54 @@ class EditorProcessor:
         finish_stage("3. Xử lý + ghép âm thanh", stage_started)
         stage_started = time.perf_counter()
 
-        # Dùng thẳng script TTS: bỏ hoàn toàn Whisper CPU ở hậu kỳ vì kết quả của
-        # nó trước đây vẫn bị SRT exact ghi đè, vừa chậm vừa có thể sai nội dung.
         perfect_srt_path = ""
         exact_srt_path = os.path.join(specific_dir, "voice_script_exact.srt")
         enable_sub = bool(post_options.get("enable_sub", True))
         if original_audio_mode:
-            logger.info("⏭️ [TIẾNG GỐC] Không tạo/nhúng subtitle vì không có lời đọc AI.")
+            # Nếu tiếng gốc nhưng có sẵn transcript.srt hoặc user muốn hiện sub
+            alt_srt = os.path.join(specific_dir, "transcript.srt")
+            if enable_sub and os.path.exists(exact_srt_path) and os.path.getsize(exact_srt_path) > 0:
+                perfect_srt_path = exact_srt_path
+                logger.info("📝 [TIẾNG GỐC] Đã nhúng phụ đề voice_script_exact.srt có sẵn.")
+            elif enable_sub and os.path.exists(alt_srt) and os.path.getsize(alt_srt) > 0:
+                perfect_srt_path = alt_srt
+                logger.info("📝 [TIẾNG GỐC] Đã nhúng phụ đề transcript.srt gốc.")
+            else:
+                logger.info("⏭️ [TIẾNG GỐC] Không nhúng subtitle vì không có file phụ đề gốc.")
         elif not enable_sub:
             logger.info("⏭️ [SUBTITLE TẮT] Phụ đề đã được tắt trong cấu hình Title & Sub.")
-        elif os.path.exists(exact_srt_path):
+        elif os.path.exists(exact_srt_path) and os.path.getsize(exact_srt_path) > 0:
             # Path A burn sub trước rồi mới setpts tăng tốc toàn bộ hình. Vì vậy
             # SRT phải giữ timeline gốc; setpts sẽ tự co sub đúng cùng audio.
             perfect_srt_path = exact_srt_path
             logger.info("📝 [SUB EXACT] Path A dùng đúng nội dung script TTS, không dùng transcript nguồn.")
         else:
-            raise FileNotFoundError("Thiếu voice_script_exact.srt; dừng render để tránh nhúng sai subtitle.")
+            # TỰ ĐỘNG TẠO SRT THEO TƯ DUY TÍNH NĂNG TOP NẾU CHƯA CÓ FILE EXACT SRT
+            script_text = ""
+            for candidate_name in ["voice_script.txt", "summary.txt", "script.txt"]:
+                cp = os.path.join(specific_dir, candidate_name)
+                if os.path.exists(cp):
+                    try:
+                        with open(cp, "r", encoding="utf-8") as f_s:
+                            script_text = f_s.read().strip()
+                        if script_text:
+                            break
+                    except Exception:
+                        pass
+            if not script_text:
+                script_text = str(post_options.get("voice_script") or post_options.get("narration") or "").strip()
+
+            if script_text and float(total_voice_duration or 0) > 0:
+                logger.info("📝 [SUB TOP-STYLE] Đang tự động tạo phụ đề phân đoạn 4-6 từ chuẩn Top Compilation từ kịch bản...")
+                try:
+                    cls.generate_srt_for_script(script_text, float(total_voice_duration), exact_srt_path)
+                    if os.path.exists(exact_srt_path) and os.path.getsize(exact_srt_path) > 0:
+                        perfect_srt_path = exact_srt_path
+                        logger.info("✅ [SUB GENERATED] Đã tạo thành công phụ đề chuẩn xác: %s", exact_srt_path)
+                except Exception as gen_err:
+                    logger.warning("⚠️ Lỗi khi tự động tạo SRT từ kịch bản: %s", gen_err)
+            else:
+                logger.warning("⚠️ Không tìm thấy kịch bản lời đọc để tạo subtitle; video sẽ được render không có sub.")
 
         # --- BỔ SUNG SHIFT SUB CHO PATH A ĐỂ KHỚP VỚI [HOOK] + [1S SILENCE] ---
         # SRT được burn trước setpts nên offset cũng giữ timeline gốc. Sau đó setpts
@@ -3032,10 +3119,12 @@ class EditorProcessor:
         audio_input_index = timeline_input_count + 1
 
         curr_v_label = "vout"
+        qc_blur_val = int(post_options.get("qc_blur_strength", 75))
         qc_filters_str, curr_v_label = cls.build_clustered_qc_filters(
             watermark_blurs, duration_sec=audio_mix_raw,
             curr_v_label=curr_v_label, output_w=cls.OUTPUT_W, output_h=cls.OUTPUT_H,
-            red_to_gray_lut_path=red_to_gray_lut_path
+            red_to_gray_lut_path=red_to_gray_lut_path,
+            qc_blur_strength=qc_blur_val
         )
 
         v_chain = []

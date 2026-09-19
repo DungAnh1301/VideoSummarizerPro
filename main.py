@@ -775,7 +775,7 @@ class ProfessionalVideoApp:
         )
         self.random_broll_mirror_chk.pack(side=tk.LEFT, padx=(16, 0))
 
-        # Hàng 4: Quét lưới AI xóa logo & sub cũ
+        # Hàng 4: Quét lưới AI xóa logo & sub cũ + Slider độ mờ 10-100%
         anti_copyright_row = ttk.Frame(f3)
         anti_copyright_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(1, 1))
         self.scramble_original_audio_var = tk.BooleanVar(value=False)
@@ -789,6 +789,37 @@ class ProfessionalVideoApp:
             variable=self.gemini_grid_inspector_var,
         )
         self.gemini_grid_inspector_chk.pack(side=tk.LEFT)
+
+        ttk.Label(anti_copyright_row, text="Độ mờ che:").pack(side=tk.LEFT, padx=(14, 4))
+        self.qc_blur_strength_var = tk.IntVar(
+            value=int(self.config.get("qc_blur_strength", 75))
+        )
+        self.qc_blur_strength_lbl = ttk.Label(
+            anti_copyright_row,
+            text=f"{self.qc_blur_strength_var.get()}%",
+            font=("Segoe UI", 9, "bold"),
+            foreground="#2563EB",
+            width=5
+        )
+        def _on_qc_blur_slider(val):
+            try:
+                v = int(float(val))
+                self.qc_blur_strength_var.set(v)
+                self.qc_blur_strength_lbl.config(text=f"{v}%")
+            except Exception:
+                pass
+
+        self.qc_blur_scale = ttk.Scale(
+            anti_copyright_row,
+            from_=10,
+            to=100,
+            value=self.qc_blur_strength_var.get(),
+            orient=tk.HORIZONTAL,
+            length=110,
+            command=_on_qc_blur_slider
+        )
+        self.qc_blur_scale.pack(side=tk.LEFT, padx=(0, 2))
+        self.qc_blur_strength_lbl.pack(side=tk.LEFT)
 
         # Hàng 5: Xóa thư mục tạm sau xuất (mặc định tắt — an toàn)
         self.cleanup_temp_var = tk.BooleanVar(value=bool(self.config.get("cleanup_temp_after_export", False)))
@@ -3171,6 +3202,8 @@ class ProfessionalVideoApp:
             self.config["scramble_original_audio"] = bool(self.scramble_original_audio_var.get())
         if hasattr(self, "gemini_grid_inspector_var"):
             self.config["gemini_grid_inspector"] = bool(self.gemini_grid_inspector_var.get())
+        if hasattr(self, "qc_blur_strength_var"):
+            self.config["qc_blur_strength"] = int(self.qc_blur_strength_var.get())
         self.config["use_crop"] = self.config.get("use_crop", False)
         # CHỈ LƯU VÙNG CROP THỰC TẾ, KHÔNG ĐỂ ĐÈ LÊN KHUNG GỐC
         self.config["crop_w"] = self.config.get("crop_w", 1920)
@@ -3341,6 +3374,13 @@ class ProfessionalVideoApp:
                 self.scramble_original_audio_var.set(bool(self.config.get("scramble_original_audio", True)))
             if hasattr(self, "gemini_grid_inspector_var"):
                 self.gemini_grid_inspector_var.set(bool(self.config.get("gemini_grid_inspector", True)))
+            if hasattr(self, "qc_blur_strength_var"):
+                b_val = int(self.config.get("qc_blur_strength", 75))
+                self.qc_blur_strength_var.set(b_val)
+                if hasattr(self, "qc_blur_strength_lbl"):
+                    self.qc_blur_strength_lbl.config(text=f"{b_val}%")
+                if hasattr(self, "qc_blur_scale"):
+                    self.qc_blur_scale.set(b_val)
             if hasattr(self, "cleanup_temp_var"):
                 self.cleanup_temp_var.set(bool(self.config.get("cleanup_temp_after_export", False)))
             if hasattr(self, "on_ai_voice_toggle"):
@@ -4997,6 +5037,8 @@ class ProfessionalVideoApp:
             "sub_size": int(self.config.get("sub_size", 16 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 22)),
             "sub_outline": int(self.config.get("sub_outline", 2 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 3)),
             "sub_shadow": int(self.config.get("sub_shadow", 1 if self.config.get("sub_style_type", "tiktok_slim") == "tiktok_slim" else 0)),
+            "enable_title": bool(self.config.get("enable_title", True)),
+            "enable_sub": bool(self.config.get("enable_sub", True)),
             "title_y_pos": int(self.config.get("title_y_pos", 260)),
             "title_color1": self.config.get("title_color1", "black"),
             "title_color2": self.config.get("title_color2", "red"),
@@ -5019,6 +5061,11 @@ class ProfessionalVideoApp:
                 self.gemini_grid_inspector_var.get()
                 if hasattr(self, "gemini_grid_inspector_var")
                 else self.config.get("gemini_grid_inspector", True)
+            ),
+            "qc_blur_strength": int(
+                self.qc_blur_strength_var.get()
+                if hasattr(self, "qc_blur_strength_var")
+                else self.config.get("qc_blur_strength", 75)
             ),
             "api_key": self.api_key_entry.get().strip() if hasattr(self, "api_key_entry") else str(self.config.get("api_key", "")),
             "ai_model": self.ai_model_cb.get().strip() if hasattr(self, "ai_model_cb") else str(self.config.get("ai_model", "")),
@@ -5688,6 +5735,11 @@ class ProfessionalVideoApp:
                 self.gemini_grid_inspector_var.get()
                 if hasattr(self, "gemini_grid_inspector_var")
                 else self.config.get("gemini_grid_inspector", True)
+            )
+            post_options["qc_blur_strength"] = int(
+                self.qc_blur_strength_var.get()
+                if hasattr(self, "qc_blur_strength_var")
+                else self.config.get("qc_blur_strength", 75)
             )
             post_options["api_key"] = self.api_key_entry.get().strip() if hasattr(self, "api_key_entry") else str(self.config.get("api_key", ""))
             post_options["ai_model"] = self.ai_model_cb.get().strip() if hasattr(self, "ai_model_cb") else str(self.config.get("ai_model", ""))

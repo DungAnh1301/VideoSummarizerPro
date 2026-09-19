@@ -674,14 +674,37 @@ class EditorAI:
 
         # Whisper trên (1s + giọng) đã atempo; chỉ cộng hook (hook không speed).
         exact_srt = os.path.join(specific_dir, "voice_script_exact.srt")
-        if os.path.exists(exact_srt):
+        if not os.path.exists(exact_srt) or os.path.getsize(exact_srt) == 0:
+            from editor_processor import EditorProcessor
+            script_text = ""
+            for candidate_name in ["voice_script.txt", "summary.txt", "script.txt"]:
+                cp = os.path.join(specific_dir, candidate_name)
+                if os.path.exists(cp):
+                    try:
+                        with open(cp, "r", encoding="utf-8") as f_s:
+                            script_text = f_s.read().strip()
+                        if script_text:
+                            break
+                    except Exception:
+                        pass
+            if not script_text:
+                script_text = str(post_options.get("voice_script") or post_options.get("narration") or "").strip()
+            if script_text and float(total_voice_duration or 0) > 0:
+                try:
+                    EditorProcessor.generate_srt_for_script(script_text, float(total_voice_duration), exact_srt)
+                except Exception as gen_err:
+                    logger.warning("⚠️ Lỗi sinh SRT fallback trong EditorAI: %s", gen_err)
+
+        if os.path.exists(exact_srt) and os.path.getsize(exact_srt) > 0:
             speed = float(post_options.get("speed", 1.0) or 1.0)
             scaled_exact = os.path.join(specific_dir, "voice_script_exact_scaled.srt")
             raw_srt = cls.scale_srt_timestamps(exact_srt, 1.0 / max(speed, 0.01), scaled_exact)
             total_sub_offset = hook_duration + (HOOK_TO_VOICE_SILENCE_SEC / max(speed, 0.01))
             logger.info("📝 [SUB EXACT] Path B dùng đúng nội dung script TTS, không dùng transcript nguồn.")
         else:
-            raise FileNotFoundError("Thiếu voice_script_exact.srt; dừng render để tránh nhúng sai subtitle.")
+            raw_srt = ""
+            total_sub_offset = 0.0
+            logger.warning("⚠️ Không có file SRT hợp lệ cho Path B; render không sub.")
         used_srt = cls.align_srt_to_hook_timeline(raw_srt, total_sub_offset, specific_dir)
         first_cue = cls.first_srt_cue_start(used_srt)
         if first_cue >= 0:

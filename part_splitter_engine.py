@@ -763,7 +763,8 @@ class PartSplitterEngine:
                         watermark_blurs, duration_sec=part_dur,
                         curr_v_label="vout", output_w=1080, output_h=1920,
                         red_to_gray_lut_path=red_to_gray_lut_path,
-                        log_fn=_log
+                        log_fn=_log,
+                        qc_blur_strength=int(cfg.get("qc_blur_strength", 75))
                     )
             except Exception as qc_e:
                 _log(f"⚠️ [AI QC PART {p_idx}] Bỏ qua quét AI do: {qc_e}")

@@ -2369,11 +2369,13 @@ class CompilationProcessor:
                     red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""
 
                     if safe_blurs:
+                        qc_blur_val = int(post_options.get("qc_blur_strength", 75))
                         qc_filters_str, final_v_lbl = EditorProcessor.build_clustered_qc_filters(
                             safe_blurs, duration_sec=total_timeline_dur,
                             curr_v_label="0:v", output_w=1080, output_h=1920,
                             red_to_gray_lut_path=red_to_gray_lut_path,
-                            log_fn=logger.info
+                            log_fn=logger.info,
+                            qc_blur_strength=qc_blur_val
                         )
 
             import concurrent.futures

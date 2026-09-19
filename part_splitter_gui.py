@@ -120,6 +120,7 @@ class PartSplitterFrame(ttk.Frame):
         self.random_mirror_var = tk.BooleanVar(value=bool(c.get("random_mirror", False)))
         self.part_prefix_var = tk.StringVar(value=c.get("part_label_prefix", "Part"))
         self.gemini_grid_inspector_var = tk.BooleanVar(value=bool(c.get("gemini_grid_inspector", True)))
+        self.qc_blur_strength_var = tk.IntVar(value=int(c.get("qc_blur_strength", 75)))
         self.cleanup_temp_var = tk.BooleanVar(value=bool(c.get("cleanup_temp_after_export", False)))
 
         # Trạng thái tổng
@@ -546,12 +547,40 @@ class PartSplitterFrame(ttk.Frame):
             foreground="#1E40AF", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
-        # Hàng 4: Quét lưới AI xóa logo & Xóa rác tạm
+        # Hàng 4: Quét lưới AI xóa logo & sub cũ + Slider độ mờ 10-100%
         clean_row = ttk.Frame(f3)
         clean_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
         ttk.Checkbutton(
             clean_row, text="🔍 Quét lưới AI xóa logo & sub cũ", variable=self.gemini_grid_inspector_var
-        ).pack(side=tk.LEFT, padx=(0, 12))
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        ttk.Label(clean_row, text="Độ mờ che:").pack(side=tk.LEFT, padx=(6, 4))
+        self.qc_blur_strength_lbl = ttk.Label(
+            clean_row,
+            text=f"{self.qc_blur_strength_var.get()}%",
+            font=("Segoe UI", 9, "bold"),
+            foreground="#2563EB",
+            width=5
+        )
+        def _on_ps_qc_blur(val):
+            try:
+                v = int(float(val))
+                self.qc_blur_strength_var.set(v)
+                self.qc_blur_strength_lbl.config(text=f"{v}%")
+            except Exception:
+                pass
+
+        self.qc_blur_scale = ttk.Scale(
+            clean_row,
+            from_=10,
+            to=100,
+            value=self.qc_blur_strength_var.get(),
+            orient=tk.HORIZONTAL,
+            length=100,
+            command=_on_ps_qc_blur
+        )
+        self.qc_blur_scale.pack(side=tk.LEFT, padx=(0, 2))
+        self.qc_blur_strength_lbl.pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Checkbutton(
             clean_row, text="Xóa thư mục tạm sau khi xuất video", variable=self.cleanup_temp_var
@@ -748,6 +777,13 @@ class PartSplitterFrame(ttk.Frame):
             self.random_mirror_var.set(bool(c.get("random_mirror", False)))
             self.part_prefix_var.set(c.get("part_label_prefix", "Part"))
             self.gemini_grid_inspector_var.set(bool(c.get("gemini_grid_inspector", True)))
+            if hasattr(self, "qc_blur_strength_var"):
+                b_val = int(c.get("qc_blur_strength", 75))
+                self.qc_blur_strength_var.set(b_val)
+                if hasattr(self, "qc_blur_strength_lbl"):
+                    self.qc_blur_strength_lbl.config(text=f"{b_val}%")
+                if hasattr(self, "qc_blur_scale"):
+                    self.qc_blur_scale.set(b_val)
             self.cleanup_temp_var.set(bool(c.get("cleanup_temp_after_export", False)))
 
             self.workflow_mode_var.set(c.get("workflow_mode", "single"))
@@ -885,6 +921,8 @@ class PartSplitterFrame(ttk.Frame):
         c["random_mirror"] = bool(self.random_mirror_var.get())
         c["part_label_prefix"] = self.part_prefix_var.get().strip() or "Part"
         c["gemini_grid_inspector"] = bool(self.gemini_grid_inspector_var.get())
+        if hasattr(self, "qc_blur_strength_var"):
+            c["qc_blur_strength"] = int(self.qc_blur_strength_var.get())
         c["cleanup_temp_after_export"] = bool(self.cleanup_temp_var.get())
 
         save_part_config(c)

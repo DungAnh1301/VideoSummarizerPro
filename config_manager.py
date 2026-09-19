@@ -72,6 +72,7 @@ def normalize_config(data, defaults=None):
     data.setdefault("enable_sub", True)
     data.setdefault("scramble_original_audio", True)
     data.setdefault("gemini_grid_inspector", True)
+    data.setdefault("qc_blur_strength", 75)
     data.setdefault("auto_shot_detection", True)
     data.setdefault("compilation_source_type", "playlist")
     data.setdefault("compilation_source_path", "")
@@ -112,6 +113,7 @@ def normalize_config(data, defaults=None):
             payload.setdefault("broll_max_sec", 3.5)
             payload.setdefault("scramble_original_audio", True)
             payload.setdefault("gemini_grid_inspector", True)
+            payload.setdefault("qc_blur_strength", 75)
             payload.setdefault("auto_shot_detection", True)
             payload.setdefault("scale_w", 100.0)
             payload.setdefault("scale_h", 100.0)
@@ -261,6 +263,7 @@ def load_config():
         "broll_max_sec": 3.5,
         "scramble_original_audio": True,
         "gemini_grid_inspector": True,
+        "qc_blur_strength": 75,
         "auto_shot_detection": True,
         "visual_pool_ratio": 2.0,
         "narration_min_words_per_90s": 200,
