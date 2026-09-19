@@ -356,7 +356,78 @@ class PartSplitterEngine:
             _log("⏭️ [PRUNER] Không cần cắt đoạn thừa nào, dùng trực tiếp video gốc.")
             return source_video, keep_ranges
 
-        # 2. Xây dựng filter_complex concat để ghép các đoạn giữ lại
+        # 2. Thử ghép nối siêu tốc bằng Stream Copy (0-3 giây thay vì re-encode 1.5 phút)
+        clean_dir = os.path.dirname(os.path.abspath(output_clean))
+        os.makedirs(clean_dir, exist_ok=True)
+        temp_segs = []
+        use_stream_copy = True
+        try:
+            for i, (k_s, k_e) in enumerate(keep_ranges):
+                seg_path = os.path.join(clean_dir, f"_prune_seg_{i}.mp4")
+                temp_segs.append(seg_path)
+                cmd_seg = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{k_s:.2f}",
+                    "-to", f"{k_e:.2f}",
+                    "-i", source_video,
+                    "-c", "copy",
+                    "-avoid_negative_ts", "make_zero",
+                    seg_path
+                ]
+                _ff_run(cmd_seg, log_fn=None, timeout=300)
+                if not os.path.exists(seg_path) or os.path.getsize(seg_path) == 0:
+                    use_stream_copy = False
+                    break
+
+            if use_stream_copy:
+                list_txt = os.path.join(clean_dir, "_prune_concat.txt")
+                with open(list_txt, "w", encoding="utf-8") as f:
+                    for sp in temp_segs:
+                        p_norm = os.path.abspath(sp).replace("\\", "/")
+                        f.write(f"file '{p_norm}'\n")
+
+                cmd_concat = [
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", list_txt,
+                    "-c", "copy",
+                    output_clean
+                ]
+                _log(f"🎬 [PRUNER] Đang ghép các đoạn tinh lược bằng Stream Copy siêu tốc...")
+                _ff_run(cmd_concat, log_fn=log_fn, timeout=300)
+
+                out_dur = probe_duration_sec(output_clean)
+                if out_dur > 0 and os.path.exists(output_clean) and os.path.getsize(output_clean) > 1000:
+                    _log(f"✅ [PRUNER] Video gốc sạch hoàn tất bằng Stream Copy ({out_dur:.1f}s)")
+                    for sp in temp_segs:
+                        try:
+                            if os.path.exists(sp):
+                                os.remove(sp)
+                        except Exception:
+                            pass
+                    try:
+                        if os.path.exists(list_txt):
+                            os.remove(list_txt)
+                    except Exception:
+                        pass
+                    return output_clean, keep_ranges
+                else:
+                    use_stream_copy = False
+        except Exception as copy_err:
+            _log(f"⚠️ [PRUNER] Stream Copy không khả dụng ({copy_err}), chuyển sang encode filter an toàn...")
+            use_stream_copy = False
+        finally:
+            if not use_stream_copy:
+                for sp in temp_segs:
+                    try:
+                        if os.path.exists(sp):
+                            os.remove(sp)
+                    except Exception:
+                        pass
+
+        # Fallback: Nếu stream copy không áp dụng được, dùng filter_complex concat re-encode an toàn
+        _log(f"🎬 [PRUNER] Đang kết xuất video gốc sạch bằng filter encode ({output_clean})...")
         v_filters = []
         a_filters = []
         concat_inputs = []
@@ -382,7 +453,6 @@ class PartSplitterEngine:
             "-c:a", "aac", "-b:a", "192k",
             output_clean
         ]
-        _log(f"🎬 [PRUNER] Đang kết xuất video gốc sạch ({output_clean})...")
         _ff_run(cmd, log_fn=log_fn, timeout=2400)
         _log(f"✅ [PRUNER] Video gốc sạch hoàn tất ({probe_duration_sec(output_clean):.1f}s)")
         return output_clean, keep_ranges
@@ -767,18 +837,31 @@ class PartSplitterEngine:
                     qc_frames_dir = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
                     os.makedirs(qc_frames_dir, exist_ok=True)
 
-                    # Trích xuất 8-10 frame đại diện bằng fps={kf_fps} siêu tốc (<1-2s) thay vì giải mã toàn bộ video 1fps
-                    kf_fps = max(0.02, min(1.0, 10.0 / max(10.0, part_dur)))
-                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
-                    cmd_kf = [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        *ff_threads,
-                        "-i", raw_part,
-                        "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
-                        "-map", "[outkf]",
-                        os.path.join(qc_frames_dir, "frame_%04d.jpg")
-                    ]
-                    _ff_run(cmd_kf, log_fn=None, timeout=60)
+                    # Trích xuất 8-10 frame đại diện bằng Fast Direct Seek siêu tốc (<1-2s)
+                    n_kfs_part = max(6, min(10, int(part_dur / 20.0) or 8))
+                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[0:v]")
+                    sample_times_part = [((i + 0.5) / float(n_kfs_part)) * part_dur for i in range(n_kfs_part)]
+                    import concurrent.futures
+
+                    def _extract_part_kf(item_tuple):
+                        k_idx, k_t = item_tuple
+                        out_fp = os.path.join(qc_frames_dir, f"frame_{k_idx:04d}.jpg")
+                        cmd_kf = [
+                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-ss", f"{k_t:.2f}",
+                            "-i", raw_part,
+                            "-vframes", "1",
+                            "-filter_complex", f"{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                            "-map", "[outkf]",
+                            out_fp
+                        ]
+                        try:
+                            _ff_run(cmd_kf, log_fn=None, timeout=20)
+                        except Exception:
+                            pass
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, os.cpu_count() or 4)) as kf_pool:
+                        list(kf_pool.map(_extract_part_kf, enumerate(sample_times_part)))
 
                     frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
                     if frame_files:

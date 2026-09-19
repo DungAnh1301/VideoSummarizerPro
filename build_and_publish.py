@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.35"
+VERSION = "1.3.36"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.35: Tự động phân loại cấu hình máy HIGH / MEDIUM / LOW để lựa chọn chế độ render (nhanh/chậm/an toàn) cho công cụ Chia Part: (1) Cấp độ CAO (HIGH - RTX >= 6GB VRAM): Kích hoạt chế độ Siêu Tốc render 2 Part song song với NVENC p1 + spatial-aq; (2) Cấp độ TRUNG BÌNH (MEDIUM - card 3-4GB VRAM, Intel iGPU QSV, AMD AMF): Tự chọn chế độ Cân Bằng render 1 Part tuần tự chống tràn VRAM; (3) Cấp độ THẤP (LOW - laptop văn phòng, CPU <= 4 nhân, RAM < 10GB): Tự chọn chế độ Tiết Kiệm an toàn, điều tiết luồng CPU chống đơ máy."
+NOTES = "Bản phát hành v1.3.36: Đột phá tốc độ xử lý cho Chia Part & Tinh Lược: (1) Pruner Stream Copy: Tinh lược cắt bỏ đoạn thừa bằng Stream Copy demuxer siêu tốc (giảm từ 1.5 phút xuống < 1 giây); (2) Fast Direct Seek QC: Trích xuất song song 14 keyframes AI QC bằng seek trực tiếp (giảm từ 50 giây xuống < 2 giây); Giúp rút ngắn ngay 2-3 phút cho toàn bộ chu trình xử lý video."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

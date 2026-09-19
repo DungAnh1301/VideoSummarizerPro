@@ -2158,21 +2158,31 @@ class PartSplitterFrame(ttk.Frame):
                     qc_master_dir = os.path.join(work_dir, "qc_frames_master")
                     os.makedirs(qc_master_dir, exist_ok=True)
 
-                    # Trích xuất 12-16 frames trên toàn video sạch bằng fps đại diện siêu tốc
+                    # Trích xuất 12-16 frames trên toàn video sạch bằng Fast Direct Seek song song siêu tốc (<1-2s thay vì 50s)
                     n_kfs = 14
-                    kf_fps = max(0.01, min(1.0, float(n_kfs) / max(10.0, clean_dur)))
-                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
-                    cpu_threads = min(8, os.cpu_count() or 4)
-                    cmd_kf = [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-threads", "0", "-filter_complex_threads", str(cpu_threads),
-                        "-i", cleaned_video,
-                        "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
-                        "-map", "[outkf]",
-                        os.path.join(qc_master_dir, "frame_%04d.jpg")
-                    ]
-                    from part_splitter_engine import _ff_run
-                    _ff_run(cmd_kf, log_fn=None, timeout=60)
+                    sample_times = [((i + 0.5) / float(n_kfs)) * clean_dur for i in range(n_kfs)]
+                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[0:v]")
+
+                    def _extract_master_kf(item_tuple):
+                        k_idx, k_t = item_tuple
+                        out_fp = os.path.join(qc_master_dir, f"frame_{k_idx:04d}.jpg")
+                        cmd_kf = [
+                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                            "-ss", f"{k_t:.2f}",
+                            "-i", cleaned_video,
+                            "-vframes", "1",
+                            "-filter_complex", f"{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                            "-map", "[outkf]",
+                            out_fp
+                        ]
+                        try:
+                            from part_splitter_engine import _ff_run
+                            _ff_run(cmd_kf, log_fn=None, timeout=20)
+                        except Exception:
+                            pass
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, os.cpu_count() or 4)) as kf_pool:
+                        list(kf_pool.map(_extract_master_kf, enumerate(sample_times)))
 
                     frame_files = sorted([os.path.join(qc_master_dir, f) for f in os.listdir(qc_master_dir) if f.endswith(".jpg")])
                     if frame_files:
