@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import sys
 import json
 import time
@@ -1427,14 +1429,22 @@ class PartSplitterFrame(ttk.Frame):
             self.output_dir_var.set(d)
 
     def open_output_folder(self):
-        out_dir = os.path.abspath(self.output_dir_var.get().strip() or "output/parts")
-        os.makedirs(out_dir, exist_ok=True)
+        sel = self.queue_tree.selection() if hasattr(self, "queue_tree") else None
+        target_dir = ""
+        if sel:
+            selected_id = sel[0]
+            job = next((j for j in self.queue_items if j.get("id") == selected_id), None)
+            if job and job.get("output_dir") and os.path.isdir(job.get("output_dir")):
+                target_dir = os.path.abspath(job["output_dir"])
+        if not target_dir:
+            target_dir = os.path.abspath(self.output_dir_var.get().strip() or "output/parts")
+        os.makedirs(target_dir, exist_ok=True)
         if sys.platform == "win32":
-            os.startfile(out_dir)
+            os.startfile(target_dir)
         elif sys.platform == "darwin":
-            os.system(f'open "{out_dir}"')
+            os.system(f'open "{target_dir}"')
         else:
-            os.system(f'xdg-open "{out_dir}"')
+            os.system(f'xdg-open "{target_dir}"')
 
     def _open_multi_link_popup(self):
         """Cửa sổ dán danh sách nhiều link YouTube cùng lúc để thêm hàng loạt vào hàng đợi."""
@@ -2103,17 +2113,46 @@ class PartSplitterFrame(ttk.Frame):
             log_fn=self.log
         )
 
+        # Xác định tên thư mục riêng cho video này trong output_dir (mỗi video 1 thư mục riêng biệt)
+        def _sanitize_folder_name(name: str, max_len: int = 120) -> str:
+            s = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', str(name or "")).strip()
+            s = re.sub(r'\s+', ' ', s)
+            return s[:max_len].strip(". _-")
+
+        raw_title = ""
+        if source_mode == "youtube" and "meta" in locals() and isinstance(meta, dict):
+            raw_title = meta.get("title", "")
+        if not raw_title and video_path:
+            raw_title = os.path.splitext(os.path.basename(video_path))[0]
+        if not raw_title:
+            raw_title = job.get("name", "")
+
+        ai_master = str(ai_plan.get("master_title") or "").strip()
+        if ai_master and ai_master.lower() not in ("video", "unknown title", "video_task"):
+            folder_title = ai_master
+        elif raw_title and raw_title.lower() not in ("video", "source_video", "video_task", "unknown title"):
+            folder_title = raw_title
+        else:
+            folder_title = job.get("name") or f"video_{job_id}"
+
+        video_folder_name = _sanitize_folder_name(folder_title) or f"Video_Job_{job_id}"
+        video_out_dir = os.path.join(out_dir, video_folder_name)
+        os.makedirs(video_out_dir, exist_ok=True)
+        self.log(f"📁 [THƯ MỤC XUẤT] Thư mục riêng cho video: {video_out_dir}")
+
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
         job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
         final_part_files = []
+        part_prefix = str(cfg.get("part_label_prefix", "Part")).strip() or "Part"
 
         for i, p_item in enumerate(parts_info):
             raw_part = p_item["raw_path"] if isinstance(p_item, dict) else str(p_item)
             part_title = (p_item.get("title") if isinstance(p_item, dict) else None) or (
-                ai_plan.get("part_titles", [])[i] if i < len(ai_plan.get("part_titles", [])) else f"Part {i+1}"
+                ai_plan.get("part_titles", [])[i] if i < len(ai_plan.get("part_titles", [])) else f"{part_prefix} {i+1}"
             )
-            final_out = os.path.join(out_dir, f"{cfg.get('part_label_prefix', 'Part')}_{i+1}_{hashlib.md5(part_title.encode()).hexdigest()[:6]}.mp4")
+            # Tên file video xuất sạch sẽ trong thư mục riêng: Part 1.mp4, Part 2.mp4...
+            final_out = os.path.join(video_out_dir, f"{part_prefix} {i+1}.mp4")
 
             # Xác định hook cho Part
             hook_range = None
@@ -2124,27 +2163,29 @@ class PartSplitterFrame(ttk.Frame):
             elif cfg.get("hook_mode") == "shared":
                 hook_range = ai_plan.get("hooks", {}).get("global_hook")
 
-            self.log(f"🎬 Hậu kỳ Part {i+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.05)}x, Banner...")
+            self.log(f"🎬 Hậu kỳ {part_prefix} {i+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.05)}x, Banner...")
             PartSplitterEngine.apply_part_hook_and_postprocessing(
                 raw_part_path=raw_part,
                 hook_time_range=hook_range,
                 speed=cfg.get("source_speed", 1.05),
                 apply_limiter=cfg.get("apply_capcut_limiter", True),
                 apply_subtle_zoom=cfg.get("apply_subtle_zoom", True),
-                part_label_prefix=cfg.get("part_label_prefix", "Part"),
+                part_label_prefix=part_prefix,
                 part_index=i + 1,
                 part_title=part_title,
                 output_final=final_out,
                 config=cfg,
-                log_fn=self.log
+                log_fn=self.log,
+                work_dir=work_dir
             )
             final_part_files.append(final_out)
 
         # 8. Hoàn thành job
         job["status"] = "Hoàn thành"
-        job["output"] = f"{len(final_part_files)} Parts -> {os.path.basename(out_dir)}"
+        job["output_dir"] = video_out_dir
+        job["output"] = f"{len(final_part_files)} Parts -> {video_folder_name}"
         self.after(0, self._refresh_queue_table)
-        self.log(f"🎉 [THÀNH CÔNG] Job {job_id} đã xuất {len(final_part_files)} Parts vào: {out_dir}")
+        self.log(f"🎉 [THÀNH CÔNG] Job {job_id} đã xuất {len(final_part_files)} Parts vào: {video_out_dir}")
 
         if cfg.get("cleanup_temp_after_export"):
             try:

@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.30"
+VERSION = "1.3.31"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.30: (1) Thêm thanh trượt độ mờ che Logo / Sub AI (10% - 100%) tương ứng Gaussian sigma=1.2 đến 12.0 trên Tab 3 và Chia Part; (2) Đồng bộ phụ đề (Subtitle) chuẩn Top Compilation: khắc phục lỗi gom options enable_sub, tự động tạo SRT 4-6 từ phong cách CapCut khi chưa có exact SRT, nhúng font ASS mượt mà."
+NOTES = "Bản phát hành v1.3.31: (1) Xuất Part chuyên nghiệp theo từng thư mục riêng mang tên video (output/parts/<Tên_Video>/Part 1.mp4, Part 2.mp4...), loại bỏ tình trạng lưu chung hỗn loạn; (2) Cách ly tuyệt đối và xóa sạch file rác qc_frames_p*, thư mục xuất chỉ chứa duy nhất các video thành phẩm sạch 100%."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

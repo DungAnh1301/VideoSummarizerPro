@@ -13,6 +13,8 @@ import json
 import logging
 import math
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -653,8 +655,14 @@ class PartSplitterEngine:
 
         _log(f"🎬 [HẬU KỲ PART {p_idx}] Bắt đầu hoàn thiện: Canvas 9:16 | Tốc độ {speed}x | Limiter +20dB ({audio_boost}dB) | Màu sắc & Crop Studio...")
 
-        temp_dir = os.path.dirname(os.path.abspath(output_final))
+        # Luôn đặt các file tạm (banner, hook teaser, processed part, qc_frames) trong work_dir hoặc thư mục chứa raw_part
+        # Tuyệt đối KHÔNG tạo trong thư mục xuất thành phẩm (output_final) để thư mục xuất chỉ chứa video sạch 100%
+        temp_dir = kwargs.get("work_dir") or kwargs.get("temp_dir") or (os.path.dirname(os.path.abspath(raw_part)) if raw_part else "")
+        if not temp_dir or not os.path.exists(temp_dir):
+            temp_dir = os.path.abspath(os.path.join("temp", "part_splitter_tmp"))
         os.makedirs(temp_dir, exist_ok=True)
+        if output_final:
+            os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
 
         # 2. Xây dựng Filter Complex chuẩn 100% theo EditorProcessor của Tóm Tắt Video
         from editor_processor import EditorProcessor
@@ -770,6 +778,14 @@ class PartSplitterEngine:
                 _log(f"⚠️ [AI QC PART {p_idx}] Bỏ qua quét AI do: {qc_e}")
                 curr_v_label = "vout"
                 clean_chain_str = ""
+            finally:
+                # Dọn dẹp sạch sẽ toàn bộ thư mục qc_frames ngay khi quét xong để không bao giờ bị lộ ra ngoài
+                qc_frames_candidate = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
+                if os.path.isdir(qc_frames_candidate):
+                    try:
+                        shutil.rmtree(qc_frames_candidate, ignore_errors=True)
+                    except Exception:
+                        pass
 
         # Tăng tốc video bằng setpts
         if abs(speed - 1.0) >= 0.01:
@@ -850,12 +866,19 @@ class PartSplitterEngine:
                     pass
             os.replace(processed_part_path, output_final)
 
-        # Dọn file ảnh banner tạm
-        try:
-            if os.path.isfile(banner_png):
-                os.remove(banner_png)
-        except Exception:
-            pass
+        # Dọn file trung gian tạm thời trong temp_dir
+        for temp_file in [banner_png, hook_clip_path, processed_part_path]:
+            if temp_file and os.path.isfile(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+        qc_frames_candidate = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
+        if os.path.isdir(qc_frames_candidate):
+            try:
+                shutil.rmtree(qc_frames_candidate, ignore_errors=True)
+            except Exception:
+                pass
 
         _log(f"🎉 [HOÀN THÀNH PART {p_idx}] Xuất video thành công: {os.path.basename(output_final)} ({probe_duration_sec(output_final):.1f}s)")
         return output_final
