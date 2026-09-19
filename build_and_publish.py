@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.26"
+VERSION = "1.3.27"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.26: (1) Khắc phục triệt để lỗi 'DownloaderProcessor() takes no arguments' khi tải video YouTube trong tab Chia Part & Tinh Lược Video Gốc; (2) Bổ sung hàm khởi tạo instance DownloaderProcessor(output_dir, log_fn) và phương thức download() tích hợp tự động bóc tách phụ đề caption.srt; (3) Nâng cấp bộ quét Smart Fluff Cut & Intro Bumper tránh cắt lẹm và tối ưu hóa keyframe AI QC cho video dài."
+NOTES = "Bản phát hành v1.3.27: (1) Khắc phục lỗi 'type object PartPrunerAI has no attribute analyze_and_plan' trong tiến trình Chia Part & Tinh Lược; (2) Tích hợp liền mạch Gemini AI qua Antigravity CLI và Gemini API cho PartPrunerAI.analyze_and_plan; (3) Hỗ trợ đầy đủ tham số radius/tolerance trong bộ soát mốc cắt PartSplitterEngine.refine_cuts_with_opencv_and_audio."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

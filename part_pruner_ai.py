@@ -80,6 +80,61 @@ class PartPrunerAI:
     """Bộ phân tích kịch bản thông minh bằng Gemini AI."""
 
     @classmethod
+    def analyze_and_plan(
+        cls,
+        video_path: str = "",
+        srt_path: str = "",
+        total_duration: float = 0.0,
+        part_count: int = None,
+        target_prune_sec: float = None,
+        hook_target_sec: float = None,
+        gemini_client = None,
+        model_name: str = None,
+        api_key: str = None,
+        auto_title: bool = None,
+        part_prefix: str = None,
+        config: Dict[str, Any] = None,
+        job_dir: str = "",
+        original_title: str = "",
+        log_fn = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Tương thích ngược và linh hoạt cho mọi kiểu gọi phân tích AI."""
+        cfg = dict(config or {})
+        if part_count is not None:
+            cfg["part_count"] = part_count
+        if hook_target_sec is not None:
+            cfg["hook_target_sec"] = hook_target_sec
+        if model_name is not None:
+            cfg["gemini_model"] = model_name
+        if api_key is not None:
+            cfg["gemini_api_key"] = api_key
+            if str(api_key).strip():
+                cfg["gemini_auth_mode"] = "api_key"
+        if auto_title is not None:
+            cfg["auto_regenerate_title"] = auto_title
+        if part_prefix is not None:
+            cfg["part_label_prefix"] = part_prefix
+        if target_prune_sec is not None:
+            cfg["prune_enabled"] = target_prune_sec > 0
+            if total_duration > 0:
+                cfg["prune_percent"] = (target_prune_sec / total_duration) * 100.0
+
+        target_dir = job_dir or (os.path.dirname(video_path) if video_path else "")
+        v_title = original_title
+        if not v_title and video_path:
+            v_title = os.path.splitext(os.path.basename(video_path))[0]
+
+        return cls.analyze_video_structure(
+            total_duration=total_duration,
+            srt_path=srt_path,
+            config=cfg,
+            job_dir=target_dir,
+            original_title=v_title,
+            log_fn=log_fn
+        )
+
+    @classmethod
     def analyze_video_structure(
         cls,
         total_duration: float,

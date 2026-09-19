@@ -1998,7 +1998,10 @@ class PartSplitterFrame(ttk.Frame):
             model_name=cfg.get("gemini_model", "gemini-2.5-flash"),
             api_key=cfg.get("gemini_api_key", ""),
             auto_title=cfg.get("auto_regenerate_title", True),
-            part_prefix=cfg.get("part_label_prefix", "Part")
+            part_prefix=cfg.get("part_label_prefix", "Part"),
+            config=cfg,
+            job_dir=work_dir,
+            log_fn=self.log
         )
 
         self.log(f"🎯 Tiêu đề Viral (ngôn ngữ gốc): {ai_plan.get('master_title', 'Video')}")
@@ -2012,7 +2015,9 @@ class PartSplitterFrame(ttk.Frame):
             ai_cuts=ai_plan.get("part_splits", []),
             scene_map=None,
             srt_cues=cues,
-            radius=0.5
+            tolerance=0.5,
+            radius=0.5,
+            log_fn=self.log
         )
 
         # 5. Cắt bỏ đoạn thừa & Ghép video gốc sạch
@@ -2025,7 +2030,8 @@ class PartSplitterFrame(ttk.Frame):
             cleaned_video, _ = PartSplitterEngine.prune_and_build_cleaned_source(
                 source_video=video_path,
                 drop_ranges=ai_plan.get("prune_plan", []),
-                output_clean=clean_out
+                output_clean=clean_out,
+                log_fn=self.log
             )
 
         # 6. Chia Part
@@ -2037,7 +2043,8 @@ class PartSplitterFrame(ttk.Frame):
             cut_points=refined_splits,
             output_dir=work_dir,
             part_label_prefix=cfg.get("part_label_prefix", "Part"),
-            part_titles=ai_plan.get("part_titles", [])
+            part_titles=ai_plan.get("part_titles", []),
+            log_fn=self.log
         )
 
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner

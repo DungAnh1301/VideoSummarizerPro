@@ -129,13 +129,18 @@ class PartSplitterEngine:
         scene_map: Dict[str, Any] = None,
         srt_cues: List[Dict[str, Any]] = None,
         tolerance: float = 0.5,
-        log_fn: Optional[Callable[[str], None]] = None
+        radius: float = None,
+        log_fn: Optional[Callable[[str], None]] = None,
+        **kwargs
     ) -> List[float]:
         """Soát lại các mốc của AI trong bán kính +-tolerance (0.5s):
         - Hít vào điểm chuyển cảnh (Scene Cut) của scene_mapper.
         - Hít vào khoảng lặng (Silence Gap) giữa 2 câu thoại trong SRT.
         - Triệt tiêu 100% lỗi cụt tiếng hoặc giật hình.
         """
+        if radius is not None:
+            tolerance = radius
+
         def _log(msg: str):
             logger.info(msg)
             if callable(log_fn):
