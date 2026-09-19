@@ -1361,10 +1361,11 @@ class EditorProcessor:
         if use_custom_hook:
             # Path B (AI hook): giữ nguyên graph cũ, không đụng nhánh này.
             # Nền cuối cùng vốn bị blur mạnh: xử lý ở 360x640 rồi upscale giúp
-            # giảm gần 9 lần số pixel của boxblur mà không làm mềm foreground.
+            # giảm gần 9 lần số pixel của blur mà không làm mềm foreground.
+            # Dùng avgblur=8 thay cho boxblur=12:6 để tận dụng AVX2 SIMD đa luồng siêu tốc.
             bg_pipeline = (
                 f"{input_label}scale=360:640:force_original_aspect_ratio=increase,"
-                "crop=360:640,boxblur=12:6,scale=1080:1920:flags=bilinear[bg];"
+                "crop=360:640,avgblur=8,scale=1080:1920:flags=bilinear[bg];"
             )
             if use_crop:
                 fg_base = f"{input_label}crop={crop_w}:{crop_h}:{crop_x}:{crop_y}"
@@ -1407,7 +1408,7 @@ class EditorProcessor:
             )
             vf += (
                 "[v_ref_bg]scale=360:640:force_original_aspect_ratio=increase,"
-                f"crop=360:640,boxblur=12:6,scale={cls.OUTPUT_W}:{cls.OUTPUT_H}:flags=bilinear[bg];"
+                f"crop=360:640,avgblur=8,scale={cls.OUTPUT_W}:{cls.OUTPUT_H}:flags=bilinear[bg];"
             )
             fg_chain = (
                 f"[v_ref]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"

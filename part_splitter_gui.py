@@ -18,6 +18,7 @@ import time
 import glob
 import hashlib
 import threading
+import concurrent.futures
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
@@ -2140,30 +2141,134 @@ class PartSplitterFrame(ttk.Frame):
         os.makedirs(video_out_dir, exist_ok=True)
         self.log(f"📁 [THƯ MỤC XUẤT] Thư mục riêng cho video: {video_out_dir}")
 
+        # 6.5. Single-Pass AI QC: Quét AI 1 lần duy nhất trên toàn bộ timeline của cleaned_video
+        # Thay vì gọi Gemini 4 lần độc lập cho 4 part (mất 2-3 phút), quét 1 lần (15-20s) rồi phân bổ cho từng part!
+        enable_gemini_qc = bool(cfg.get("gemini_grid_inspector", True))
+        master_blurs = []
+        if enable_gemini_qc:
+            from antigravity_processor import AntigravityProcessor
+            api_key = str(cfg.get("gemini_api_key") or cfg.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
+            has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
+            if has_ai_service:
+                try:
+                    from ai_processor import AIProcessor
+                    from editor_processor import EditorProcessor
+                    clean_dur = probe_duration_sec(cleaned_video)
+
+                    qc_master_dir = os.path.join(work_dir, "qc_frames_master")
+                    os.makedirs(qc_master_dir, exist_ok=True)
+
+                    # Trích xuất 12-16 frames trên toàn video sạch bằng fps đại diện siêu tốc
+                    n_kfs = 14
+                    kf_fps = max(0.01, min(1.0, float(n_kfs) / max(10.0, clean_dur)))
+                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
+                    cpu_threads = min(8, os.cpu_count() or 4)
+                    cmd_kf = [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-threads", "0", "-filter_complex_threads", str(cpu_threads),
+                        "-i", cleaned_video,
+                        "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                        "-map", "[outkf]",
+                        os.path.join(qc_master_dir, "frame_%04d.jpg")
+                    ]
+                    from part_splitter_engine import _ff_run
+                    _ff_run(cmd_kf, log_fn=None, timeout=60)
+
+                    frame_files = sorted([os.path.join(qc_master_dir, f) for f in os.listdir(qc_master_dir) if f.endswith(".jpg")])
+                    if frame_files:
+                        self.log(f"⚡ [AI QC SINGLE-PASS] Quét toàn bộ video ({clean_dur:.1f}s) qua {len(frame_files)} keyframes...")
+                        n_frames = len(frame_files)
+                        step_dur = clean_dur / float(n_frames)
+                        kf_items = []
+                        for idx, fp in enumerate(frame_files):
+                            st = idx * step_dur
+                            en = min(clean_dur, (idx + 1) * step_dur)
+                            kf_items.append({
+                                "path": fp,
+                                "start_sec": max(0.0, st),
+                                "end_sec": min(clean_dur, en),
+                                "sample_sec": (st + en) / 2.0
+                            })
+
+                        model_name = str(cfg.get("gemini_model") or cfg.get("ai_model") or "")
+                        detected_items = AIProcessor.inspect_90s_grid_for_copyright(
+                            api_key=api_key, model_name=model_name,
+                            duration_sec=clean_dur,
+                            keyframes=kf_items
+                        )
+                        if detected_items:
+                            master_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
+                                detected_items, qc_master_dir, duration_sec=clean_dur
+                            )
+                            self.log(f"✅ [AI QC SINGLE-PASS] Đã phát hiện {len(master_blurs)} vùng logo/sub/máu cần che trên toàn video.")
+                        else:
+                            master_blurs = []
+                except Exception as qc_err:
+                    self.log(f"⚠️ [AI QC SINGLE-PASS] Không thể quét toàn cục ({qc_err}), fallback sang quét từng part.")
+                    master_blurs = None
+                finally:
+                    qc_master_candidate = os.path.join(work_dir, "qc_frames_master")
+                    if os.path.isdir(qc_master_candidate):
+                        try:
+                            shutil.rmtree(qc_master_candidate, ignore_errors=True)
+                        except Exception:
+                            pass
+        else:
+            master_blurs = []
+
+        # Phân bổ các vùng mờ về từng part theo mốc start/end của part
+        parts_blurs_map = {}
+        if master_blurs is not None:
+            for i, p_item in enumerate(parts_info):
+                p_start = float(p_item.get("start", 0.0)) if isinstance(p_item, dict) else 0.0
+                p_end = float(p_item.get("end", 0.0)) if isinstance(p_item, dict) else 0.0
+                p_dur = max(0.0, p_end - p_start)
+                if p_dur <= 0.0:
+                    parts_blurs_map[i] = []
+                    continue
+                p_blurs = []
+                for b in master_blurs:
+                    b_s = float(b.get("start_sec", 0.0))
+                    b_e = float(b.get("end_sec", 0.0))
+                    if b_e > p_start and b_s < p_end:
+                        b_c = dict(b)
+                        b_c["start_sec"] = max(0.0, b_s - p_start)
+                        b_c["end_sec"] = min(p_dur, b_e - p_start)
+                        if "intervals" in b and isinstance(b["intervals"], list):
+                            new_ivs = []
+                            for iv in b["intervals"]:
+                                iv_s, iv_e = float(iv[0]), float(iv[1])
+                                if iv_e > p_start and iv_s < p_end:
+                                    new_ivs.append([max(0.0, iv_s - p_start), min(p_dur, iv_e - p_start)])
+                            if new_ivs:
+                                b_c["intervals"] = new_ivs
+                        p_blurs.append(b_c)
+                parts_blurs_map[i] = p_blurs
+
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
+        # Render song song tối đa 2 part đồng thời (Dual NVENC/CPU) để ép thời gian xuống dưới 4 phút
         job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
-        final_part_files = []
         part_prefix = str(cfg.get("part_label_prefix", "Part")).strip() or "Part"
 
-        for i, p_item in enumerate(parts_info):
+        def _render_one_part(i_idx: int, p_item: Any) -> tuple[int, str]:
             raw_part = p_item["raw_path"] if isinstance(p_item, dict) else str(p_item)
             part_title = (p_item.get("title") if isinstance(p_item, dict) else None) or (
-                ai_plan.get("part_titles", [])[i] if i < len(ai_plan.get("part_titles", [])) else f"{part_prefix} {i+1}"
+                ai_plan.get("part_titles", [])[i_idx] if i_idx < len(ai_plan.get("part_titles", [])) else f"{part_prefix} {i_idx+1}"
             )
-            # Tên file video xuất sạch sẽ trong thư mục riêng: Part 1.mp4, Part 2.mp4...
-            final_out = os.path.join(video_out_dir, f"{part_prefix} {i+1}.mp4")
+            final_out = os.path.join(video_out_dir, f"{part_prefix} {i_idx+1}.mp4")
 
-            # Xác định hook cho Part
             hook_range = None
             if cfg.get("hook_mode") == "individual":
                 ind_hooks = ai_plan.get("hooks", {}).get("individual_hooks", [])
-                if i < len(ind_hooks):
-                    hook_range = ind_hooks[i]
+                if i_idx < len(ind_hooks):
+                    hook_range = ind_hooks[i_idx]
             elif cfg.get("hook_mode") == "shared":
                 hook_range = ai_plan.get("hooks", {}).get("global_hook")
 
-            self.log(f"🎬 Hậu kỳ {part_prefix} {i+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.05)}x, Banner...")
+            p_blurs = parts_blurs_map.get(i_idx, None) if master_blurs is not None else None
+
+            self.log(f"🎬 Bắt đầu hậu kỳ {part_prefix} {i_idx+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.05)}x, Banner...")
             PartSplitterEngine.apply_part_hook_and_postprocessing(
                 raw_part_path=raw_part,
                 hook_time_range=hook_range,
@@ -2171,14 +2276,32 @@ class PartSplitterFrame(ttk.Frame):
                 apply_limiter=cfg.get("apply_capcut_limiter", True),
                 apply_subtle_zoom=cfg.get("apply_subtle_zoom", True),
                 part_label_prefix=part_prefix,
-                part_index=i + 1,
+                part_index=i_idx + 1,
                 part_title=part_title,
                 output_final=final_out,
                 config=cfg,
                 log_fn=self.log,
-                work_dir=work_dir
+                work_dir=work_dir,
+                watermark_blurs=p_blurs
             )
-            final_part_files.append(final_out)
+            return i_idx, final_out
+
+        max_render_workers = 2 if len(parts_info) > 1 else 1
+        self.log(f"⚡ [RENDER ĐA NHIỆM] Tiến hành hậu kỳ {len(parts_info)} Parts (tối đa {max_render_workers} luồng GPU song song)...")
+
+        rendered_results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_render_workers) as executor:
+            future_to_idx = {
+                executor.submit(_render_one_part, i, p_item): i
+                for i, p_item in enumerate(parts_info)
+            }
+            for f in concurrent.futures.as_completed(future_to_idx):
+                idx_res, out_path = f.result()
+                rendered_results.append((idx_res, out_path))
+
+        # Đảm bảo danh sách thành phẩm sắp xếp chuẩn thứ tự Part 1, Part 2, Part 3, Part 4
+        rendered_results.sort(key=lambda x: x[0])
+        final_part_files = [x[1] for x in rendered_results]
 
         # 8. Hoàn thành job
         job["status"] = "Hoàn thành"

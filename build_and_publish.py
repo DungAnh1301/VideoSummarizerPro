@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.31"
+VERSION = "1.3.32"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.31: (1) Xuất Part chuyên nghiệp theo từng thư mục riêng mang tên video (output/parts/<Tên_Video>/Part 1.mp4, Part 2.mp4...), loại bỏ tình trạng lưu chung hỗn loạn; (2) Cách ly tuyệt đối và xóa sạch file rác qc_frames_p*, thư mục xuất chỉ chứa duy nhất các video thành phẩm sạch 100%."
+NOTES = "Bản phát hành v1.3.32: Tối ưu hóa siêu tốc thời gian cắt và xuất Chia Part xuống dưới 4 phút: (1) Single-Pass AI QC quét lưới AI 1 lần trên toàn bộ timeline thay vì gọi tuần tự 4 lần, tiết kiệm ~2 phút; (2) Tăng tốc FFmpeg SIMD AVX2 với avgblur=8 thay cho boxblur và tối ưu NVENC p1/spatial-aq đạt tốc độ 5.2x; (3) Render song song 2 Part đồng thời trên GPU card rời (Dual NVENC/CPU multi-threading)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

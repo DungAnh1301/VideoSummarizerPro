@@ -113,12 +113,12 @@ def get_best_video_encoder() -> Tuple[str, List[str]]:
         hw = detect_hardware()
         enc = hw.get("encoder", "libx264")
         if enc == "h264_nvenc":
-            return "h264_nvenc", ["-preset", "p2", "-cq", "18"]
+            return "h264_nvenc", ["-preset", "p1", "-cq", "19", "-spatial-aq", "1"]
         elif enc == "h264_qsv":
-            return "h264_qsv", ["-preset", "veryfast", "-global_quality", "18"]
+            return "h264_qsv", ["-preset", "veryfast", "-global_quality", "19"]
     except Exception:
         pass
-    return "libx264", ["-preset", "ultrafast", "-crf", "18"]
+    return "libx264", ["-preset", "ultrafast", "-crf", "19"]
 
 
 class PartSplitterEngine:
@@ -602,6 +602,7 @@ class PartSplitterEngine:
         output_final: str = "",
         config: Dict[str, Any] = None,
         log_fn: Optional[Callable[[str], None]] = None,
+        watermark_blurs: Optional[List[Dict[str, Any]]] = None,
         **kwargs
     ) -> str:
         """Hậu kỳ chuẩn 100% theo Tóm Tắt Video:
@@ -611,6 +612,7 @@ class PartSplitterEngine:
         - CapCut Limiter +20dB chống rè, Atempo dải rộng.
         - Title Banner chuẩn TikTok (chữ trắng viền đen không nền bo tròn).
         - Hỗ trợ linh hoạt cả 2 kiểu truyền tham số (kwargs hoặc dict).
+        - Hỗ trợ watermark_blurs truyền từ Single-Pass AI QC để không phải gọi lại AI.
         """
         def _log(msg: str):
             logger.info(msg)
@@ -637,6 +639,9 @@ class PartSplitterEngine:
         if not hook_info and "hook_time_range" in kwargs:
             hook_info = kwargs.get("hook_time_range")
 
+        if watermark_blurs is None and "watermark_blurs" in kwargs:
+            watermark_blurs = kwargs.get("watermark_blurs")
+
         cfg = dict(config or kwargs.get("config") or {})
         # Bổ sung các giá trị từ kwargs nếu config chưa có
         for k_src, k_dst in [
@@ -654,6 +659,10 @@ class PartSplitterEngine:
         audio_boost = float(cfg.get("audio_boost", 20.0) or 20.0)
 
         _log(f"🎬 [HẬU KỲ PART {p_idx}] Bắt đầu hoàn thiện: Canvas 9:16 | Tốc độ {speed}x | Limiter +20dB ({audio_boost}dB) | Màu sắc & Crop Studio...")
+
+        # Cấu hình luồng đa nhiệm FFmpeg tối đa để CPU và SIMD không bị nghẽn
+        cpu_threads = min(8, os.cpu_count() or 4)
+        ff_threads = ["-threads", "0", "-filter_complex_threads", str(cpu_threads)]
 
         # Luôn đặt các file tạm (banner, hook teaser, processed part, qc_frames) trong work_dir hoặc thư mục chứa raw_part
         # Tuyệt đối KHÔNG tạo trong thư mục xuất thành phẩm (output_final) để thư mục xuất chỉ chứa video sạch 100%
@@ -682,6 +691,7 @@ class PartSplitterEngine:
                 enc_name, enc_opts = get_best_video_encoder()
                 cmd_hook = [
                     "ffmpeg", "-y",
+                    *ff_threads,
                     "-ss", f"{h_start:.2f}",
                     "-to", f"{h_end:.2f}",
                     "-i", source_video,
@@ -713,57 +723,11 @@ class PartSplitterEngine:
         clean_chain_str = ""
         part_dur = probe_duration_sec(raw_part)
 
-        from antigravity_processor import AntigravityProcessor
-        api_key = str(cfg.get("gemini_api_key") or cfg.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
-        has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
-        if enable_gemini_qc and has_ai_service:
-            try:
-                from ai_processor import AIProcessor
-                qc_frames_dir = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
-                os.makedirs(qc_frames_dir, exist_ok=True)
-
-                # Trích xuất 8-10 frame đại diện bằng fps={kf_fps} siêu tốc (<1-2s) thay vì giải mã toàn bộ video 1fps
-                kf_fps = max(0.02, min(1.0, 10.0 / max(10.0, part_dur)))
-                qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
-                cmd_kf = [
-                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", raw_part,
-                    "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
-                    "-map", "[outkf]",
-                    os.path.join(qc_frames_dir, "frame_%04d.jpg")
-                ]
-                _ff_run(cmd_kf, log_fn=None, timeout=60)
-
-                frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
-                if frame_files:
-                    _log(f"🔍 [AI QC PART {p_idx}] Đang quét bản quyền, logo, sub cũ, banner & máu vi phạm trên {len(frame_files)} keyframes...")
-                    n_frames = len(frame_files)
-                    step_dur = part_dur / float(n_frames)
-                    kf_items = []
-                    for idx, fp in enumerate(frame_files):
-                        st = idx * step_dur
-                        en = min(part_dur, (idx + 1) * step_dur)
-                        kf_items.append({
-                            "path": fp,
-                            "start_sec": max(0.0, st),
-                            "end_sec": min(part_dur, en),
-                            "sample_sec": (st + en) / 2.0
-                        })
-
-                    model_name = str(cfg.get("gemini_model") or cfg.get("ai_model") or "")
-                    detected_items = AIProcessor.inspect_90s_grid_for_copyright(
-                        api_key=api_key, model_name=model_name,
-                        duration_sec=part_dur,
-                        keyframes=kf_items
-                    )
-
-                    if detected_items:
-                        watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
-                            detected_items, qc_frames_dir, duration_sec=part_dur
-                        )
-                    else:
-                        watermark_blurs = []
-
+        if watermark_blurs is not None:
+            # CHẾ ĐỘ TỐC ĐỘ CAO (SINGLE-PASS AI QC): Dùng kết quả đã quét sẵn từ master video
+            if enable_gemini_qc and watermark_blurs:
+                try:
+                    _log(f"⚡ [AI QC PART {p_idx}] Sử dụng {len(watermark_blurs)} vùng mờ logo/sub/máu từ Single-Pass AI QC...")
                     has_blood = any("blood" in str(item.get("label", "")).lower() for item in watermark_blurs)
                     red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""
 
@@ -774,18 +738,86 @@ class PartSplitterEngine:
                         log_fn=_log,
                         qc_blur_strength=int(cfg.get("qc_blur_strength", 75))
                     )
-            except Exception as qc_e:
-                _log(f"⚠️ [AI QC PART {p_idx}] Bỏ qua quét AI do: {qc_e}")
-                curr_v_label = "vout"
-                clean_chain_str = ""
-            finally:
-                # Dọn dẹp sạch sẽ toàn bộ thư mục qc_frames ngay khi quét xong để không bao giờ bị lộ ra ngoài
-                qc_frames_candidate = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
-                if os.path.isdir(qc_frames_candidate):
-                    try:
-                        shutil.rmtree(qc_frames_candidate, ignore_errors=True)
-                    except Exception:
-                        pass
+                except Exception as qc_e:
+                    _log(f"⚠️ [AI QC PART {p_idx}] Lỗi xử lý filter QC: {qc_e}")
+                    curr_v_label = "vout"
+                    clean_chain_str = ""
+        else:
+            # FALLBACK: Quét riêng từng part nếu không có watermark_blurs truyền vào
+            from antigravity_processor import AntigravityProcessor
+            api_key = str(cfg.get("gemini_api_key") or cfg.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
+            has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
+            if enable_gemini_qc and has_ai_service:
+                try:
+                    from ai_processor import AIProcessor
+                    qc_frames_dir = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
+                    os.makedirs(qc_frames_dir, exist_ok=True)
+
+                    # Trích xuất 8-10 frame đại diện bằng fps={kf_fps} siêu tốc (<1-2s) thay vì giải mã toàn bộ video 1fps
+                    kf_fps = max(0.02, min(1.0, 10.0 / max(10.0, part_dur)))
+                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[v_fps]")
+                    cmd_kf = [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        *ff_threads,
+                        "-i", raw_part,
+                        "-filter_complex", f"[0:v]fps={kf_fps:.6f}[v_fps];{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
+                        "-map", "[outkf]",
+                        os.path.join(qc_frames_dir, "frame_%04d.jpg")
+                    ]
+                    _ff_run(cmd_kf, log_fn=None, timeout=60)
+
+                    frame_files = sorted([os.path.join(qc_frames_dir, f) for f in os.listdir(qc_frames_dir) if f.endswith(".jpg")])
+                    if frame_files:
+                        _log(f"🔍 [AI QC PART {p_idx}] Đang quét bản quyền, logo, sub cũ, banner & máu vi phạm trên {len(frame_files)} keyframes...")
+                        n_frames = len(frame_files)
+                        step_dur = part_dur / float(n_frames)
+                        kf_items = []
+                        for idx, fp in enumerate(frame_files):
+                            st = idx * step_dur
+                            en = min(part_dur, (idx + 1) * step_dur)
+                            kf_items.append({
+                                "path": fp,
+                                "start_sec": max(0.0, st),
+                                "end_sec": min(part_dur, en),
+                                "sample_sec": (st + en) / 2.0
+                            })
+
+                        model_name = str(cfg.get("gemini_model") or cfg.get("ai_model") or "")
+                        detected_items = AIProcessor.inspect_90s_grid_for_copyright(
+                            api_key=api_key, model_name=model_name,
+                            duration_sec=part_dur,
+                            keyframes=kf_items
+                        )
+
+                        if detected_items:
+                            watermark_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
+                                detected_items, qc_frames_dir, duration_sec=part_dur
+                            )
+                        else:
+                            watermark_blurs = []
+
+                        has_blood = any("blood" in str(item.get("label", "")).lower() for item in watermark_blurs)
+                        red_to_gray_lut_path = EditorProcessor.ensure_red_to_gray_lut() if has_blood else ""
+
+                        clean_chain_str, curr_v_label = EditorProcessor.build_clustered_qc_filters(
+                            watermark_blurs, duration_sec=part_dur,
+                            curr_v_label="vout", output_w=1080, output_h=1920,
+                            red_to_gray_lut_path=red_to_gray_lut_path,
+                            log_fn=_log,
+                            qc_blur_strength=int(cfg.get("qc_blur_strength", 75))
+                        )
+                except Exception as qc_e:
+                    _log(f"⚠️ [AI QC PART {p_idx}] Bỏ qua quét AI do: {qc_e}")
+                    curr_v_label = "vout"
+                    clean_chain_str = ""
+                finally:
+                    # Dọn dẹp sạch sẽ toàn bộ thư mục qc_frames ngay khi quét xong để không bao giờ bị lộ ra ngoài
+                    qc_frames_candidate = os.path.join(temp_dir, f"qc_frames_p{p_idx}")
+                    if os.path.isdir(qc_frames_candidate):
+                        try:
+                            shutil.rmtree(qc_frames_candidate, ignore_errors=True)
+                        except Exception:
+                            pass
 
         # Tăng tốc video bằng setpts
         if abs(speed - 1.0) >= 0.01:
@@ -826,6 +858,7 @@ class PartSplitterEngine:
 
         cmd_main = [
             "ffmpeg", "-y",
+            *ff_threads,
             "-i", raw_part,
             "-i", banner_png,
             "-filter_complex", f"{video_filter_final};{audio_graph}",
@@ -843,6 +876,7 @@ class PartSplitterEngine:
             _log(f"🔗 [RÁP HOOK] Ghép teaser vào đầu Part {p_idx}...")
             cmd_concat = [
                 "ffmpeg", "-y",
+                *ff_threads,
                 "-i", hook_clip_path,
                 "-i", processed_part_path,
                 "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[outv][outa]",
