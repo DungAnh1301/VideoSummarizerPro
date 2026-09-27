@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.45"
+VERSION = "1.3.46"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.45: Triển khai Bản Thiết Kế Kỹ Thuật Toàn Diện (Master Plan WYSIWYG 1:1) chuẩn xác khung hình mẫu 9:16 cho cả 3 Chế Độ: (1) Crop, Zoom Scale & Blur Mask Studio (Hệ quy chiếu 1080x1920); (2) Bảng Màu CapCut 15 Thông Số & 12+ Look Preset với Preview 60FPS RAM & 3s Motion; (3) Title Banner Pill 2 dòng, Subtitle Whisper AI & Part Studio tương tác kéo thả trực tiếp."
+NOTES = "Bản phát hành v1.3.46: (1) Sửa triệt để lỗi import font_manager và tối ưu nạp font chữ quốc tế; (2) Fix lỗi màn hình đen ở khung hình mẫu preview 9:16 khi chưa chọn video bằng bộ sinh phôi frame rực rỡ trực quan 1920x1080; (3) Hoàn thiện đồng bộ 3 Tầng Studio WYSIWYG 1:1 (Crop Blur, CapCut Color, Title Sub) cho cả 3 Chế Độ."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

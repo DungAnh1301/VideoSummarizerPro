@@ -133,14 +133,29 @@ def open_capcut_color_popup(
     # 1. Lấy ảnh nền phôi từ Tầng 3 (layout_base.jpg)
     base_frame = LAYOUT_BASE_PATH
     if not os.path.isfile(base_frame):
-        # Tạo nhanh ảnh layout mặc định
-        from crop_blur_studio import extract_sample_frame, render_layout_image
-        f_sample = extract_sample_frame(video_path) if video_path else None
+        from crop_blur_studio import get_sample_or_fallback_image, render_layout_image
+        f_sample = get_sample_or_fallback_image(video_path)
+        zoom_val = float(cfg.get("zoom_in", cfg.get("zoom_percent", 168.0)))
+        if zoom_val > 10.0:
+            zoom_val /= 100.0
+        sx_val = float(cfg.get("scale_x", cfg.get("scale_w_percent", 100.0)))
+        if sx_val > 10.0:
+            sx_val /= 100.0
+        sy_val = float(cfg.get("scale_y", cfg.get("scale_h_percent", 125.0)))
+        if sy_val > 10.0:
+            sy_val /= 100.0
+
         render_layout_image(
             source_img_path=f_sample or "",
-            crop_x=0, crop_y=0, crop_w=1920, crop_h=1080,
-            zoom_pct=1.68, scale_x=1.0, scale_y=1.25,
-            blur_bg=True,
+            crop_x=int(cfg.get("crop_x", 0)),
+            crop_y=int(cfg.get("crop_y", 0)),
+            crop_w=int(cfg.get("crop_w", 1920)),
+            crop_h=int(cfg.get("crop_h", 1080)),
+            zoom_pct=zoom_val,
+            scale_x=sx_val,
+            scale_y=sy_val,
+            blur_bg=bool(cfg.get("blur_bg", True)),
+            blur_mask=cfg.get("blur_mask"),
             output_path=LAYOUT_BASE_PATH
         )
 

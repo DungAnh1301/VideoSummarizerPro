@@ -21,6 +21,80 @@ CACHE_FRAME_PATH = os.path.join(SYSTEM_DATA_DIR, "crop_preview_cache.jpg")
 LAYOUT_BASE_PATH = os.path.join(SYSTEM_DATA_DIR, "layout_base.jpg")
 
 
+def generate_vibrant_sample_frame(output_path: str = CACHE_FRAME_PATH) -> str:
+    """Tạo ảnh mẫu 1920x1080 rực rỡ, tương phản cao để test Crop, Zoom, Blur & Màu sắc."""
+    w, h = 1920, 1080
+    base = Image.new("RGB", (w, h))
+    draw = ImageDraw.Draw(base)
+    # Gradient màu sắc từ chàm đậm sang cam hoàng hôn
+    for y in range(h):
+        r = int(24 + (230 - 24) * (y / h))
+        g = int(24 + (70 - 24) * (y / h))
+        b = int(70 + (25 - 70) * (y / h))
+        draw.line([(0, y), (w, y)], fill=(r, g, b))
+    
+    # Dải màu Color Bars chuẩn ở đáy
+    bar_colors = [
+        (255, 40, 40), (255, 140, 0), (255, 230, 0), (34, 197, 94),
+        (6, 182, 212), (59, 130, 246), (168, 85, 247), (255, 255, 255), (100, 116, 139)
+    ]
+    bar_w = w // len(bar_colors)
+    for i, col in enumerate(bar_colors):
+        draw.rectangle([i * bar_w, h - 90, (i + 1) * bar_w, h], fill=col)
+
+    # Khung trung tâm
+    cx, cy = w // 2, h // 2
+    draw.rounded_rectangle([cx - 440, cy - 250, cx + 440, cy + 250], radius=24, fill=(15, 23, 42), outline=(255, 255, 255), width=3)
+    
+    try:
+        font_large = ImageFont.truetype("arialbd.ttf", 48)
+        font_sub = ImageFont.truetype("arial.ttf", 28)
+        font_tag = ImageFont.truetype("arialbd.ttf", 22)
+    except Exception:
+        font_large = ImageFont.load_default()
+        font_sub = font_large
+        font_tag = font_large
+
+    draw.text((cx, cy - 100), "🎬 SOURCE VIDEO SAMPLE (16:9)", fill=(255, 230, 0), anchor="mm", font=font_large)
+    draw.text((cx, cy - 30), "Khung Hình Mẫu Trực Quan 1920 x 1080", fill=(255, 255, 255), anchor="mm", font=font_sub)
+    draw.text((cx, cy + 50), "Hỗ trợ xem trước Crop, Zoom Scale, Blur Background & Màu CapCut", fill=(200, 230, 255), anchor="mm", font=font_sub)
+
+    draw.rectangle([60, 50, 280, 105], fill=(239, 68, 68))
+    draw.text((170, 77), "LIVE PREVIEW", fill=(255, 255, 255), anchor="mm", font=font_tag)
+
+    draw.rectangle([w - 300, 50, w - 60, 105], fill=(59, 130, 246))
+    draw.text((w - 180, 77), "FHD 1080x1920", fill=(255, 255, 255), anchor="mm", font=font_tag)
+
+    base.save(output_path, quality=95)
+    return output_path
+
+
+def get_sample_or_fallback_image(video_path: Optional[str] = None) -> str:
+    """Lấy frame từ video hoặc tìm ảnh mẫu trong dự án, fallback sang ảnh rực rỡ sinh tự động."""
+    if video_path and os.path.isfile(video_path):
+        extracted = extract_sample_frame(video_path, timestamp_sec=2.0)
+        if extracted and os.path.isfile(extracted):
+            return extracted
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "anhmau.jpg"),
+        os.path.join(base_dir, "extracted_source_frame.jpg"),
+        os.path.join(base_dir, "frame_test.jpg"),
+        CACHE_FRAME_PATH
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            try:
+                im = Image.open(p)
+                if im.size[0] >= 300 and im.size[1] >= 300:
+                    return p
+            except Exception:
+                pass
+
+    return generate_vibrant_sample_frame(CACHE_FRAME_PATH)
+
+
 def extract_sample_frame(video_path: str, timestamp_sec: float = 2.0) -> Optional[str]:
     """Bốc frame mẫu ở giây thứ 2.0s (tránh màn hình đen 0.0s) và lưu vào cache."""
     if not video_path or not os.path.isfile(video_path):
@@ -193,23 +267,11 @@ def open_crop_blur_studio_popup(
     cfg = dict(current_config or {})
     video_path = video_source or cfg.get("video_source") or cfg.get("source_url_or_path") or ""
 
-    # Trích xuất sample frame
-    frame_path = CACHE_FRAME_PATH
-    if video_path and os.path.isfile(video_path):
-        extracted = extract_sample_frame(video_path, timestamp_sec=2.0)
-        if extracted:
-            frame_path = extracted
-
-    if not os.path.isfile(frame_path):
-        # Tạo ảnh mẫu
-        dummy = Image.new("RGB", (1920, 1080), color=(30, 45, 65))
-        d = ImageDraw.Draw(dummy)
-        d.rectangle([50, 50, 1870, 1030], outline=(100, 200, 255), width=4)
-        d.text((750, 520), "FRAME MAU VIDEO GOC (1920x1080)", fill=(255, 255, 255))
-        dummy.save(frame_path)
+    # Trích xuất hoặc lấy ảnh mẫu chất lượng cao
+    frame_path = get_sample_or_fallback_image(video_path)
 
     # Load kích thước ảnh gốc
-    src_img = Image.open(frame_path)
+    src_img = Image.open(frame_path).convert("RGB")
     orig_w, orig_h = src_img.size
 
     popup = tk.Toplevel(parent)

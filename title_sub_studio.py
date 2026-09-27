@@ -10,7 +10,14 @@ from tkinter import ttk, colorchooser, messagebox
 from typing import Optional, Dict, Any, Callable
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 
-from font_manager import get_pillow_font
+try:
+    from font_manager import get_pillow_font, FontManager
+except Exception:
+    def get_pillow_font(size: int = 36, bold: bool = True, text: str = ""):
+        try:
+            return ImageFont.truetype("arialbd.ttf" if bold else "arial.ttf", size)
+        except Exception:
+            return ImageFont.load_default()
 
 SYSTEM_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_data")
 os.makedirs(SYSTEM_DATA_DIR, exist_ok=True)
@@ -139,9 +146,31 @@ def open_title_sub_studio_popup(
     # Lấy background từ Tầng 2 (color_base.jpg) hoặc Tầng 3 (layout_base.jpg)
     bg_frame = COLOR_BASE_PATH if os.path.isfile(COLOR_BASE_PATH) else LAYOUT_BASE_PATH
     if not os.path.isfile(bg_frame):
-        from crop_blur_studio import extract_sample_frame, render_layout_image
-        f_sample = extract_sample_frame(video_source or "")
-        render_layout_image(f_sample or "", 0, 0, 1920, 1080, 1.68, 1.0, 1.25, blur_bg=True, output_path=LAYOUT_BASE_PATH)
+        from crop_blur_studio import get_sample_or_fallback_image, render_layout_image
+        f_sample = get_sample_or_fallback_image(video_source or "")
+        zoom_val = float(cfg.get("zoom_in", cfg.get("zoom_percent", 168.0)))
+        if zoom_val > 10.0:
+            zoom_val /= 100.0
+        sx_val = float(cfg.get("scale_x", cfg.get("scale_w_percent", 100.0)))
+        if sx_val > 10.0:
+            sx_val /= 100.0
+        sy_val = float(cfg.get("scale_y", cfg.get("scale_h_percent", 125.0)))
+        if sy_val > 10.0:
+            sy_val /= 100.0
+
+        render_layout_image(
+            source_img_path=f_sample or "",
+            crop_x=int(cfg.get("crop_x", 0)),
+            crop_y=int(cfg.get("crop_y", 0)),
+            crop_w=int(cfg.get("crop_w", 1920)),
+            crop_h=int(cfg.get("crop_h", 1080)),
+            zoom_pct=zoom_val,
+            scale_x=sx_val,
+            scale_y=sy_val,
+            blur_bg=bool(cfg.get("blur_bg", True)),
+            blur_mask=cfg.get("blur_mask"),
+            output_path=LAYOUT_BASE_PATH
+        )
         bg_frame = LAYOUT_BASE_PATH
 
     base_img = Image.open(bg_frame).convert("RGB")

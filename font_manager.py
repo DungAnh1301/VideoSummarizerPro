@@ -238,3 +238,14 @@ class FontManager:
             "uppercase": meta["uppercase"],
             "bold": meta["bold"],
         }
+
+
+def get_pillow_font(size: int = 36, bold: bool = True, text: str = "") -> ImageFont.FreeTypeFont:
+    """Helper nạp font PIL ImageFont không bị lỗi Tofu []."""
+    font = FontManager.get_banner_font(text or "A", size)
+    if font is not None:
+        return font
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
