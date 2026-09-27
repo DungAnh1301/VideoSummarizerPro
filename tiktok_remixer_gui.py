@@ -32,9 +32,13 @@ class TikTokRemixerTab(ttk.Frame):
         self.queue_items: List[Dict[str, Any]] = []
         self.is_processing_queue = False
         self.stop_requested = False
+        self.edge_database = {}
+        self.capcut_database = {}
+        self.tts_database = {}
         
         self._build_ui()
         self._sync_ui_from_config()
+        self.init_tts_data()
 
     def _build_ui(self):
         # Bố cục 3 hàng:
@@ -164,25 +168,35 @@ class TikTokRemixerTab(ttk.Frame):
 
         self.use_ai_voice_var = tk.BooleanVar(value=True)
         chk_voice = ttk.Checkbutton(ai_group, text="✅ Bật giọng đọc AI thuyết minh kịch bản mới", variable=self.use_ai_voice_var)
-        chk_voice.grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=(0, 6))
+        chk_voice.grid(row=0, column=0, columnspan=7, sticky=tk.W, pady=(0, 6))
 
-        ttk.Label(ai_group, text="Engine TTS:").grid(row=1, column=0, sticky=tk.W, pady=3)
-        self.tts_engine_cb = ttk.Combobox(ai_group, values=["CapCut TTS", "Edge-TTS (Miễn phí)"], width=16, state="readonly")
+        # Hàng 1: TTS Engine, Vùng (Locale/Country), Giọng (Voice name), Test giọng 🔊
+        ttk.Label(ai_group, text="TTS:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.tts_engine_cb = ttk.Combobox(ai_group, values=["CapCut TTS", "Edge-TTS (Miễn phí)", "Google Translate TTS"], width=16, state="readonly")
         self.tts_engine_cb.grid(row=1, column=1, sticky=tk.W, padx=4, pady=3)
-        self.tts_engine_cb.set("CapCut TTS")
+        self.tts_engine_cb.set(self.config.get("engine_tts", "CapCut TTS"))
+        self.tts_engine_cb.bind("<<ComboboxSelected>>", self._on_engine_change)
 
-        ttk.Label(ai_group, text="Giọng đọc:").grid(row=1, column=2, sticky=tk.W, padx=(10, 2), pady=3)
+        ttk.Label(ai_group, text="Vùng:").grid(row=1, column=2, sticky=tk.W, padx=(8, 2), pady=3)
+        self.country_cb = ttk.Combobox(ai_group, width=14, state="readonly")
+        self.country_cb.grid(row=1, column=3, sticky=tk.W, padx=4, pady=3)
+        self.country_cb.bind("<<ComboboxSelected>>", self._on_country_change)
+
+        ttk.Label(ai_group, text="Giọng:").grid(row=1, column=4, sticky=tk.W, padx=(8, 2), pady=3)
         self.voice_name_cb = ttk.Combobox(ai_group, width=24, state="readonly")
-        self.voice_name_cb.grid(row=1, column=3, sticky=tk.W, padx=4, pady=3)
+        self.voice_name_cb.grid(row=1, column=5, sticky=tk.W, padx=4, pady=3)
+        self.voice_name_cb.bind("<<ComboboxSelected>>", self._on_voice_selected)
 
-        btn_test_voice = ttk.Button(ai_group, text="🔊 Nghe Thử", command=self._preview_voice, width=10)
-        btn_test_voice.grid(row=1, column=4, padx=4, pady=3)
+        btn_test_voice = ttk.Button(ai_group, text="🔊 Test", command=self._preview_voice, width=9, style="Tool.TButton")
+        btn_test_voice.grid(row=1, column=6, padx=4, pady=3)
 
+        # Hàng 2: Tốc độ TTS
         ttk.Label(ai_group, text="Tốc độ:").grid(row=2, column=0, sticky=tk.W, pady=3)
         self.tts_speed_cb = ttk.Combobox(ai_group, values=["-10%", "-5%", "+0%", "+5%", "+10%"], width=8, state="readonly")
         self.tts_speed_cb.grid(row=2, column=1, sticky=tk.W, padx=4, pady=3)
-        self.tts_speed_cb.set("+0%")
+        self.tts_speed_cb.set(self.config.get("tts_speed", "+0%"))
 
+        # Hàng 3: Bộ não AI
         ttk.Label(ai_group, text="Bộ não AI:").grid(row=3, column=0, sticky=tk.W, pady=(6, 2))
         lbl_ai_info = ttk.Label(
             ai_group,
@@ -190,7 +204,7 @@ class TikTokRemixerTab(ttk.Frame):
             foreground="#2563EB",
             font=("Segoe UI", 9, "bold")
         )
-        lbl_ai_info.grid(row=3, column=1, columnspan=4, sticky=tk.W, padx=4, pady=(6, 2))
+        lbl_ai_info.grid(row=3, column=1, columnspan=6, sticky=tk.W, padx=4, pady=(6, 2))
 
     def _build_tab3_remix_post(self):
         scene_group = ttk.LabelFrame(self.tab3, text=" 🎬 Phân Tách Cảnh Thông Minh & Re-mix ", padding=6)
@@ -442,51 +456,135 @@ class TikTokRemixerTab(ttk.Frame):
         except Exception:
             pass
 
+    def init_tts_data(self):
+        """Tải cơ sở dữ liệu giọng đọc CapCut & EdgeTTS và đồng bộ với giao diện."""
+        def load_thread():
+            from ai_processor import AIProcessor
+            if self.main_app and hasattr(self.main_app, "edge_database") and self.main_app.edge_database:
+                self.edge_database = self.main_app.edge_database
+            else:
+                self.edge_database = AIProcessor.get_all_edge_voices()
+
+            if self.main_app and hasattr(self.main_app, "capcut_database") and self.main_app.capcut_database:
+                self.capcut_database = self.main_app.capcut_database
+            else:
+                try:
+                    self.capcut_database = AIProcessor.get_all_capcut_voices()
+                except Exception:
+                    self.capcut_database = {
+                        "en-US": ["Jessie (DiT_en_female_jessie)", "Artist (en_female_nail_artist)"],
+                        "vi-VN": ["NamMinh (DiT_vi_male_namminh)"],
+                        "de-DE": ["de-DE-ConradNeural", "de-DE-KatjaNeural"]
+                    }
+
+            def update_ui():
+                saved_engine = self.config.get("engine_tts", "CapCut TTS")
+                if "CapCut" in saved_engine:
+                    self.tts_database = self.capcut_database
+                else:
+                    self.tts_database = self.edge_database
+
+                countries = sorted(list(self.tts_database.keys()))
+                self.country_cb['values'] = countries
+
+                saved_country = self.config.get("country", "")
+                if not saved_country or saved_country not in countries:
+                    target_market = self.config.get("target_market", "US")
+                    target_loc = get_market_profile(target_market).get("locale", "en-US")
+                    saved_country = target_loc if target_loc in countries else (countries[0] if countries else "")
+                if saved_country:
+                    self.country_cb.set(saved_country)
+
+                # Nạp danh sách giọng đọc theo quốc gia
+                voices = self.tts_database.get(saved_country, [])
+                self.voice_name_cb['values'] = voices
+                saved_voice = self.config.get("voice_name") or self.config.get("voice", "")
+                if saved_voice in voices:
+                    self.voice_name_cb.set(saved_voice)
+                elif voices:
+                    self.voice_name_cb.set(voices[0])
+
+            self.after(0, update_ui)
+
+        threading.Thread(target=load_thread, daemon=True).start()
+
+    def _on_engine_change(self, event=None):
+        engine = self.tts_engine_cb.get()
+        if "Edge-TTS" in engine:
+            self.tts_database = getattr(self, 'edge_database', {})
+            self.country_cb.config(state="readonly")
+            self.voice_name_cb.config(state="readonly")
+            if self.tts_database:
+                countries = sorted(list(self.tts_database.keys()))
+                self.country_cb['values'] = countries
+                loc = get_market_profile(self.config.get("target_market", "US"))["locale"]
+                self.country_cb.set(loc if loc in countries else countries[0])
+                self._on_country_change(None)
+        elif "CapCut TTS" in engine:
+            self.tts_database = getattr(self, 'capcut_database', {})
+            if not self.tts_database:
+                from ai_processor import AIProcessor
+                self.capcut_database = AIProcessor.get_all_capcut_voices()
+                self.tts_database = self.capcut_database
+            self.country_cb.config(state="readonly")
+            self.voice_name_cb.config(state="readonly")
+            countries = sorted(list(self.tts_database.keys()))
+            self.country_cb['values'] = countries
+            if countries:
+                loc = get_market_profile(self.config.get("target_market", "US"))["locale"]
+                self.country_cb.set(loc if loc in countries else countries[0])
+                self._on_country_change(None)
+        else:
+            self.country_cb.config(state=tk.DISABLED)
+            self.voice_name_cb.config(state=tk.DISABLED)
+            self.voice_name_cb['values'] = ["Google Translate TTS (Miễn phí)"]
+            self.voice_name_cb.set("Google Translate TTS (Miễn phí)")
+
+    def _on_country_change(self, event=None):
+        selected_country = self.country_cb.get()
+        voices = self.tts_database.get(selected_country, [])
+        self.voice_name_cb['values'] = voices
+        if voices:
+            preferred = voices[0]
+            for v in voices:
+                if "Andrew" in v or "NamMinh" in v or "jessie" in v.lower():
+                    preferred = v
+                    break
+            self.voice_name_cb.set(preferred)
+
+    def _on_voice_selected(self, event=None):
+        loc = self.country_cb.get().strip()
+        v = self.voice_name_cb.get().strip()
+        if loc and v:
+            self.config["country"] = loc
+            self.config["voice_name"] = v
+            self.config["voice"] = v
+
     def _on_market_change(self, event=None):
         sel_label = self.market_cb.get()
         for code, prof in MARKET_PROFILES.items():
             if prof["label"] == sel_label:
                 self.config["target_market"] = code
-                if self.auto_voice_locale_var.get():
-                    self._populate_voices_for_market(code)
+                if self.auto_voice_locale_var.get() and hasattr(self, "country_cb"):
+                    loc = prof.get("locale", "en-US")
+                    if loc in self.country_cb['values']:
+                        self.country_cb.set(loc)
+                        self._on_country_change(None)
                 break
 
-    def _populate_voices_for_market(self, market_code: str):
-        prof = get_market_profile(market_code)
-        loc = prof.get("locale", "de-DE")
-        if loc.startswith("de"):
-            self.voice_name_cb["values"] = ["de-DE-ConradNeural", "de-DE-KatjaNeural", "de-DE-KillianNeural", "de-DE-AmalaNeural"]
-            self.voice_name_cb.set("de-DE-ConradNeural")
-        elif loc.startswith("en"):
-            self.voice_name_cb["values"] = ["en-US-AriaNeural", "en-US-GuyNeural", "en-US-ChristopherNeural", "en-US-JennyNeural"]
-            self.voice_name_cb.set("en-US-AriaNeural")
-        elif loc.startswith("vi"):
-            self.voice_name_cb["values"] = ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]
-            self.voice_name_cb.set("vi-VN-HoaiMyNeural")
-        else:
-            self.voice_name_cb["values"] = [f"{loc}-StandardVoice"]
-            self.voice_name_cb.set(self.voice_name_cb["values"][0])
-
     def _preview_voice(self):
-        v_name = self.voice_name_cb.get()
-        if not v_name:
+        voice = self.voice_name_cb.get()
+        locale = self.country_cb.get()
+        if not voice:
             return
-        threading.Thread(target=self._run_voice_test, args=(v_name,), daemon=True).start()
-
-    def _run_voice_test(self, voice_name):
-        from ai_processor import AIProcessor
-        sample_text = "Hallo! Dies ist eine Teststimme für TikTok Remixer." if "de-DE" in voice_name else "Hello! This is a test voice for TikTok Remixer."
-        tmp_mp3 = os.path.join("temp", "test_voice.mp3")
-        os.makedirs("temp", exist_ok=True)
-        AIProcessor.generate_edge_tts(sample_text, voice_name, tmp_mp3)
-        if os.path.isfile(tmp_mp3):
+        def play_thread():
+            from ai_processor import AIProcessor
             try:
-                subprocess.Popen(["ffplay", "-nodisp", "-autoexit", tmp_mp3], creationflags=0x08000000 if os.name == "nt" else 0)
-            except Exception:
-                try:
-                    os.startfile(tmp_mp3)
-                except Exception:
-                    pass
+                self.log(f"🔊 Đang phát bản nghe thử [{voice}]...")
+                AIProcessor.preview_voice_audio(voice, locale)
+            except Exception as e:
+                self.log(f"⚠️ Lỗi nghe thử giọng: {e}")
+        threading.Thread(target=play_thread, daemon=True).start()
 
     def _open_color_studio(self):
         if self.main_app and hasattr(self.main_app, "open_capcut_color_popup"):
@@ -669,12 +767,13 @@ class TikTokRemixerTab(ttk.Frame):
                 narration_info = gemini_plan.get("rewritten_narration", {})
                 script_txt = narration_info.get("script_text", "")
                 eng = opts.get("engine_tts", "CapCut TTS")
-                voc = opts.get("voice_name", "de-DE-ConradNeural")
+                voc = opts.get("voice_name") or opts.get("voice", "Jessie (DiT_en_female_jessie)")
+                loc = opts.get("country") or opts.get("locale", "en-US")
                 spd = opts.get("tts_speed", "+0%")
 
-                update_cb("tts", "Tạo giọng đọc AI CapCut mới...")
+                update_cb("tts", f"Tạo giọng đọc AI ({eng} • {voc})...")
                 audio_f, srt_f, audio_dur = TikTokRemixerEngine.generate_narration_audio_and_sub(
-                    script_txt, engine_name=eng, voice_name=voc, speed_str=spd, output_dir=work_dir
+                    script_txt, engine_name=eng, voice_name=voc, locale=loc, speed_str=spd, output_dir=work_dir
                 )
 
                 # 4. Render Thành Phẩm
@@ -719,22 +818,36 @@ class TikTokRemixerTab(ttk.Frame):
         self.url_entry.delete(0, tk.END)
         self.url_entry.insert(0, self.config.get("source_url_or_path", ""))
         
-        m_code = self.config.get("target_market", "DE")
-        self.market_cb.set(get_market_profile(m_code)["label"])
-        self._populate_voices_for_market(m_code)
+        m_code = self.config.get("target_market", "US")
+        if m_code in MARKET_PROFILES:
+            self.market_cb.set(MARKET_PROFILES[m_code]["label"])
 
-        self.auto_clean_core_var.set(self.config.get("auto_clean_core_crop", True))
-        self.auto_blur_sub_var.set(self.config.get("auto_blur_sub_part", True))
-        self.blur_strength_spin.set(self.config.get("qc_blur_strength", 75))
-        self.ai_inspect_intro_outro_var.set(self.config.get("ai_inspect_intro_outro", True))
+        self.tts_engine_cb.set(self.config.get("engine_tts", "CapCut TTS"))
+        self.tts_speed_cb.set(self.config.get("tts_speed", "+0%"))
 
-        self.keep_hook_var.set(self.config.get("keep_original_hook", True))
-        self.smart_transition_var.set(self.config.get("smart_transition_cutout", True))
-        self.elastic_speed_var.set(self.config.get("elastic_broll_speed", True))
+        self.auto_clean_core_crop_var = getattr(self, "auto_clean_core_var", None)
+        if hasattr(self, "auto_clean_core_var"):
+            self.auto_clean_core_var.set(self.config.get("auto_clean_core_crop", True))
+        if hasattr(self, "auto_blur_sub_var"):
+            self.auto_blur_sub_var.set(self.config.get("auto_blur_sub_part", True))
+        if hasattr(self, "blur_strength_spin"):
+            self.blur_strength_spin.set(self.config.get("qc_blur_strength", 75))
+        if hasattr(self, "ai_inspect_intro_outro_var"):
+            self.ai_inspect_intro_outro_var.set(self.config.get("ai_inspect_intro_outro", True))
 
-        self.shuffle_broll_var.set(self.config.get("shuffle_broll", True))
-        self.mirror_broll_var.set(self.config.get("mirror_broll", True))
-        self.overlay_sub_on_blur_var.set(self.config.get("overlay_sub_on_blur_zone", True))
+        if hasattr(self, "keep_hook_var"):
+            self.keep_hook_var.set(self.config.get("keep_original_hook", True))
+        if hasattr(self, "smart_transition_var"):
+            self.smart_transition_var.set(self.config.get("smart_transition_cutout", True))
+        if hasattr(self, "elastic_speed_var"):
+            self.elastic_speed_var.set(self.config.get("elastic_broll_speed", True))
+
+        if hasattr(self, "shuffle_broll_var"):
+            self.shuffle_broll_var.set(self.config.get("shuffle_broll", True))
+        if hasattr(self, "mirror_broll_var"):
+            self.mirror_broll_var.set(self.config.get("mirror_broll", True))
+        if hasattr(self, "overlay_sub_on_blur_var"):
+            self.overlay_sub_on_blur_var.set(self.config.get("overlay_sub_on_blur_zone", True))
 
     def _collect_config_from_ui(self) -> dict:
         self.config["source_url_or_path"] = self.url_entry.get().strip()
@@ -748,7 +861,9 @@ class TikTokRemixerTab(ttk.Frame):
 
         self.config["use_ai_voice"] = bool(self.use_ai_voice_var.get())
         self.config["engine_tts"] = self.tts_engine_cb.get()
+        self.config["country"] = self.country_cb.get() if hasattr(self, "country_cb") else "en-US"
         self.config["voice_name"] = self.voice_name_cb.get()
+        self.config["voice"] = self.voice_name_cb.get()
         self.config["tts_speed"] = self.tts_speed_cb.get()
 
         self.config["keep_original_hook"] = bool(self.keep_hook_var.get())

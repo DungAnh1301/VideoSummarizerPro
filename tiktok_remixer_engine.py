@@ -289,7 +289,8 @@ OUTPUT FORMAT (JSON ONLY):
         cls,
         script_text: str,
         engine_name: str = "CapCut TTS",
-        voice_name: str = "de-DE-ConradNeural",
+        voice_name: str = "Jessie (DiT_en_female_jessie)",
+        locale: str = "en-US",
         speed_str: str = "+0%",
         output_dir: str = "temp"
     ) -> Tuple[Optional[str], Optional[str], float]:
@@ -300,11 +301,13 @@ OUTPUT FORMAT (JSON ONLY):
 
         from ai_processor import AIProcessor
         try:
-            # Tạo audio qua EdgeTTS hoặc CapCutTTS
-            if "CapCut" in engine_name:
-                audio_ok = AIProcessor.generate_capcut_tts(script_text, voice_name, audio_out)
-            else:
-                audio_ok = AIProcessor.generate_edge_tts(script_text, voice_name, audio_out, rate=speed_str)
+            # Tạo audio qua AIProcessor (hỗ trợ cả CapCut TTS, Edge-TTS, Google Translate TTS)
+            audio_ok = AIProcessor.generate_voice(
+                voice_option=voice_name,
+                text=script_text,
+                output_path=audio_out,
+                locale=locale
+            )
 
             if audio_ok and os.path.isfile(audio_out):
                 dur = cls.get_video_duration(audio_out)

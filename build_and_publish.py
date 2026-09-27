@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.43"
+VERSION = "1.3.44"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.43: Đồng bộ và tối ưu giao diện AI Gemini: (1) Đưa nút Đăng nhập & Kiểm tra trạng thái Gemini CLI lên thanh Header chung (cạnh nút Cookie) dùng xuyên suốt cả 3 Chế Độ; (2) Lược bỏ các khung đăng nhập Gemini trùng lặp ở Tab 2 giúp giao diện thông thoáng, tinh gọn."
+NOTES = "Bản phát hành v1.3.44: Đồng bộ 100% hệ thống Giọng đọc AI (TTS, Vùng/Quốc gia, Giọng CapCut/EdgeTTS đầy đủ, Nút Test nghe thử) ở Chế độ 3 TikTok Remixer giống hệt Chế độ 1 Tóm tắt."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
