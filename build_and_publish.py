@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.44"
+VERSION = "1.3.45"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.44: Đồng bộ 100% hệ thống Giọng đọc AI (TTS, Vùng/Quốc gia, Giọng CapCut/EdgeTTS đầy đủ, Nút Test nghe thử) ở Chế độ 3 TikTok Remixer giống hệt Chế độ 1 Tóm tắt."
+NOTES = "Bản phát hành v1.3.45: Triển khai Bản Thiết Kế Kỹ Thuật Toàn Diện (Master Plan WYSIWYG 1:1) chuẩn xác khung hình mẫu 9:16 cho cả 3 Chế Độ: (1) Crop, Zoom Scale & Blur Mask Studio (Hệ quy chiếu 1080x1920); (2) Bảng Màu CapCut 15 Thông Số & 12+ Look Preset với Preview 60FPS RAM & 3s Motion; (3) Title Banner Pill 2 dòng, Subtitle Whisper AI & Part Studio tương tác kéo thả trực tiếp."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -41,6 +41,7 @@ files = [
     "font_manager.py", "part_splitter_config.py", "part_pruner_ai.py",
     "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
     "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py",
+    "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",
     "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md"
 ]
 for fname in files:
@@ -50,7 +51,7 @@ for fname in files:
     else:
         print(f"[WARN] Khong thay file: {fname}")
 
-for folder in ["utils", "assets", "luts"]:
+for folder in ["utils", "assets", "luts", "system_data"]:
     src = os.path.join(ROOT, folder)
     if os.path.isdir(src):
         dst = os.path.join(stage_dir, folder)
