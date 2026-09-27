@@ -386,32 +386,12 @@ class PartSplitterFrame(ttk.Frame):
         f2 = self.tab2
         f2.columnconfigure(3, weight=1)
 
-        # Hàng 0: Google Gemini Local Frame
-        google_box = ttk.LabelFrame(f2, text="  GOOGLE GEMINI LOCAL  ", padding=(7, 4))
-        google_box.grid(row=0, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 6))
-        google_box.columnconfigure(1, weight=1)
+        # Hàng 0: AI Gemini Configuration Frame (Model & Viral Title)
+        ai_box = ttk.LabelFrame(f2, text="  🤖 CẤU HÌNH AI GEMINI  ", padding=(7, 4))
+        ai_box.grid(row=0, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 6))
 
-        if self.app and hasattr(self.app, "google_status_var"):
-            status_var = self.app.google_status_var
-        else:
-            status_var = self.google_status_var
-
-        self.google_status_label = ttk.Label(google_box, textvariable=status_var, foreground="#B56A09")
-        self.google_status_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=(2, 8))
-
-        self.btn_google_login = ttk.Button(
-            google_box, text="🔐 Đăng nhập / đổi tài khoản", command=self.open_google_login, style="Primary.TButton"
-        )
-        self.btn_google_login.grid(row=0, column=2, padx=3)
-
-        self.btn_google_check = ttk.Button(
-            google_box, text="↻ Kiểm tra", command=lambda: self.check_google_login(manual=True), style="Tool.TButton"
-        )
-        self.btn_google_check.grid(row=0, column=3, padx=3)
-
-        # Model & API Key & Checkbox Viral Title
-        sub_row = ttk.Frame(google_box)
-        sub_row.grid(row=1, column=0, columnspan=4, sticky=tk.EW, pady=(3, 2))
+        sub_row = ttk.Frame(ai_box)
+        sub_row.pack(fill=tk.X, expand=True, pady=2)
         ttk.Label(sub_row, text="Mô hình AI:").pack(side=tk.LEFT, padx=(2, 4))
         self.model_cb = ttk.Combobox(
             sub_row, textvariable=self.gemini_model_var,

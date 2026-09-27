@@ -74,6 +74,11 @@ try:
 except ImportError:
     PartSplitterFrame = None
 
+try:
+    from tiktok_remixer_gui import TikTokRemixerTab
+except ImportError:
+    TikTokRemixerTab = None
+
 class PrintLogger:
     def __init__(self, text_widget):
         self.text_widget = text_widget
@@ -256,12 +261,26 @@ class ProfessionalVideoApp:
             header, text="🍪 Cookie",
             command=self.open_youtube_cookie_dialog, style="Tool.TButton",
         )
-        self.btn_cookie.pack(side=tk.RIGHT, padx=(0, 8))
+        self.btn_cookie.pack(side=tk.RIGHT, padx=(0, 6))
+
+        # --- GEMINI CLI GLOBAL STATUS & LOGIN ---
+        self.google_status_var = tk.StringVar(value="● Đang kiểm tra Gemini...")
+        self.btn_google_login = ttk.Button(
+            header, text="🔐 Đăng nhập Gemini",
+            command=self.open_google_login, style="Tool.TButton",
+        )
+        self.btn_google_login.pack(side=tk.RIGHT, padx=(0, 2))
+        self.btn_google_check = ttk.Button(
+            header, text="↻",
+            command=lambda: self.check_google_login(manual=True), style="Tool.TButton", width=3,
+        )
+        self.btn_google_check.pack(side=tk.RIGHT, padx=(0, 6))
+
         self.show_cmd_var = tk.BooleanVar(value=bool(self.config.get("show_cmd_log", True)))
         ttk.Checkbutton(
             header, text="Hiện CMD log", variable=self.show_cmd_var,
             command=self.on_cmd_log_toggle,
-        ).pack(side=tk.RIGHT, padx=(0, 12))
+        ).pack(side=tk.RIGHT, padx=(0, 10))
 
         # --- THANH GẠT CHUYỂN ĐỔI CHẾ ĐỘ (MODE SWITCHER) ---
         mode_bar = ttk.Frame(self.root, style="Header.TFrame", padding=(8, 3))
@@ -282,6 +301,13 @@ class ProfessionalVideoApp:
             style="Tool.TButton"
         )
         self.btn_mode_splitter.pack(side=tk.LEFT, padx=3)
+
+        self.btn_mode_tiktok = ttk.Button(
+            mode_bar, text="🎬 Chế Độ 3: TikTok Remixer",
+            command=lambda: self.switch_app_mode("tiktok_remixer"),
+            style="Tool.TButton"
+        )
+        self.btn_mode_tiktok.pack(side=tk.LEFT, padx=3)
 
         # Container cho Chế độ 1: Tóm Tắt & Voice AI (Đóng băng nguyên vẹn 100% logic cũ)
         self.summarizer_container = ttk.Frame(self.root, style="App.TFrame")
@@ -550,89 +576,53 @@ class ProfessionalVideoApp:
         self.api_key_entry = ttk.Entry(f2, width=22, show="*")
         self.api_key_entry.insert(0, self.config.get("api_key", ""))
 
-        google_box = ttk.LabelFrame(f2, text="  GOOGLE GEMINI LOCAL  ", padding=(7, 4))
-        google_box.grid(row=1, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 4))
-        google_box.columnconfigure(1, weight=1)
-        self.google_status_var = tk.StringVar(value="● Đang kiểm tra phiên Google...")
-        self.google_status_label = ttk.Label(
-            google_box, textvariable=self.google_status_var, foreground=self.colors["warning"]
-        )
-        self.google_status_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=(2, 8))
-        self.btn_google_login = ttk.Button(
-            google_box, text="🔐 Đăng nhập / đổi tài khoản",
-            command=self.open_google_login, style="Primary.TButton",
-        )
-        self.btn_google_login.grid(row=0, column=2, padx=3)
-        self.btn_google_check = ttk.Button(
-            google_box, text="↻ Kiểm tra", command=lambda: self.check_google_login(manual=True),
-            style="Tool.TButton",
-        )
-        self.btn_google_check.grid(row=0, column=3, padx=3)
-        ttk.Label(
-            google_box,
-            text="Gemini xem proxy 360p local • video thành phẩm vẫn render từ source HD",
-            style="Muted.TLabel",
-        ).grid(row=1, column=0, columnspan=4, sticky=tk.W, padx=2, pady=(3, 0))
-        
         # Ô 1: Engine TTS (Đã thêm CapCut TTS vào danh sách lựa chọn)
-        ttk.Label(f2, text="TTS:").grid(row=2, column=0, sticky=tk.W, pady=1)
+        ttk.Label(f2, text="TTS:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.engine_cb = ttk.Combobox(f2, values=["Edge-TTS (Miễn phí)", "CapCut TTS", "Google Translate TTS"], width=16, state="readonly")
-        self.engine_cb.grid(row=2, column=1, sticky=tk.W, padx=5, pady=3)
+        self.engine_cb.grid(row=1, column=1, sticky=tk.W, padx=5, pady=3)
         self.engine_cb.set(self.config.get("engine_tts", "Edge-TTS (Miễn phí)"))
         self.engine_cb.bind("<<ComboboxSelected>>", self.on_engine_change)
 
-        # Ô 2 & 3 hàng dưới cho Quốc gia và Giọng cụ thể + Nút Preview 🔊
-        ttk.Label(f2, text="Vùng:").grid(row=2, column=2, sticky=tk.W, pady=2, padx=(8, 2))
+        # Ô 2 & 3: Quốc gia và Giọng cụ thể + Nút Preview 🔊
+        ttk.Label(f2, text="Vùng:").grid(row=1, column=2, sticky=tk.W, pady=2, padx=(8, 2))
         self.country_cb = ttk.Combobox(f2, width=14, state="readonly")
-        self.country_cb.grid(row=2, column=3, sticky=tk.W, padx=5, pady=5)
+        self.country_cb.grid(row=1, column=3, sticky=tk.W, padx=5, pady=3)
         self.country_cb.bind("<<ComboboxSelected>>", self.on_country_change)
 
-        ttk.Label(f2, text="Giọng:").grid(row=2, column=4, sticky=tk.W, pady=2, padx=(8, 2))
+        ttk.Label(f2, text="Giọng:").grid(row=1, column=4, sticky=tk.W, pady=2, padx=(8, 2))
         self.voice_cb = ttk.Combobox(f2, width=22, state="readonly")
-        self.voice_cb.grid(row=2, column=5, sticky=tk.W, padx=5, pady=5)
+        self.voice_cb.grid(row=1, column=5, sticky=tk.W, padx=5, pady=3)
         self.voice_cb.bind("<<ComboboxSelected>>", self.on_voice_selected)
 
-        # Nút nghe thử (Preview 🔊)
-        self.btn_preview = ttk.Button(f2, text="🔊 Test", command=self.preview_selected_voice, width=9, style="Tool.TButton")
-        self.btn_preview.grid(row=3, column=5, sticky=tk.EW, padx=5, pady=5)
-
-        # Hàng 3: gợi ý màu sắc kể chuyện & Nút thực thi
-        ttk.Label(f2, text="Màu sắc kể:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        # Hàng 2: Gợi ý màu sắc kể chuyện & Nút Test voice 🔊
+        ttk.Label(f2, text="Màu sắc kể:").grid(row=2, column=0, sticky=tk.W, pady=3)
         prompt_names = list(self.config.get("prompts", {}).keys())
-        self.prompt_cb = ttk.Combobox(f2, values=prompt_names, width=14, state="readonly")
-        self.prompt_cb.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        self.prompt_cb = ttk.Combobox(f2, values=prompt_names, width=16, state="readonly")
+        self.prompt_cb.grid(row=2, column=1, sticky=tk.W, padx=5, pady=3)
         selected_p_name = self.config.get("selected_prompt", prompt_names[0] if prompt_names else "")
         if selected_p_name in prompt_names:
             self.prompt_cb.set(selected_p_name)
         self.prompt_cb.bind("<<ComboboxSelected>>", self.on_prompt_selected)
         
-        ttk.Label(f2, text="Tên:").grid(row=3, column=2, sticky=tk.W, pady=5, padx=(5, 0))
-        self.prompt_name_entry = ttk.Entry(f2, width=10)
-        self.prompt_name_entry.grid(row=3, column=3, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(f2, text="Tên:").grid(row=2, column=2, sticky=tk.W, pady=3, padx=(8, 2))
+        self.prompt_name_entry = ttk.Entry(f2, width=14)
+        self.prompt_name_entry.grid(row=2, column=3, sticky=tk.W, padx=5, pady=3)
         self.prompt_name_entry.insert(0, "Mặc định")
 
-        self.btn_save_prompt = ttk.Button(f2, text="💾 Lưu", command=self.save_current_prompt_direct, width=9, style="Tool.TButton")
-        self.btn_save_prompt.grid(row=3, column=4, sticky=tk.W, padx=5, pady=5)
-        
-        self.btn_step2 = ttk.Button(f2, text="▶ AI + Voice", command=self.run_step_2, style="Primary.TButton")
-        self.btn_step2.grid(row=4, column=5, sticky=tk.EW, padx=5, pady=5)
+        self.btn_save_prompt = ttk.Button(f2, text="💾 Lưu", command=self.save_current_prompt_direct, width=8, style="Tool.TButton")
+        self.btn_save_prompt.grid(row=2, column=4, sticky=tk.W, padx=5, pady=3)
 
-        self.prompt_text = scrolledtext.ScrolledText(
-            f2, width=80, height=2, font=("Segoe UI", 9), wrap=tk.WORD,
-            bg="#F8FAFC", fg="#172033", insertbackground="#2563EB",
-            relief=tk.FLAT, borderwidth=1, highlightthickness=1,
-            highlightbackground="#CBD5E1", highlightcolor="#2563EB", padx=8, pady=7
-        )
-        self.prompt_text.grid(row=6, column=0, columnspan=6, sticky=tk.W+tk.E, padx=5, pady=2)
-        self.update_prompt_content_view()
+        self.btn_preview = ttk.Button(f2, text="🔊 Test giọng", command=self.preview_selected_voice, width=12, style="Tool.TButton")
+        self.btn_preview.grid(row=2, column=5, sticky=tk.EW, padx=5, pady=3)
 
-        ttk.Label(f2, text="Thời lượng video:").grid(row=4, column=0, sticky=tk.W, pady=3)
+        # Hàng 3: Thời lượng video & Nút Chạy Step 2
+        ttk.Label(f2, text="Thời lượng video:").grid(row=3, column=0, sticky=tk.W, pady=3)
         self.video_min_duration_spin = ttk.Spinbox(
             f2, from_=30, to=600, increment=5, width=8, textvariable=self.video_duration_var
         )
-        self.video_min_duration_spin.grid(row=4, column=1, sticky=tk.W, padx=5, pady=3)
+        self.video_min_duration_spin.grid(row=3, column=1, sticky=tk.W, padx=5, pady=3)
         duration_help = ttk.Label(f2, textvariable=self.word_budget_var, foreground="#2563EB")
-        duration_help.grid(row=4, column=2, columnspan=3, sticky=tk.W, pady=3)
+        duration_help.grid(row=3, column=2, columnspan=3, sticky=tk.W, pady=3)
 
         duration_help.bind(
             "<Button-1>",
@@ -648,8 +638,12 @@ class ProfessionalVideoApp:
         )
         self.update_word_budget_label()
 
+        self.btn_step2 = ttk.Button(f2, text="▶ AI + Voice", command=self.run_step_2, style="Primary.TButton")
+        self.btn_step2.grid(row=3, column=5, sticky=tk.EW, padx=5, pady=3)
+
+        # Hàng 4: Kèm âm thanh gốc
         original_mix_row = ttk.Frame(f2)
-        original_mix_row.grid(row=5, column=0, columnspan=6, sticky=tk.W, padx=2, pady=(1, 2))
+        original_mix_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, padx=2, pady=(2, 3))
         self.mix_original_audio_var = tk.BooleanVar(
             value=bool(self.config.get("mix_original_audio_with_voice", False))
         )
@@ -665,6 +659,16 @@ class ProfessionalVideoApp:
         self.original_audio_mix_spin.pack(side=tk.LEFT)
         self.original_audio_mix_spin.set(self.config.get("original_audio_mix_percent", 50.0))
         ttk.Label(original_mix_row, text="% (mặc định 50%)").pack(side=tk.LEFT, padx=(4, 0))
+
+        # Hàng 5: Prompt text
+        self.prompt_text = scrolledtext.ScrolledText(
+            f2, width=80, height=3, font=("Segoe UI", 9), wrap=tk.WORD,
+            bg="#F8FAFC", fg="#172033", insertbackground="#2563EB",
+            relief=tk.FLAT, borderwidth=1, highlightthickness=1,
+            highlightbackground="#CBD5E1", highlightcolor="#2563EB", padx=8, pady=7
+        )
+        self.prompt_text.grid(row=5, column=0, columnspan=6, sticky=tk.W+tk.E, padx=5, pady=2)
+        self.update_prompt_content_view()
 
         # Chỉ các điều khiển TTS phụ thuộc Voice AI. Gemini, yêu cầu chọn
         # cảnh và nút chạy vẫn phải hoạt động cho Review/Highlight tiếng gốc.
@@ -921,27 +925,47 @@ class ProfessionalVideoApp:
         else:
             self.part_splitter_frame = ttk.Frame(self.root)
 
+        # Khởi tạo Container cho Chế độ 3: TikTok Remixer (Độc lập 100%)
+        if TikTokRemixerTab is not None:
+            self.tiktok_remixer_frame = TikTokRemixerTab(self.root, main_app=self)
+        else:
+            self.tiktok_remixer_frame = ttk.Frame(self.root)
+
     def switch_app_mode(self, mode: str):
-        """Chuyển đổi hiển thị giữa Chế độ Tóm Tắt và Chế độ Chia Part."""
+        """Chuyển đổi hiển thị giữa Chế độ Tóm Tắt, Chia Part và TikTok Remixer."""
         self.app_mode_var.set(mode)
+        # Ẩn tất cả container
+        if hasattr(self, "summarizer_container"):
+            self.summarizer_container.grid_remove()
+        if hasattr(self, "part_splitter_frame"):
+            self.part_splitter_frame.grid_remove()
+        if hasattr(self, "tiktok_remixer_frame"):
+            self.tiktok_remixer_frame.grid_remove()
+
+        # Reset style nút bấm
+        if hasattr(self, "btn_mode_summarizer"):
+            self.btn_mode_summarizer.configure(style="Tool.TButton")
+        if hasattr(self, "btn_mode_splitter"):
+            self.btn_mode_splitter.configure(style="Tool.TButton")
+        if hasattr(self, "btn_mode_tiktok"):
+            self.btn_mode_tiktok.configure(style="Tool.TButton")
+
+        # Hiển thị container tương ứng
         if mode == "summarizer":
-            if hasattr(self, "part_splitter_frame"):
-                self.part_splitter_frame.grid_remove()
             if hasattr(self, "summarizer_container"):
                 self.summarizer_container.grid(row=2, column=0, sticky=tk.NSEW)
             if hasattr(self, "btn_mode_summarizer"):
                 self.btn_mode_summarizer.configure(style="Primary.TButton")
-            if hasattr(self, "btn_mode_splitter"):
-                self.btn_mode_splitter.configure(style="Tool.TButton")
-        else:
-            if hasattr(self, "summarizer_container"):
-                self.summarizer_container.grid_remove()
+        elif mode == "splitter":
             if hasattr(self, "part_splitter_frame"):
                 self.part_splitter_frame.grid(row=2, column=0, sticky=tk.NSEW)
-            if hasattr(self, "btn_mode_summarizer"):
-                self.btn_mode_summarizer.configure(style="Tool.TButton")
             if hasattr(self, "btn_mode_splitter"):
                 self.btn_mode_splitter.configure(style="Primary.TButton")
+        elif mode == "tiktok_remixer":
+            if hasattr(self, "tiktok_remixer_frame"):
+                self.tiktok_remixer_frame.grid(row=2, column=0, sticky=tk.NSEW)
+            if hasattr(self, "btn_mode_tiktok"):
+                self.btn_mode_tiktok.configure(style="Primary.TButton")
 
     def open_custom_hook_studio_popup(self):
         """Cửa sổ Custom Hook Studio & YouTube Frame Studio - Gộp chuẩn 1 ô custom_hook_path duy nhất."""
@@ -4382,18 +4406,23 @@ class ProfessionalVideoApp:
 
     def open_google_login(self):
         """Mở CLI chính thức; quyền chỉ tồn tại trong tiến trình đăng nhập."""
-        self.google_status_var.set("● Đang chuẩn bị Antigravity CLI...")
-        self.google_status_label.config(foreground=self.colors["warning"])
+        if hasattr(self, "google_status_var"):
+            self.google_status_var.set("● Đang chuẩn bị Antigravity CLI...")
+        if hasattr(self, "google_status_label"):
+            self.google_status_label.config(foreground=self.colors["warning"])
         if hasattr(self, "btn_google_login"):
-            self.btn_google_login.config(state="disabled")
+            self.btn_google_login.config(text="⏳ Đang mở CLI...", state="disabled")
 
         def prepare_and_login():
             try:
                 from antigravity_processor import AntigravityProcessor
                 executable = AntigravityProcessor.ensure_installed()
-                self.root.after(0, lambda: self.google_status_var.set(
-                    "● Đang chờ đăng nhập Google trong cửa sổ CLI..."
-                ))
+                if hasattr(self, "google_status_var"):
+                    self.root.after(0, lambda: self.google_status_var.set(
+                        "● Đang chờ đăng nhập Google trong cửa sổ CLI..."
+                    ))
+                if hasattr(self, "btn_google_login"):
+                    self.root.after(0, lambda: self.btn_google_login.config(text="⏳ Chờ đăng nhập..."))
                 process = subprocess.Popen(
                     [executable, "--prompt-interactive",
                      "Sign in to Google if requested, then reply READY."],
@@ -4404,8 +4433,12 @@ class ProfessionalVideoApp:
             except Exception as exc:
                 error_text = str(exc)
                 def show_error(error_text=error_text):
-                    self.google_status_var.set("● Không thể chuẩn bị Gemini Local")
-                    self.google_status_label.config(foreground=self.colors["danger"])
+                    if hasattr(self, "google_status_var"):
+                        self.google_status_var.set("● Không thể chuẩn bị Gemini Local")
+                    if hasattr(self, "google_status_label"):
+                        self.google_status_label.config(foreground=self.colors["danger"])
+                    if hasattr(self, "btn_google_login"):
+                        self.btn_google_login.config(text="❌ Lỗi Gemini")
                     messagebox.showerror("Google Gemini Local", f"Không mở được đăng nhập:\n{error_text}")
                 self.root.after(0, show_error)
             finally:
@@ -4416,10 +4449,12 @@ class ProfessionalVideoApp:
 
     def check_google_login(self, manual=False):
         """Kiểm tra phiên bằng lệnh read-only `agy models`."""
-        if not hasattr(self, "google_status_var"):
-            return
-        self.google_status_var.set("● Đang kiểm tra phiên Google...")
-        self.google_status_label.config(foreground=self.colors["warning"])
+        if hasattr(self, "google_status_var"):
+            self.google_status_var.set("● Đang kiểm tra phiên Google...")
+        if hasattr(self, "google_status_label"):
+            self.google_status_label.config(foreground=self.colors["warning"])
+        if hasattr(self, "btn_google_login"):
+            self.btn_google_login.config(text="⏳ Kiểm tra...")
         if hasattr(self, "btn_google_check"):
             self.btn_google_check.config(state="disabled")
 
@@ -4443,15 +4478,23 @@ class ProfessionalVideoApp:
                 if hasattr(self, "btn_google_check"):
                     self.btn_google_check.config(state="normal")
                 if ok:
-                    self.google_status_var.set("● Đã đăng nhập Google • Gemini Local sẵn sàng")
-                    self.google_status_label.config(foreground=self.colors["success"])
+                    if hasattr(self, "google_status_var"):
+                        self.google_status_var.set("● Đã đăng nhập Google • Gemini Local sẵn sàng")
+                    if hasattr(self, "google_status_label"):
+                        self.google_status_label.config(foreground=self.colors["success"])
+                    if hasattr(self, "btn_google_login"):
+                        self.btn_google_login.config(text="🟢 Gemini: Sẵn sàng")
                 else:
-                    self.google_status_var.set("● Chưa đăng nhập hoặc phiên đã hết hạn")
-                    self.google_status_label.config(foreground=self.colors["danger"])
+                    if hasattr(self, "google_status_var"):
+                        self.google_status_var.set("● Chưa đăng nhập hoặc phiên đã hết hạn")
+                    if hasattr(self, "google_status_label"):
+                        self.google_status_label.config(foreground=self.colors["danger"])
+                    if hasattr(self, "btn_google_login"):
+                        self.btn_google_login.config(text="🔐 Đăng nhập Gemini")
                     if manual:
                         messagebox.showwarning(
                             "Google Gemini Local",
-                            "Không xác nhận được phiên Google. Hãy bấm 'Đăng nhập / đổi tài khoản'.\n\n"
+                            "Không xác nhận được phiên Google. Hãy bấm 'Đăng nhập Gemini'.\n\n"
                             + (detail or "Antigravity không trả trạng thái."),
                         )
 

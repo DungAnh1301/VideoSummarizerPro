@@ -1,0 +1,110 @@
+"""
+CẤU HÌNH ĐỘC LẬP CHO CHẾ ĐỘ 3: BIÊN TẬP & RE-MIX VIDEO TIKTOK ĐỐI THỦ (TIKTOK SHORT REMIXER)
+Tách biệt hoàn toàn với config.json và config_part_splitter.json.
+"""
+import os
+import json
+import copy
+
+CONFIG_TIKTOK_FILE = os.path.join(os.path.dirname(__file__), "config_tiktok_remixer.json")
+
+DEFAULT_TIKTOK_REMIXER_CONFIG = {
+    # 1. Nguồn & Thị trường
+    "source_url_or_path": "",
+    "target_market": "DE",
+    "auto_voice_locale": True,
+    
+    # 2. Tẩy dấu vết đối thủ (Gemini CLI Auto-Clean)
+    "auto_clean_core_crop": True,         # Cắt bỏ 2 đầu (Title cũ + Nền mờ) lấy lõi sạch
+    "auto_blur_sub_part": True,           # Bôi mờ dải Sub cũ và Badge Part 2 ở đáy
+    "qc_blur_strength": 75,               # Độ mờ 75%
+    "ai_inspect_intro_outro": True,       # AI tự kiểm tra và cắt logo TikTok 2 đầu (0.0s nếu sạch)
+    
+    # 3. Phân cảnh & Cắt chuyển cảnh thông minh
+    "keep_original_hook": True,           # Tách & Giữ lại Hook gốc đầu video (Hình + Tiếng kịch tính)
+    "smart_transition_cutout": True,      # Cắt chuyển cảnh rác (0.15s - 0.22s), Hard cut giữ nguyên 0.0s
+    "elastic_broll_speed": True,          # Điều tốc đàn hồi 0.95x trên cảnh lẻ khi thiếu hình
+    
+    # 4. Re-mix chống bản quyền
+    "shuffle_broll": True,                # Đảo trật tự cảnh b-roll hợp lý
+    "mirror_broll": True,                 # Lật gương phản chiếu (hflip)
+    "overlay_sub_on_blur_zone": True,     # Đè Sub mới chính xác lên đúng tọa độ Sub cũ đã blur
+    "blur_bg_916": True,                  # Tạo nền mờ 9:16 điện ảnh phía sau lõi video sạch
+    
+    # 5. AI Kịch bản & Giọng đọc
+    "use_ai_voice": True,
+    "ai_model": "Google Antigravity (Local)",
+    "engine_tts": "CapCut TTS",
+    "voice_name": "de-DE-ConradNeural",
+    "tts_speed": "+0%",
+    "story_style": "Kịch tính / Giật gân",
+    
+    # 6. Màu sắc CapCut 15 thông số & Preset Look
+    "color_look": "8K",
+    "color_look_intensity": 70,
+    "color_look_stack": [{"name": "8K", "intensity": 70}],
+    "temperature": 0.0,
+    "tint": 0.0,
+    "saturation": 0.0,
+    "exposure": 0.0,
+    "contrast": 0.0,
+    "highlights": 0.0,
+    "shadows": 0.0,
+    "whites": 0.0,
+    "blacks": 0.0,
+    "brilliance": 0.0,
+    "sharpen": 0.0,
+    "clarity": 0.0,
+    "grain": 0.0,
+    "blur": 0.0,
+    "vignette": 0.0,
+    
+    # 7. Title & Subtitle Studio
+    "enable_title": True,
+    "title_y_pos": 260,
+    "title_color1": "#000000",
+    "title_color2": "#FF0000",
+    "title_outline_color": "none",
+    "title_bg_color": "#FFFFFF",
+    
+    "enable_sub": True,
+    "sub_style_type": "tiktok_slim",
+    "sub_size": 16,
+    "sub_outline": 3,
+    "sub_shadow": 1,
+    "sub_margin_v": 100,
+    "sub_color": "&HFFFFFF&",
+    "sub_outline_color": "&H000000&",
+    
+    # 8. Quản lý lưu config mẫu
+    "selected_config": "default",
+    "saved_configs": {
+        "default": {}
+    }
+}
+
+def load_tiktok_remixer_config() -> dict:
+    """Tải cấu hình riêng biệt cho Chế Độ 3."""
+    config = copy.deepcopy(DEFAULT_TIKTOK_REMIXER_CONFIG)
+    if os.path.exists(CONFIG_TIKTOK_FILE):
+        try:
+            with open(CONFIG_TIKTOK_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, dict):
+                config.update(saved)
+                # Đảm bảo saved_configs luôn có cấu trúc đúng
+                if "saved_configs" not in config or not isinstance(config["saved_configs"], dict):
+                    config["saved_configs"] = {"default": {}}
+        except Exception as e:
+            print(f"⚠️ [TikTok Config] Lỗi đọc config: {e}")
+    return config
+
+def save_tiktok_remixer_config(config: dict) -> bool:
+    """Lưu cấu hình riêng biệt cho Chế Độ 3."""
+    try:
+        with open(CONFIG_TIKTOK_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"⚠️ [TikTok Config] Lỗi lưu config: {e}")
+        return False

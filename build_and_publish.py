@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.40"
+VERSION = "1.3.43"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.40: Tôn trọng 100% mốc cắt tách cảnh tự nhiên của AI & Render tuần tự từng Part 1 theo cấu hình máy: (1) Khôi phục trọn vẹn thuật toán cắt theo phân cảnh, cao trào và cliffhanger nghệ thuật của AI, không ép buộc thời lượng cố định; (2) Render tuần tự 1 Part duy nhất (max_workers = 1) thích ứng cấu hình máy, dồn toàn bộ GPU/CPU êm mát; (3) Giữ nguyên Pruner Stream Copy và Fast Seek QC."
+NOTES = "Bản phát hành v1.3.43: Đồng bộ và tối ưu giao diện AI Gemini: (1) Đưa nút Đăng nhập & Kiểm tra trạng thái Gemini CLI lên thanh Header chung (cạnh nút Cookie) dùng xuyên suốt cả 3 Chế Độ; (2) Lược bỏ các khung đăng nhập Gemini trùng lặp ở Tab 2 giúp giao diện thông thoáng, tinh gọn."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -39,7 +39,9 @@ files = [
     "youtube_heatmap.py", "update_manager.py", "updater.py", "version.json", "requirements.txt",
     "config.example.json", "Chay_App.bat", "README_CAI_DAT.md",
     "font_manager.py", "part_splitter_config.py", "part_pruner_ai.py",
-    "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md"
+    "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
+    "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py",
+    "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md"
 ]
 for fname in files:
     src = os.path.join(ROOT, fname)
