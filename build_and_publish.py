@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.47"
+VERSION = "1.3.48"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.47: Hoàn thiện 100% giao diện & tính năng trực quan WYSIWYG 1:1 cho 3 Studio (Crop Blur Studio, CapCut Color Studio, Title & Subtitle Studio) theo chuẩn mẫu ClipCut Pro: (1) Khung hình mẫu 9:16 cập nhật thông số tức thì; (2) Hỗ trợ bốc frame trực tiếp từ link/ID YouTube và video cục bộ; (3) Tương tác kéo thả Title Banner mượt mà."
+NOTES = "Bản phát hành v1.3.48: Tích hợp trực tiếp bộ mã nguồn gốc PySide6 chuẩn 100% từ v32_pro cho cả 3 Studio: (1) CapCut Pro Video Crop Studio với 8 chốt kéo thả chuột và preview tức thì; (2) CapCut Pro Color Studio 15 thanh trượt & 17 Look Presets; (3) Title & Subtitle Studio với Canvas tương tác đa ngôn ngữ không lỗi font."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

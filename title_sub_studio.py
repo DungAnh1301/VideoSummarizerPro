@@ -1,606 +1,1437 @@
+# -*- coding: utf-8 -*-
 """
-TITLE & SUBTITLE STUDIO (LIVE 9:16 INTERACTIVE PREVIEW)
-Tiêu đề Banner bo tròn 2 dòng (Pill Banner), Phụ đề Whisper AI & ASS chuẩn quốc tế, Thẻ Part.
-Khớp 100% giao diện và chức năng với bản gốc (WYSIWYG 1:1).
+TITLE & SUBTITLE STUDIO (LIVE PREVIEW 9:16 TRỰC QUAN CHUẨN XÁC 100%)
+Đồng bộ hoàn hảo giữa Canvas Preview và Render Video FFmpeg thực tế.
 """
+
+from __future__ import annotations
+
 import os
-import json
-import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog, messagebox
-from typing import Optional, Dict, Any, Callable
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+import re
+import urllib.request
+from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
+
+from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, Signal, QThread
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QPainter, QPen, QBrush,
+    QPainterPath, QLinearGradient, QPixmap, QImage
+)
+from PySide6.QtWidgets import (
+    QCheckBox, QColorDialog, QComboBox, QDialog, QFormLayout, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
+    QSpinBox, QVBoxLayout, QWidget, QRadioButton, QButtonGroup, QFileDialog,
+    QGridLayout, QDoubleSpinBox
+)
 
 try:
-    from font_manager import get_pillow_font, FontManager
+    from font_manager import (
+        FontManager,
+        BANNER_CORNER_RADIUS,
+        BANNER_PAD_X,
+        BANNER_PAD_Y,
+        detect_script,
+        hex_to_ass_color as fm_hex_to_ass,
+        create_dynamic_title_banner
+    )
+    _HAS_FONT_MANAGER = True
 except Exception:
-    def get_pillow_font(size: int = 36, bold: bool = True, text: str = ""):
+    FontManager = None
+    BANNER_CORNER_RADIUS = 20
+    BANNER_PAD_X = 28
+    BANNER_PAD_Y = 18
+    create_dynamic_title_banner = None
+    _HAS_FONT_MANAGER = False
+
+
+APP_DIR = Path(__file__).resolve().parent
+SYSTEM_CACHE_PATH = APP_DIR / "system_data" / "crop_preview_cache.jpg"
+LAYOUT_BASE_PATH = APP_DIR / "temp" / "filter_preview" / "layout_base.jpg"
+
+
+# =====================================================================
+# 1. HỆ THỐNG ĐỔI MÀU KÉP: WEB HEX (#RRGGBB) VS ASS HEX (&HBBGGRR&)
+# =====================================================================
+def hex_to_ass(hex_color: str, default: str = "&HFFFFFF&") -> str:
+    """Chuyển RGB Web Hex (#RRGGBB) sang ASS Hex (&HBBGGRR&)."""
+    if not hex_color:
+        return default
+    clean = str(hex_color).strip().lstrip("#")
+    if clean.upper().startswith("&H"):
+        clean_ass = clean.upper()
+        if not clean_ass.endswith("&"):
+            clean_ass += "&"
+        return clean_ass
+    if clean.lower().startswith("0x"):
+        clean = clean[2:]
+    if len(clean) == 6:
+        r, g, b = clean[0:2], clean[2:4], clean[4:6]
+        return f"&H{b}{g}{r}&".upper()
+    return default
+
+
+def ass_to_hex(ass_color: str, default: str = "#FFFFFF") -> str:
+    """Chuyển ASS Hex (&HBBGGRR&) sang RGB Web Hex (#RRGGBB)."""
+    if not ass_color:
+        return default
+    s = str(ass_color).strip().upper()
+    if s.startswith("&H"):
+        clean = s.replace("&H", "").replace("&", "")
+        if len(clean) == 6:
+            b, g, r = clean[0:2], clean[2:4], clean[4:6]
+            return f"#{r}{g}{b}".upper()
+    if s.startswith("#") and len(s) == 7:
+        return s
+    return default
+
+
+# =====================================================================
+# 2. BẢNG THÔNG SỐ 3 PHONG CÁCH PHỤ ĐỀ (SUBTITLE STYLE MATRIX)
+# =====================================================================
+SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "tiktok_slim": {
+        "key": "tiktok_slim",
+        "name": "✨ Thanh Mảnh (TikTok Slim - Arial/Segoe)",
+        "sub_size": 7,
+        "sub_outline": 1,
+        "sub_shadow": 0,
+        "sub_margin_v": 80,
+        "uppercase": False,
+        "description": "Nét thanh mảnh (Giống No. 1), chữ thường tự nhiên, viền mỏng tinh tế chuẩn TikTok."
+    },
+    "classic": {
+        "key": "classic",
+        "name": "🏛️ Cổ Điển (Classic - Segoe UI Black/Impact)",
+        "sub_size": 14,
+        "sub_outline": 3,
+        "sub_shadow": 0,
+        "sub_margin_v": 80,
+        "uppercase": True,
+        "description": "In hoa to bản, viền đen dày dặn, nổi bật và thu hút trên mọi nền video."
+    },
+    "standard": {
+        "key": "standard",
+        "name": "📺 Tiêu Chuẩn (Standard - Segoe UI)",
+        "sub_size": 10,
+        "sub_outline": 2,
+        "sub_shadow": 0,
+        "sub_margin_v": 90,
+        "uppercase": False,
+        "description": "Kích thước hài hòa, cân đối, dễ đọc trên cả điện thoại và máy tính bảng."
+    }
+}
+
+DEFAULT_SUB_COLOR = "&HFFFFFF&"
+DEFAULT_SUB_OUTLINE_COLOR = "&H000000&"
+
+
+# =====================================================================
+# 3. HELPER NÚT CHỌN MÀU
+# =====================================================================
+def _create_styled_color_btn(hex_val: str) -> QPushButton:
+    btn = QPushButton()
+    btn.setFixedHeight(30)
+    btn.setFixedWidth(114)
+    btn.setCursor(Qt.PointingHandCursor)
+    _apply_color_btn_visuals(btn, hex_val)
+    return btn
+
+
+def _apply_color_btn_visuals(btn: QPushButton, hex_val: str):
+    clean_hex = str(hex_val).strip()
+    if not clean_hex.startswith("#") and not clean_hex.startswith("&H"):
+        clean_hex = "#" + clean_hex
+    display_hex = clean_hex
+    if clean_hex.startswith("&H"):
+        display_hex = ass_to_hex(clean_hex)
+
+    try:
+        col = QColor(display_hex)
+        if not col.isValid():
+            col = QColor("#888888")
+    except Exception:
+        col = QColor("#888888")
+
+    text_color = "#000000" if col.lightness() > 135 else "#FFFFFF"
+    btn.setText(display_hex.upper()[:7])
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {display_hex};
+            color: {text_color};
+            font-weight: bold;
+            font-size: 11px;
+            border-radius: 6px;
+            border: 1px solid #555568;
+            padding: 2px 6px;
+        }}
+        QPushButton:hover {{
+            border: 2px solid #89b4fa;
+        }}
+    """)
+
+
+# =====================================================================
+# 4. WORKER TẢI THUMBNAIL / HÌNH ẢNH TỪ YOUTUBE (THREAD-SAFE)
+# =====================================================================
+class YouTubeThumbnailFetcher(QThread):
+    finished_sig = Signal(object, str, str)  # (QPixmap or None, status_text, color_hex)
+
+    def __init__(self, url_or_id: str, parent=None):
+        super().__init__(parent)
+        self.raw_input = url_or_id.strip()
+
+    def _extract_video_id(self, text: str) -> str:
+        if not text:
+            return ""
+        m = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})(?:[&?]|$|\/)|\A([0-9A-Za-z_-]{11})\Z", text)
+        if m:
+            return m.group(1) or m.group(2) or ""
+        return ""
+
+    def run(self):
+        vid = self._extract_video_id(self.raw_input)
+        if not vid:
+            self.finished_sig.emit(None, "❌ Link YouTube hoặc Video ID không hợp lệ.", "#f38ba8")
+            return
+
+        urls = [
+            f"https://img.youtube.com/vi/{vid}/maxresdefault.jpg",
+            f"https://img.youtube.com/vi/{vid}/sddefault.jpg",
+            f"https://img.youtube.com/vi/{vid}/hqdefault.jpg",
+        ]
+        loaded_pix = None
+        for u in urls:
+            try:
+                req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    data = resp.read()
+                    qimg = QImage()
+                    if qimg.loadFromData(data):
+                        if qimg.width() > 120 and qimg.height() > 90:
+                            loaded_pix = QPixmap.fromImage(qimg)
+                            break
+            except Exception:
+                pass
+
+        if loaded_pix and not loaded_pix.isNull():
+            self.finished_sig.emit(loaded_pix, f"✅ Đã tải ảnh YouTube ({loaded_pix.width()}×{loaded_pix.height()})!", "#a6e3a1")
+        else:
+            self.finished_sig.emit(None, "❌ Không thể tải ảnh từ link YouTube này.", "#f38ba8")
+
+
+# =====================================================================
+# 5. KHUNG XEM TRƯỚC 9:16 TRỰC QUAN (RIGHT LIVE PREVIEW 9:16 CANVAS)
+# =====================================================================
+class PreviewCanvas9x16(QWidget):
+    """
+    Canvas Live Preview 9:16 mô phỏng chính xác video 1080x1920:
+    - Hiển thị hình ảnh nền video thực tế.
+    - Title Banner: LUÔN HIỂN THỊ khi có text mẫu hoặc khi bật.
+    - Subtitle: Quy đổi tọa độ và cỡ chữ chuẩn xác 1:1 theo video render thật.
+    - Số Part: Chế độ 1 (Sau Title) và Chế độ 2 (Ở dưới chỉnh tọa độ Y).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(260, 480)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setStyleSheet("background-color: #11111b; border-radius: 8px;")
+
+        self.cfg: Dict[str, Any] = {}
+        self.title_sample_text: str = "TIÊU ĐỀ VIDEO MẪU\nDÒNG PHỤ BANNER"
+        self.sub_sample_text: str = "Đây là phụ đề mẫu đang hiển thị thử nghiệm..."
+        self.part_sample_number: str = "1"
+        self.bg_pixmap: Optional[QPixmap] = None
+
+    def set_background_pixmap(self, pix: Optional[QPixmap]):
+        self.bg_pixmap = pix
+        self.update()
+
+    def update_data(self, cfg: Dict[str, Any], title_sample: str, sub_sample: str, part_num: str = "1"):
+        self.cfg = dict(cfg or {})
+        self.title_sample_text = title_sample if title_sample is not None else ""
+        self.sub_sample_text = sub_sample if sub_sample is not None else ""
+        self.part_sample_number = str(part_num or "1").strip()
+        self.update()
+
+    def _calc_viewport(self) -> Tuple[float, float, float, float, float]:
+        cw = max(50.0, float(self.width()))
+        ch = max(90.0, float(self.height()))
+        scale_x = (cw - 24.0) / 1080.0
+        scale_y = (ch - 24.0) / 1920.0
+        scale = min(scale_x, scale_y)
+        disp_w = 1080.0 * scale
+        disp_h = 1920.0 * scale
+        ox = (cw - disp_w) / 2.0
+        oy = (ch - disp_h) / 2.0
+        return scale, ox, oy, disp_w, disp_h
+
+    def paintEvent(self, event):
+        scale, ox, oy, disp_w, disp_h = self._calc_viewport()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # 1. Nền canvas ngoài
+        p.fillRect(self.rect(), QColor("#11111b"))
+        video_rect = QRectF(ox, oy, disp_w, disp_h)
+
+        # 2. Vẽ hình ảnh nền video mẫu (hoặc gradient tối nếu chưa có ảnh)
+        if self.bg_pixmap and not self.bg_pixmap.isNull():
+            clip_path = QPainterPath()
+            clip_path.addRoundedRect(video_rect, 10, 10)
+            p.save()
+            p.setClipPath(clip_path)
+
+            pw = float(self.bg_pixmap.width())
+            ph = float(self.bg_pixmap.height())
+            aspect = pw / max(1.0, ph)
+
+            if aspect > 0.65:
+                # Video ngang 16:9 -> Nền mờ 9:16 hoặc Nền đen tuyền #000000 theo config blur_bg
+                blur_bg = bool(self.cfg.get("blur_bg", True))
+                if blur_bg:
+                    small_bg = self.bg_pixmap.scaled(54, 96, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+                    blurred_bg = small_bg.scaled(int(disp_w), int(disp_h), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                    p.drawPixmap(QRectF(ox, oy, disp_w, disp_h), blurred_bg, QRectF(0, 0, disp_w, disp_h))
+                    p.fillRect(video_rect, QColor(0, 0, 0, 45))
+                else:
+                    p.fillRect(video_rect, QColor("#000000"))
+
+                # Video tiền cảnh sắc nét căn chính giữa khung 9:16 (Áp dụng Zoom-in & Scale X/Y từ config)
+                zoom_factor = float(self.cfg.get("zoom_in", 178.0)) / 100.0
+                sx = float(self.cfg.get("scale_x", 100.0)) / 100.0
+                sy = float(self.cfg.get("scale_y", 130.0)) / 100.0
+
+                fg_w = disp_w * zoom_factor * sx
+                fg_h = (disp_w * (ph / pw)) * zoom_factor * sy
+                fg_x = ox + (disp_w - fg_w) / 2.0
+                fg_y = oy + (disp_h - fg_h) / 2.0
+
+                p.save()
+                p.setClipRect(video_rect)
+                p.drawPixmap(QRectF(fg_x, fg_y, fg_w, fg_h), self.bg_pixmap, QRectF(0, 0, pw, ph))
+                p.setPen(QPen(QColor("#89b4fa"), 1, Qt.DashLine))
+                p.drawRect(QRectF(fg_x, fg_y, fg_w, fg_h))
+                p.restore()
+            else:
+                # Ảnh đã chuẩn tỷ lệ dọc 9:16 (ví dụ layout_base.jpg)
+                p.drawPixmap(video_rect, self.bg_pixmap, QRectF(0, 0, pw, ph))
+
+            p.restore()
+
+            p.setPen(QPen(QColor("#45475a"), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(video_rect, 10, 10)
+        else:
+            grad = QLinearGradient(ox, oy, ox, oy + disp_h)
+            grad.setColorAt(0.0, QColor("#1e1e28"))
+            grad.setColorAt(1.0, QColor("#16161e"))
+            p.setBrush(QBrush(grad))
+            p.setPen(QPen(QColor("#45475a"), 2))
+            p.drawRoundedRect(video_rect, 10, 10)
+
+        # Vạch an toàn nét đứt (Safe Area)
+        p.setPen(QPen(QColor(200, 200, 220, 40), 1, Qt.DashLine))
+        safe_top_y = oy + 150.0 * scale
+        p.drawLine(QPointF(ox, safe_top_y), QPointF(ox + disp_w, safe_top_y))
+        safe_bot_y = oy + (1920.0 - 250.0) * scale
+        p.drawLine(QPointF(ox, safe_bot_y), QPointF(ox + disp_w, safe_bot_y))
+
+        # 3. Vẽ Title Banner (LUÔN VẼ NẾU CÓ TEXT HOẶC ĐƯỢC BẬT ĐỂ NGƯỜI DÙNG XEM TRƯỚC TRỰC QUAN)
+        has_title_text = bool((self.title_sample_text or "").strip()) or bool(self.cfg.get("title_text", "").strip())
+        is_title_enabled = self.cfg.get("show_title", False) or self.cfg.get("enable_title", False)
+        if is_title_enabled or has_title_text:
+            self._render_title_banner(p, scale, ox, oy, disp_w)
+
+        # 4. Vẽ Số Part ở bên dưới (nếu chọn chế độ bottom)
+        if self.cfg.get("show_part", True) and self.cfg.get("part_position") == "bottom":
+            self._render_bottom_part(p, scale, ox, oy, disp_w)
+
+        # 5. Vẽ Subtitle nếu được bật hoặc có text mẫu
+        has_sub_text = bool((self.sub_sample_text or "").strip())
+        is_sub_enabled = self.cfg.get("auto_sub", True) or self.cfg.get("enable_sub", True)
+        if is_sub_enabled or has_sub_text:
+            self._render_subtitle(p, scale, ox, oy, disp_w, disp_h)
+
+        # Huy hiệu badge 9:16 PRO
+        badge_rect = QRectF(ox + disp_w - 74, oy + 8, 66, 20)
+        p.setBrush(QBrush(QColor(0, 0, 0, 170)))
+        p.setPen(QPen(QColor("#89b4fa"), 1))
+        p.drawRoundedRect(badge_rect, 4, 4)
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        p.setPen(QColor("#89b4fa"))
+        p.drawText(badge_rect, Qt.AlignCenter, "9:16 PRO")
+
+        p.end()
+
+    def _render_title_banner(self, p: QPainter, scale: float, ox: float, oy: float, disp_w: float):
+        """Vẽ Title Banner bo góc nổi bật chuẩn tỉ lệ 1080x1920 khớp 100% render."""
+        cfg = self.cfg
+        title_y_pos = float(cfg.get("title_y_pos", 320))
+        bg_hex = cfg.get("title_bg_color", "#FF2D55")
+        c1_hex = cfg.get("title_color1", "#FFFFFF")
+        c2_hex = cfg.get("title_color2", "#FFFFFF")
+        outline_hex = cfg.get("title_outline_color", "none")
+
+        raw = (self.title_sample_text or "").strip()
+        if not raw:
+            raw = cfg.get("title_text", "").strip() or "TIÊU ĐỀ VIDEO MẪU"
+
+        # Nếu bật hiện Part ở sau Title trên cùng -> Format chuẩn Part X: Tiêu đề
+        show_part = cfg.get("show_part", True)
+        part_pos = cfg.get("part_position", "after_title")
+        part_fmt = cfg.get("part_format", "Part")
+        part_str = f"{part_fmt} {self.part_sample_number}".strip()
+
+        if show_part and part_pos == "after_title" and part_str:
+            if not raw.lower().endswith(part_str.lower()):
+                raw = f"{raw} {part_str}"
+
+        banner_opts = {
+            "title_color1": c1_hex,
+            "title_color2": c2_hex,
+            "title_bg_color": bg_hex,
+            "title_outline_color": outline_hex
+        }
+
+        # Ưu tiên tạo banner chuẩn 100% bằng FontManager PIL giống hệt FFmpeg render
+        if _HAS_FONT_MANAGER and create_dynamic_title_banner:
+            try:
+                import tempfile
+                out_png, bw, bh = create_dynamic_title_banner(
+                    tempfile.gettempdir(), raw, "", banner_opts
+                )
+                pix = QPixmap(out_png)
+                if pix and not pix.isNull():
+                    bw_c = bw * scale
+                    bh_c = bh * scale
+                    bx = ox + (disp_w - bw_c) / 2.0
+                    by = oy + title_y_pos * scale
+                    p.drawPixmap(QRectF(bx, by, bw_c, bh_c), pix, QRectF(pix.rect()))
+                    return
+            except Exception:
+                pass
+
+        # Fallback vẽ trực tiếp bằng QPainter nếu không có PIL
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        if len(lines) == 1 and "\\n" in raw:
+            lines = [line.strip() for line in raw.split("\\n") if line.strip()]
+
+        if len(lines) >= 2:
+            l1, l2 = lines[0], lines[1]
+        elif ":" in raw:
+            parts = raw.split(":", 1)
+            l1, l2 = parts[0].strip(), parts[1].strip()
+        elif " - " in raw:
+            parts = raw.split(" - ", 1)
+            l1, l2 = parts[0].strip(), parts[1].strip()
+        elif " " in raw and len(raw) > 20:
+            words = raw.split()
+            mid = max(1, len(words) // 2)
+            l1 = " ".join(words[:mid])
+            l2 = " ".join(words[mid:])
+        else:
+            l1, l2 = raw, ""
+
+        bw_real = 920.0
+        bh_real = 156.0 if l2 else 92.0
+        bw_c = bw_real * scale
+        bh_c = bh_real * scale
+        bx1 = ox + (disp_w - bw_c) / 2.0
+        by1 = oy + title_y_pos * scale
+        banner_box = QRectF(bx1, by1, bw_c, bh_c)
+
+        radius = max(6.0, 24.0 * scale)
+        p.setBrush(QBrush(QColor(bg_hex)))
+        if outline_hex and str(outline_hex).lower() != "none":
+            stroke_w = max(1.0, 2.5 * scale)
+            p.setPen(QPen(QColor(outline_hex), stroke_w))
+        else:
+            p.setPen(Qt.NoPen)
+        p.drawRoundedRect(banner_box, radius, radius)
+
+        font_size = max(10, int(30.0 * scale * 1.5))
+        font = QFont("Segoe UI", font_size, QFont.Bold)
+        p.setFont(font)
+
+        if l2:
+            rect_l1 = QRectF(bx1 + 10 * scale, by1 + 6 * scale, bw_c - 20 * scale, bh_c * 0.46)
+            p.setPen(QColor(c1_hex))
+            p.drawText(rect_l1, Qt.AlignCenter, l1)
+
+            rect_l2 = QRectF(bx1 + 10 * scale, by1 + bh_c * 0.48, bw_c - 20 * scale, bh_c * 0.46)
+            p.setPen(QColor(c2_hex))
+            p.drawText(rect_l2, Qt.AlignCenter, l2)
+        else:
+            p.setPen(QColor(c1_hex))
+            p.drawText(banner_box, Qt.AlignCenter, l1)
+
+    def _render_bottom_part(self, p: QPainter, scale: float, ox: float, oy: float, disp_w: float):
+        """Vẽ số Part ở bên dưới, chung màu với Title khớp 100% render."""
+        cfg = self.cfg
+        part_y_pos = float(cfg.get("part_y_pos", 1600))
+        part_fmt = cfg.get("part_format", "Part")
+        part_text = f"{part_fmt} {self.part_sample_number}".strip()
+
+        if not part_text:
+            return
+
+        bg_hex = cfg.get("title_bg_color", "#FF2D55")
+        text_hex = cfg.get("title_color1", "#FFFFFF")
+        outline_hex = cfg.get("title_outline_color", "none")
+
+        banner_opts = {
+            "title_color1": text_hex,
+            "title_color2": text_hex,
+            "title_bg_color": bg_hex,
+            "title_outline_color": outline_hex
+        }
+
+        # Ưu tiên tạo banner chuẩn 100% bằng FontManager PIL giống hệt FFmpeg render
+        if _HAS_FONT_MANAGER and create_dynamic_title_banner:
+            try:
+                import tempfile
+                part_png, pbw, pbh = create_dynamic_title_banner(
+                    tempfile.gettempdir(), part_text, "", banner_opts
+                )
+                pix = QPixmap(part_png)
+                if pix and not pix.isNull():
+                    pbw_c = pbw * scale
+                    pbh_c = pbh * scale
+                    pbx = ox + (disp_w - pbw_c) / 2.0
+                    pby = oy + part_y_pos * scale
+                    p.drawPixmap(QRectF(pbx, pby, pbw_c, pbh_c), pix, QRectF(pix.rect()))
+                    return
+            except Exception:
+                pass
+
+        # Fallback vẽ trực tiếp
+        part_size = int(cfg.get("part_size", 22))
+        s_font_size = max(9, int(part_size * scale * 1.8))
+        font = QFont("Segoe UI", s_font_size, QFont.Bold)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+
+        pad_x = 22.0 * scale
+        pad_y = 10.0 * scale
+        text_w = float(fm.horizontalAdvance(part_text))
+        text_h = float(fm.height())
+
+        badge_w = text_w + pad_x * 2.0
+        badge_h = text_h + pad_y * 1.2
+        bx = ox + (disp_w - badge_w) / 2.0
+        by = oy + part_y_pos * scale
+
+        badge_rect = QRectF(bx, by, badge_w, badge_h)
+        radius = max(5.0, badge_h / 2.0)
+
+        p.setBrush(QBrush(QColor(bg_hex)))
+        if outline_hex and str(outline_hex).lower() != "none":
+            p.setPen(QPen(QColor(outline_hex), max(1.0, 1.5 * scale)))
+        else:
+            p.setPen(Qt.NoPen)
+        p.drawRoundedRect(badge_rect, radius, radius)
+
+        p.setPen(QColor(text_hex))
+        p.drawText(badge_rect, Qt.AlignCenter, part_text)
+
+    def _render_subtitle(self, p: QPainter, scale: float, ox: float, oy: float, disp_w: float, disp_h: float):
+        """
+        Vẽ Subtitle mô phỏng chuẩn xác 1:1 theo render thực tế của FFmpeg libass:
+        - Sử dụng font.setPixelSize() triệt tiêu 100% độ lệch DPI màn hình.
+        - Tự động ngắt dòng thông minh (Word Wrap) theo độ rộng chuẩn video (MarginL=70, MarginR=70).
+        - Quy đổi MarginV theo hệ số PlayResY=288 chuẩn xác tuyệt đối so với đáy video.
+        """
+        cfg = self.cfg
+        sub_size = int(cfg.get("sub_size", 7))
+        sub_outline = int(cfg.get("sub_outline", 1))
+        sub_shadow = int(cfg.get("sub_shadow", 0))
+        sub_margin_v = int(cfg.get("sub_margin_v", 80))
+
+        raw_sub_c = cfg.get("sub_color", DEFAULT_SUB_COLOR)
+        raw_sub_ol = cfg.get("sub_outline_color", DEFAULT_SUB_OUTLINE_COLOR)
+        sub_hex = ass_to_hex(raw_sub_c) if str(raw_sub_c).startswith("&H") else (raw_sub_c or "#FFFFFF")
+        ol_hex = ass_to_hex(raw_sub_ol) if str(raw_sub_ol).startswith("&H") else (raw_sub_ol or "#000000")
+
+        text = (self.sub_sample_text or "").strip()
+        if cfg.get("sub_uppercase", False):
+            text = text.upper()
+
+        if not text:
+            return
+
+        # Cỡ chữ chuẩn theo FFmpeg libass (PlayResY=288) trên khung 1080x1920:
+        # 1920 / 288 = 6.6667 px per libass unit. Dùng pixelSize để tránh phóng to DPI.
+        canvas_font_size = max(6, int(round(sub_size * (1920.0 / 288.0) * scale)))
+        style_key = cfg.get("sub_style_type", "tiktok_slim")
+        font_family = "Segoe UI Black" if style_key == "classic" else ("Arial" if style_key == "tiktok_slim" else "Segoe UI")
+
+        font = QFont(font_family)
+        font.setPixelSize(canvas_font_size)
+        if style_key == "classic":
+            font.setBold(True)
+        else:
+            font.setBold(False)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+
+        # Word wrap theo lề trái phải MarginL=70, MarginR=70 (tối đa 940px trên video 1080px)
+        max_w_canvas = 940.0 * scale
+        words = text.split()
+        lines = []
+        curr_line = ""
+        for w in words:
+            cand = f"{curr_line} {w}".strip() if curr_line else w
+            if fm.horizontalAdvance(cand) <= max_w_canvas:
+                curr_line = cand
+            else:
+                if curr_line:
+                    lines.append(curr_line)
+                curr_line = w
+        if curr_line:
+            lines.append(curr_line)
+        if not lines:
+            lines = [text]
+
+        line_h = fm.height()
+        total_text_h = len(lines) * line_h
+
+        # Tọa độ Y: Khoảng cách từ đáy video theo MarginV chuẩn libass (PlayResY=288)
+        # dist_from_bottom = sub_margin_v * (1920 / 288) * scale
+        dist_from_bottom = float(sub_margin_v) * (1920.0 / 288.0) * scale
+        base_bottom_y = oy + disp_h - dist_from_bottom
+        top_y = base_bottom_y - total_text_h
+
+        for i, line_str in enumerate(lines):
+            lw = fm.horizontalAdvance(line_str)
+            lx = ox + (disp_w - lw) / 2.0
+            ly = top_y + i * line_h + fm.ascent()
+
+            # 1. Vẽ bóng đổ 3D
+            if sub_shadow > 0:
+                shadow_off = max(1, int(round(sub_shadow * (1920.0 / 288.0) * 0.35 * scale)))
+                p.setPen(QColor(0, 0, 0, 220))
+                p.drawText(QPointF(lx + shadow_off, ly + shadow_off), line_str)
+
+            # 2. Vẽ viền chữ 8 hướng (Outline)
+            if sub_outline > 0:
+                ol_col = QColor(ol_hex)
+                p.setPen(ol_col)
+                step = max(1, int(round(sub_outline * (1920.0 / 288.0) * 0.3 * scale)))
+                for dx in range(-step, step + 1, step):
+                    for dy in range(-step, step + 1, step):
+                        if dx == 0 and dy == 0:
+                            continue
+                        p.drawText(QPointF(lx + dx, ly + dy), line_str)
+
+            # 3. Vẽ chữ chính
+            p.setPen(QColor(sub_hex))
+            p.drawText(QPointF(lx, ly), line_str)
+
+
+# =====================================================================
+# 6. CỬA SỔ POPUP STUDIO CHÍNH (TITLE & SUBTITLE STUDIO DIALOG - 1260x860)
+# =====================================================================
+class TitleSubStudioDialog(QDialog):
+    """Popup Studio Title & Subtitle 2 Bảng Đối Xứng (1260x860)."""
+
+    def __init__(self, current_data: Optional[Dict[str, Any]] = None, sample_video_path: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🏷️ Title & Subtitle Studio (Live 9:16 Interactive Preview)")
+        self.setMinimumSize(1080, 720)
+        self.resize(1260, 860)
+        self.setModal(True)
+
+        self.ts_data: Dict[str, Any] = dict(current_data or {})
+        self.sample_video_path = sample_video_path or ""
+
+        # Dữ liệu màu sắc nội bộ
+        self._title_color1 = self.ts_data.get("title_color1", "#FFFFFF")
+        self._title_color2 = self.ts_data.get("title_color2", "#FFFFFF")
+        self._title_outline = self.ts_data.get("title_outline_color", "none")
+        self._title_bg = self.ts_data.get("title_bg_color", "#FF2D55")
+
+        raw_sc = self.ts_data.get("sub_color", DEFAULT_SUB_COLOR)
+        raw_so = self.ts_data.get("sub_outline_color", DEFAULT_SUB_OUTLINE_COLOR)
+        self._sub_color_ass = raw_sc if str(raw_sc).startswith("&H") else hex_to_ass(raw_sc)
+        self._sub_ol_ass = raw_so if str(raw_so).startswith("&H") else hex_to_ass(raw_so)
+
+        self._yt_fetcher: Optional[YouTubeThumbnailFetcher] = None
+
+        # Debounce timer chống lag giật canvas
+        self._debounce_timer = QTimer(self)
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.setInterval(50)
+        self._debounce_timer.timeout.connect(self._sync_canvas_preview)
+
+        self._setup_theme()
+        self._init_layout()
+        self._sync_canvas_preview()
+
+        # Tự động nạp ảnh nền ban đầu từ cache hoặc video mẫu
+        QTimer.singleShot(40, self._load_initial_background)
+        QTimer.singleShot(80, self._sync_canvas_preview)
+
+    def _setup_theme(self):
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1e1e2e;
+                color: #cdd6f4;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #45475a;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 14px;
+                background-color: #181825;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 8px;
+                background-color: #181825;
+            }
+            QLabel {
+                color: #cdd6f4;
+                font-size: 12px;
+            }
+            QLineEdit, QSpinBox, QComboBox {
+                background-color: #313244;
+                color: #cdd6f4;
+                border: 1px solid #45475a;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 12px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 16px;
+                background-color: #45475a;
+                border-radius: 3px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QCheckBox, QRadioButton {
+                color: #cdd6f4;
+                font-size: 12px;
+                spacing: 6px;
+            }
+            QScrollArea {
+                border: 1px solid #313244;
+                background: transparent;
+            }
+        """)
+
+    def _init_layout(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(14)
+
+        # =====================================================================
+        # BẢNG TRÁI: BỘ ĐIỀU KHIỂN THÔNG SỐ & MÀU SẮC (LEFT PANEL - 530px)
+        # =====================================================================
+        scroll = QScrollArea()
+        scroll.setFixedWidth(530)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setSpacing(12)
+        scroll.setWidget(left_widget)
+        root.addWidget(scroll)
+
+        # --- NHÓM 0: THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER) ---
+        gb_frame = QGroupBox("🔍 THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER)")
+        gb_frame.setStyleSheet("QGroupBox { color: #89b4fa; }")
+        grid_frame = QGridLayout(gb_frame)
+        grid_frame.setSpacing(8)
+        grid_frame.setContentsMargins(12, 14, 12, 10)
+
+        grid_frame.addWidget(QLabel("🔍 Zoom-in:"), 0, 0)
+        self.sp_zoom_in = QSpinBox()
+        self.sp_zoom_in.setRange(50, 300)
+        self.sp_zoom_in.setValue(int(round(float(self.ts_data.get("zoom_in", 178.0)))))
+        self.sp_zoom_in.setSuffix(" %")
+        self.sp_zoom_in.valueChanged.connect(self._schedule_refresh)
+        grid_frame.addWidget(self.sp_zoom_in, 0, 1)
+
+        grid_frame.addWidget(QLabel("↔️ Scale X:"), 0, 2)
+        self.sp_scale_x = QSpinBox()
+        self.sp_scale_x.setRange(50, 200)
+        self.sp_scale_x.setValue(int(round(float(self.ts_data.get("scale_x", 100.0)))))
+        self.sp_scale_x.setSuffix(" %")
+        self.sp_scale_x.valueChanged.connect(self._schedule_refresh)
+        grid_frame.addWidget(self.sp_scale_x, 0, 3)
+
+        grid_frame.addWidget(QLabel("↕️ Scale Y:"), 1, 0)
+        self.sp_scale_y = QSpinBox()
+        self.sp_scale_y.setRange(50, 200)
+        self.sp_scale_y.setValue(int(round(float(self.ts_data.get("scale_y", 130.0)))))
+        self.sp_scale_y.setSuffix(" %")
+        self.sp_scale_y.valueChanged.connect(self._schedule_refresh)
+        grid_frame.addWidget(self.sp_scale_y, 1, 1)
+
+        self.chk_blur_bg = QCheckBox("🌫️ Làm mờ 2 đầu")
+        self.chk_blur_bg.setChecked(bool(self.ts_data.get("blur_bg", True)))
+        self.chk_blur_bg.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+        self.chk_blur_bg.toggled.connect(self._schedule_refresh)
+        grid_frame.addWidget(self.chk_blur_bg, 1, 2, 1, 2)
+
+        left_layout.addWidget(gb_frame)
+
+        # --- NHÓM 1: CẤU HÌNH TIÊU ĐỀ BANNER 2 DÒNG ---
+        gb_title = QGroupBox("🏷️ CẤU HÌNH TIÊU ĐỀ BANNER (PILL BANNER)")
+        gb_title.setStyleSheet("QGroupBox { color: #a6e3a1; }")
+        fl_title = QFormLayout(gb_title)
+        fl_title.setSpacing(9)
+        fl_title.setContentsMargins(12, 16, 12, 12)
+
+        # Mặc định BẬT để người dùng thấy ngay Title Banner nổi bật khi mở
+        self.chk_title = QCheckBox("Bật Hiển Thị Tiêu Đề Banner Trên Video")
+        init_title_on = self.ts_data.get("show_title", self.ts_data.get("enable_title", True))
+        self.chk_title.setChecked(bool(init_title_on))
+        self.chk_title.stateChanged.connect(self._schedule_refresh)
+        fl_title.addRow(self.chk_title)
+
+        self.txt_title = QLineEdit(self.ts_data.get("title_text", ""))
+        self.txt_title.setPlaceholderText("Để trống = Tự động lấy tên video YouTube...")
+        self.txt_title.textChanged.connect(self._schedule_refresh)
+        fl_title.addRow("Tùy Chỉnh Chữ:", self.txt_title)
+
+        self.sp_title_y = QSpinBox()
+        self.sp_title_y.setRange(0, 1900)
+        self.sp_title_y.setValue(int(self.ts_data.get("title_y_pos", 320)))
+        self.sp_title_y.setSuffix(" px")
+        self.sp_title_y.setToolTip("Tọa độ Y tính từ mép trên cùng (0 = đỉnh, 1920 = đáy)")
+        self.sp_title_y.valueChanged.connect(self._schedule_refresh)
+        fl_title.addRow("Tọa Độ Y (px):", self.sp_title_y)
+
+        # 4 Nút Màu Banner
+        self.btn_c1 = _create_styled_color_btn(self._title_color1)
+        self.btn_c1.clicked.connect(lambda: self._choose_title_color("c1"))
+        fl_title.addRow("Màu Chữ Dòng 1:", self.btn_c1)
+
+        self.btn_c2 = _create_styled_color_btn(self._title_color2)
+        self.btn_c2.clicked.connect(lambda: self._choose_title_color("c2"))
+        fl_title.addRow("Màu Chữ Dòng 2:", self.btn_c2)
+
+        h_outline = QHBoxLayout()
+        h_outline.setSpacing(8)
+        _is_no_ol = not self._title_outline or str(self._title_outline).lower() == "none"
+        self.chk_no_outline = QCheckBox("Không Viền")
+        self.chk_no_outline.setChecked(_is_no_ol)
+        self.chk_no_outline.stateChanged.connect(self._toggle_no_outline)
+        self.btn_outline = _create_styled_color_btn(self._title_outline if not _is_no_ol else "#000000")
+        self.btn_outline.setEnabled(not _is_no_ol)
+        self.btn_outline.clicked.connect(lambda: self._choose_title_color("outline"))
+        h_outline.addWidget(self.chk_no_outline)
+        h_outline.addWidget(self.btn_outline)
+        h_outline.addStretch()
+        fl_title.addRow("Màu Viền Chữ:", h_outline)
+
+        self.btn_bg = _create_styled_color_btn(self._title_bg)
+        self.btn_bg.clicked.connect(lambda: self._choose_title_color("bg"))
+        fl_title.addRow("Màu Nền Banner:", self.btn_bg)
+
+        left_layout.addWidget(gb_title)
+
+        # --- NHÓM 2: CẤU HÌNH SỐ PART (NẰM NGAY TRÊN SUBTITLE) ---
+        gb_part = QGroupBox("🔢 CẤU HÌNH SỐ PART (CHUNG MÀU VỚI TIÊU ĐỀ)")
+        gb_part.setStyleSheet("QGroupBox { color: #cba6f7; }")
+        fl_part = QFormLayout(gb_part)
+        fl_part.setSpacing(9)
+        fl_part.setContentsMargins(12, 16, 12, 12)
+
+        self.chk_part = QCheckBox("Bật Hiển Thị Số Part Trên Video")
+        self.chk_part.setChecked(self.ts_data.get("show_part", True))
+        self.chk_part.stateChanged.connect(self._schedule_refresh)
+        fl_part.addRow(self.chk_part)
+
+        h_fmt = QHBoxLayout()
+        self.txt_part_format = QLineEdit(self.ts_data.get("part_format", "Part"))
+        self.txt_part_format.setFixedWidth(80)
+        self.txt_part_format.textChanged.connect(self._schedule_refresh)
+        h_fmt.addWidget(QLabel("Định Dạng:"))
+        h_fmt.addWidget(self.txt_part_format)
+
+        self.txt_part_test_num = QLineEdit("1")
+        self.txt_part_test_num.setFixedWidth(50)
+        self.txt_part_test_num.setToolTip("Số part mẫu hiển thị thử nghiệm trên canvas")
+        self.txt_part_test_num.textChanged.connect(self._schedule_refresh)
+        h_fmt.addWidget(QLabel("Số Thử Nghiệm:"))
+        h_fmt.addWidget(self.txt_part_test_num)
+        h_fmt.addStretch()
+        fl_part.addRow("Ký Hiệu Part:", h_fmt)
+
+        # 2 Tùy chọn vị trí Part
+        curr_part_pos = self.ts_data.get("part_position", "after_title")
+        self.rb_part_after_title = QRadioButton("1. Hiện ở sau Title ở trên cùng (Ghép chung Banner)")
+        self.rb_part_bottom = QRadioButton("2. Hiện ở bên dưới (Tùy chỉnh tọa độ Y như Sub)")
+
+        self.btn_grp_part_pos = QButtonGroup(self)
+        self.btn_grp_part_pos.addButton(self.rb_part_after_title, 1)
+        self.btn_grp_part_pos.addButton(self.rb_part_bottom, 2)
+
+        if curr_part_pos == "bottom":
+            self.rb_part_bottom.setChecked(True)
+        else:
+            self.rb_part_after_title.setChecked(True)
+
+        self.rb_part_after_title.toggled.connect(self._on_part_pos_changed)
+        self.rb_part_bottom.toggled.connect(self._on_part_pos_changed)
+
+        fl_part.addRow("Vị Trí Hiển Thị:", self.rb_part_after_title)
+        fl_part.addRow("", self.rb_part_bottom)
+
+        # Khối chỉnh tọa độ cho lựa chọn 2 (hiện ở dưới)
+        self.w_bottom_part_coords = QWidget()
+        h_b_coords = QHBoxLayout(self.w_bottom_part_coords)
+        h_b_coords.setContentsMargins(0, 0, 0, 0)
+        h_b_coords.setSpacing(8)
+
+        self.sp_part_y = QSpinBox()
+        self.sp_part_y.setRange(0, 1920)
+        self.sp_part_y.setValue(int(self.ts_data.get("part_y_pos", 1600)))
+        self.sp_part_y.setSuffix(" px")
+        self.sp_part_y.setToolTip("Tọa độ Y của khối Part phía dưới")
+        self.sp_part_y.valueChanged.connect(self._schedule_refresh)
+
+        self.sp_part_size = QSpinBox()
+        self.sp_part_size.setRange(10, 60)
+        self.sp_part_size.setValue(int(self.ts_data.get("part_size", 22)))
+        self.sp_part_size.setSuffix(" px")
+        self.sp_part_size.valueChanged.connect(self._schedule_refresh)
+
+        h_b_coords.addWidget(QLabel("Tọa Độ Y:"))
+        h_b_coords.addWidget(self.sp_part_y)
+        h_b_coords.addWidget(QLabel("Cỡ Chữ:"))
+        h_b_coords.addWidget(self.sp_part_size)
+        h_b_coords.addStretch()
+        fl_part.addRow("Thông Số Khi Ở Dưới:", self.w_bottom_part_coords)
+
+        self.w_bottom_part_coords.setVisible(self.rb_part_bottom.isChecked())
+
+        lbl_part_color_hint = QLabel("🎨 Số Part tự động dùng chung Màu Chữ, Nền và Viền với Tiêu Đề Banner.")
+        lbl_part_color_hint.setStyleSheet("color: #a6adc8; font-size: 11px; font-style: italic;")
+        lbl_part_color_hint.setWordWrap(True)
+        fl_part.addRow(lbl_part_color_hint)
+
+        left_layout.addWidget(gb_part)
+
+        # --- NHÓM 3: CẤU HÌNH PHỤ ĐỀ SUBTITLE ĐA PHONG CÁCH ---
+        gb_sub = QGroupBox("💬 CẤU HÌNH PHỤ ĐỀ SUBTITLE (0% LỖI TOFU)")
+        gb_sub.setStyleSheet("QGroupBox { color: #89b4fa; }")
+        fl_sub = QFormLayout(gb_sub)
+        fl_sub.setSpacing(9)
+        fl_sub.setContentsMargins(12, 16, 12, 12)
+
+        self.chk_sub = QCheckBox("Tự Động Tạo & Nhúng Phụ Đề (Whisper AI)")
+        self.chk_sub.setChecked(self.ts_data.get("auto_sub", self.ts_data.get("enable_sub", True)))
+        self.chk_sub.stateChanged.connect(self._schedule_refresh)
+        fl_sub.addRow(self.chk_sub)
+
+        # ComboBox 3 Style Presets
+        self.combo_sub_style = QComboBox()
+        for k, v in SUBTITLE_PRESETS.items():
+            self.combo_sub_style.addItem(v["name"], k)
+        curr_style = self.ts_data.get("sub_style_type", "tiktok_slim")
+        idx_style = self.combo_sub_style.findData(curr_style)
+        if idx_style >= 0:
+            self.combo_sub_style.setCurrentIndex(idx_style)
+        self.combo_sub_style.currentIndexChanged.connect(self._on_preset_selected)
+        fl_sub.addRow("Phong Cách (Style):", self.combo_sub_style)
+
+        # 4 Spinbox Thông số Phụ Đề
+        self.sp_sub_size = QSpinBox()
+        self.sp_sub_size.setRange(2, 60)
+        self.sp_sub_size.setValue(int(self.ts_data.get("sub_size", 7)))
+        self.sp_sub_size.setSuffix(" px")
+        self.sp_sub_size.valueChanged.connect(self._schedule_refresh)
+        fl_sub.addRow("Cỡ Chữ (FontSize):", self.sp_sub_size)
+
+        self.sp_sub_outline = QSpinBox()
+        self.sp_sub_outline.setRange(0, 10)
+        self.sp_sub_outline.setValue(int(self.ts_data.get("sub_outline", 1)))
+        self.sp_sub_outline.setSuffix(" px")
+        self.sp_sub_outline.setToolTip("Độ dày viền nét chữ (Outline)")
+        self.sp_sub_outline.valueChanged.connect(self._schedule_refresh)
+        fl_sub.addRow("Độ Dày Viền (Outline):", self.sp_sub_outline)
+
+        self.sp_sub_shadow = QSpinBox()
+        self.sp_sub_shadow.setRange(0, 6)
+        self.sp_sub_shadow.setValue(int(self.ts_data.get("sub_shadow", 0)))
+        self.sp_sub_shadow.setSuffix(" px")
+        self.sp_sub_shadow.setToolTip("Bóng mờ 3D đổ xuống (Shadow)")
+        self.sp_sub_shadow.valueChanged.connect(self._schedule_refresh)
+        fl_sub.addRow("Bóng 3D (Shadow):", self.sp_sub_shadow)
+
+        self.sp_sub_margin_v = QSpinBox()
+        self.sp_sub_margin_v.setRange(10, 500)
+        self.sp_sub_margin_v.setValue(int(self.ts_data.get("sub_margin_v", 80)))
+        self.sp_sub_margin_v.setSuffix(" px")
+        self.sp_sub_margin_v.setToolTip("Khoảng cách từ mép đáy màn hình đến chữ phụ đề (MarginV)")
+        self.sp_sub_margin_v.valueChanged.connect(self._schedule_refresh)
+        fl_sub.addRow("Lề Đáy (MarginV):", self.sp_sub_margin_v)
+
+        # 2 Ô Màu ASS
+        self.btn_sub_color = _create_styled_color_btn(ass_to_hex(self._sub_color_ass))
+        self.btn_sub_color.clicked.connect(lambda: self._choose_sub_color("color"))
+        fl_sub.addRow("Màu Chữ Phụ Đề:", self.btn_sub_color)
+
+        self.btn_sub_outline_color = _create_styled_color_btn(ass_to_hex(self._sub_ol_ass))
+        self.btn_sub_outline_color.clicked.connect(lambda: self._choose_sub_color("outline"))
+        fl_sub.addRow("Màu Viền Phụ Đề:", self.btn_sub_outline_color)
+
+        lbl_ass_hint = QLabel("💡 Lưu ý: Màu Sub tự động chuyển sang BGR chuẩn ASS (&HBBGGRR&) cho FFmpeg.")
+        lbl_ass_hint.setStyleSheet("color: #6c7086; font-size: 11px; font-style: italic;")
+        lbl_ass_hint.setWordWrap(True)
+        fl_sub.addRow(lbl_ass_hint)
+
+        left_layout.addWidget(gb_sub)
+
+        # --- NÚT THAO TÁC (LƯU / RESET / HỦY) ---
+        h_btns = QHBoxLayout()
+        h_btns.setSpacing(10)
+
+        btn_save = QPushButton("💾 Lưu Cấu Hình")
+        btn_save.setFixedHeight(36)
+        btn_save.setCursor(Qt.PointingHandCursor)
+        btn_save.setStyleSheet("""
+            QPushButton {
+                background-color: #a6e3a1; color: #11111b;
+                font-weight: bold; font-size: 13px;
+                border-radius: 8px; padding: 0 18px;
+            }
+            QPushButton:hover { background-color: #94d3a0; }
+        """)
+        btn_save.clicked.connect(self.accept)
+
+        btn_reset = QPushButton("↩ Reset Mặc Định")
+        btn_reset.setFixedHeight(36)
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setStyleSheet("""
+            QPushButton {
+                background-color: #313244; color: #f9e2af;
+                border: 1px solid #45475a; border-radius: 8px;
+                font-size: 13px; padding: 0 14px;
+            }
+            QPushButton:hover { background-color: #45475a; }
+        """)
+        btn_reset.clicked.connect(self._reset_to_defaults)
+
+        btn_cancel = QPushButton("✖ Hủy Bỏ")
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #313244; color: #f38ba8;
+                border: 1px solid #45475a; border-radius: 8px;
+                font-size: 13px; padding: 0 14px;
+            }
+            QPushButton:hover { background-color: #45475a; }
+        """)
+        btn_cancel.clicked.connect(self.reject)
+
+        h_btns.addWidget(btn_save)
+        h_btns.addWidget(btn_reset)
+        h_btns.addStretch()
+        h_btns.addWidget(btn_cancel)
+        left_layout.addLayout(h_btns)
+        left_layout.addStretch()
+
+        # =====================================================================
+        # BẢNG PHẢI: KHUNG XEM TRƯỚC 9:16 TRỰC QUAN (RIGHT LIVE PREVIEW 9:16)
+        # =====================================================================
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+        root.addWidget(right_widget, 1)
+
+        # 1. Thanh Công Cụ Nạp Hình Ảnh Mẫu (Video File, Cache, YouTube Link)
+        gb_source = QGroupBox("🖼️ HÌNH ẢNH MẪU VIDEO (NỀN CANVAS 9:16)")
+        gb_source.setStyleSheet("QGroupBox { color: #89b4fa; }")
+        v_source = QVBoxLayout(gb_source)
+        v_source.setContentsMargins(10, 14, 10, 8)
+        v_source.setSpacing(6)
+
+        h_src_row = QHBoxLayout()
+        h_src_row.setSpacing(8)
+
+        self.btn_pick_video = QPushButton("📁 Chọn Video")
+        self.btn_pick_video.setFixedHeight(28)
+        self.btn_pick_video.setCursor(Qt.PointingHandCursor)
+        self.btn_pick_video.setStyleSheet("background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; border-radius: 5px; padding: 0 10px;")
+        self.btn_pick_video.clicked.connect(self._on_choose_video_file)
+        h_src_row.addWidget(self.btn_pick_video)
+
+        self.btn_load_cache = QPushButton("🔄 Nạp Lại Frame")
+        self.btn_load_cache.setFixedHeight(28)
+        self.btn_load_cache.setCursor(Qt.PointingHandCursor)
+        self.btn_load_cache.setStyleSheet("background-color: #313244; color: #f9e2af; border: 1px solid #45475a; border-radius: 5px; padding: 0 10px;")
+        self.btn_load_cache.clicked.connect(self._load_initial_background)
+        h_src_row.addWidget(self.btn_load_cache)
+
+        # Ô nhập link YouTube
+        self.txt_yt_url = QLineEdit()
+        self.txt_yt_url.setPlaceholderText("Dán Link YouTube hoặc Video ID vào đây để bốc ảnh mẫu...")
+        h_src_row.addWidget(self.txt_yt_url, 1)
+
+        self.btn_fetch_yt = QPushButton("🌐 Lấy Mẫu YouTube")
+        self.btn_fetch_yt.setFixedHeight(28)
+        self.btn_fetch_yt.setCursor(Qt.PointingHandCursor)
+        self.btn_fetch_yt.setStyleSheet("background-color: #fab387; color: #11111b; font-weight: bold; border-radius: 5px; padding: 0 12px;")
+        self.btn_fetch_yt.clicked.connect(self._fetch_youtube_sample)
+        h_src_row.addWidget(self.btn_fetch_yt)
+
+        v_source.addLayout(h_src_row)
+
+        self.lbl_src_status = QLabel("Trạng thái ảnh: Đang nạp...")
+        self.lbl_src_status.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        v_source.addWidget(self.lbl_src_status)
+
+        right_layout.addWidget(gb_source)
+
+        # 2. Canvas 9:16 Preview
+        self.canvas = PreviewCanvas9x16()
+        right_layout.addWidget(self.canvas, 1)
+
+        # 3. 2 Ô Nhập Mẫu Thử Nghiệm
+        gb_sample = QGroupBox("📝 Nhập Văn Bản Thử Nghiệm Xem Ngay")
+        gb_sample.setStyleSheet("QGroupBox { color: #f9e2af; }")
+        fl_sample = QFormLayout(gb_sample)
+        fl_sample.setContentsMargins(12, 14, 12, 8)
+        fl_sample.setSpacing(6)
+
+        self.txt_sample_title = QLineEdit()
+        self.txt_sample_title.setPlaceholderText("Nhập tiêu đề mẫu...")
+        self.txt_sample_title.setText("TIÊU ĐỀ VIDEO MẪU\nDÒNG PHỤ BANNER")
+        self.txt_sample_title.textChanged.connect(self._schedule_refresh)
+        fl_sample.addRow("Title test:", self.txt_sample_title)
+
+        self.txt_sample_sub = QLineEdit()
+        self.txt_sample_sub.setPlaceholderText("Nhập phụ đề mẫu...")
+        self.txt_sample_sub.setText("Đây là phụ đề mẫu đang hiển thị thử nghiệm...")
+        self.txt_sample_sub.textChanged.connect(self._schedule_refresh)
+        fl_sample.addRow("Sub test:", self.txt_sample_sub)
+
+        right_layout.addWidget(gb_sample)
+
+        # Label trạng thái thông số
+        self.lbl_specs = QLabel("")
+        self.lbl_specs.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        self.lbl_specs.setAlignment(Qt.AlignCenter)
+        right_layout.addWidget(self.lbl_specs)
+
+    # -----------------------------------------------------------------
+    # CƠ CHẾ NẠP HÌNH ẢNH MẪU (VIDEO / CACHE / YOUTUBE)
+    # -----------------------------------------------------------------
+    def _load_initial_background(self):
+        # 1. Thử lấy từ SYSTEM_CACHE_PATH (ảnh gốc 16:9 để Canvas tự động co giãn zoom/blur theo config)
+        if SYSTEM_CACHE_PATH.exists():
+            pix = QPixmap(str(SYSTEM_CACHE_PATH))
+            if not pix.isNull():
+                self.canvas.set_background_pixmap(pix)
+                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Crop Preview Cache ({pix.width()}×{pix.height()})")
+                self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+                return
+
+        # 2. Thử trích xuất từ sample_video_path (ảnh gốc 16:9)
+        if self.sample_video_path and os.path.exists(self.sample_video_path):
+            self._extract_frame_from_video(self.sample_video_path)
+            return
+
+        # 3. Thử tìm video trong thư mục downloads (ảnh gốc 16:9)
+        dl_dir = APP_DIR / "downloads"
+        if dl_dir.exists():
+            mp4s = sorted(dl_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+            if mp4s:
+                self._extract_frame_from_video(str(mp4s[0]))
+                return
+
+        # 4. Dự phòng: Thử lấy từ layout_base.jpg
+        if LAYOUT_BASE_PATH.exists():
+            pix = QPixmap(str(LAYOUT_BASE_PATH))
+            if not pix.isNull():
+                self.canvas.set_background_pixmap(pix)
+                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Cache Layout Base ({pix.width()}×{pix.height()})")
+                self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+                return
+
+        self.lbl_src_status.setText("ℹ️ Chưa có ảnh mẫu. Dán link YouTube hoặc bấm 'Chọn Video' để xem thử trên video thật.")
+        self.lbl_src_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
+
+    def _extract_frame_from_video(self, video_path: str):
         try:
-            return ImageFont.truetype("arialbd.ttf" if bold else "arial.ttf", size)
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_POS_MSEC, 2000.0)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    h, w, ch = frame.shape
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    qimg = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+                    pix = QPixmap.fromImage(qimg)
+                    self.canvas.set_background_pixmap(pix)
+                    self.lbl_src_status.setText(f"✅ Đã trích xuất frame từ video: {Path(video_path).name} ({w}×{h})")
+                    self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+                    return
         except Exception:
-            return ImageFont.load_default()
+            pass
+        self.lbl_src_status.setText(f"⚠️ Không đọc được frame từ: {Path(video_path).name}")
+        self.lbl_src_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
 
-from studio_helpers import (
-    SYSTEM_DATA_DIR, CACHE_FRAME_PATH, LAYOUT_BASE_PATH, COLOR_BASE_PATH,
-    get_sample_or_fallback_image, extract_frame_from_video, fetch_youtube_sample
-)
-from crop_blur_studio import render_layout_image
+    def _on_choose_video_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn Video Làm Mẫu",
+            str(APP_DIR / "downloads"),
+            "Video Files (*.mp4 *.mkv *.mov *.avi *.webm)"
+        )
+        if file_path:
+            self._extract_frame_from_video(file_path)
 
+    def _fetch_youtube_sample(self):
+        url = self.txt_yt_url.text().strip()
+        if not url:
+            self.lbl_src_status.setText("⚠️ Hãy dán link YouTube hoặc Video ID vào ô bên cạnh.")
+            self.lbl_src_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
+            return
 
-def draw_rounded_rectangle(draw: ImageDraw.ImageDraw, xy, radius=20, fill=None, outline=None, width=1):
-    """Vẽ hình chữ nhật bo góc (Pill Banner)."""
-    draw.rounded_rectangle(xy, radius=radius, fill=fill, outline=outline, width=width)
+        self.lbl_src_status.setText("⏳ Đang tải ảnh mẫu từ YouTube...")
+        self.lbl_src_status.setStyleSheet("color: #fab387; font-size: 11px;")
+        self.btn_fetch_yt.setEnabled(False)
 
+        self._yt_fetcher = YouTubeThumbnailFetcher(url, self)
+        self._yt_fetcher.finished_sig.connect(self._on_youtube_fetched)
+        self._yt_fetcher.start()
 
-def render_title_and_sub_overlay(
-    base_img: Image.Image,
-    title_cfg: Dict[str, Any],
-    sub_cfg: Dict[str, Any],
-    part_cfg: Dict[str, Any]
-) -> Image.Image:
-    """
-    Vẽ lớp phủ Title Banner, Subtitle, Part Banner chuẩn xác 100% từng pixel lên canvas 1080x1920.
-    """
-    out_img = base_img.copy().convert("RGBA")
-    overlay = Image.new("RGBA", out_img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    def _on_youtube_fetched(self, pixmap, status_text, color_hex):
+        self.btn_fetch_yt.setEnabled(True)
+        self.lbl_src_status.setText(status_text)
+        self.lbl_src_status.setStyleSheet(f"color: {color_hex}; font-size: 11px;")
+        if pixmap:
+            self.canvas.set_background_pixmap(pixmap)
 
-    # 1. VẼ TITLE BANNER (PILL BANNER BO GÓC)
-    if title_cfg.get("show_title", True):
-        line1 = str(title_cfg.get("title_line1", "TIÊU ĐỀ VIDEO MẪU DÒNG PHỤ BANNER")).strip()
-        line2 = str(title_cfg.get("title_line2", "")).strip()
-        
-        y_pos = int(title_cfg.get("title_y_pos", 320))
-        bg_color = title_cfg.get("title_bg_color", "#FFFFFF")
-        color1 = title_cfg.get("title_color1", "#000000")
-        color2 = title_cfg.get("title_color2", "#AA0000")
-        outline_color = title_cfg.get("title_outline_color", "none")
+    # -----------------------------------------------------------------
+    # CƠ CHẾ ĐỒNG BỘ VÀ XỬ LÝ SỰ KIỆN
+    # -----------------------------------------------------------------
+    def _schedule_refresh(self, *_):
+        self._debounce_timer.start()
 
-        bw = 886
-        bx = (1080 - bw) // 2
-        bh = 120 if line2 else 76
-        by = y_pos
+    def _on_part_pos_changed(self):
+        is_bottom = self.rb_part_bottom.isChecked()
+        self.w_bottom_part_coords.setVisible(is_bottom)
+        self._schedule_refresh()
 
-        out_c = outline_color if outline_color and outline_color != "none" else None
-        out_w = 2 if out_c else 0
-
-        # Vẽ Pill Banner
-        draw_rounded_rectangle(
-            draw, [(bx, by), (bx + bw, by + bh)],
-            radius=24, fill=bg_color, outline=out_c, width=out_w
+    def _sync_canvas_preview(self):
+        cfg = self.get_values()
+        part_num = self.txt_part_test_num.text().strip() or "1"
+        self.canvas.update_data(
+            cfg,
+            self.txt_sample_title.text(),
+            self.txt_sample_sub.text(),
+            part_num=part_num
+        )
+        sk = self.combo_sub_style.currentData() or "tiktok_slim"
+        preset_info = SUBTITLE_PRESETS.get(sk, {})
+        part_pos_desc = "Sau Title (Trên)" if cfg.get("part_position") == "after_title" else f"Dưới Y={cfg.get('part_y_pos')}px"
+        self.lbl_specs.setText(
+            f"Phong cách: {preset_info.get('name', sk)}  |  "
+            f"Cỡ Sub: {self.sp_sub_size.value()}px (Lề {self.sp_sub_margin_v.value()}px)  |  "
+            f"Title Y: {self.sp_title_y.value()}px  |  "
+            f"Vị trí Part: {part_pos_desc}"
         )
 
-        f_title = get_pillow_font(size=36, bold=True, text=line1)
-        if line2:
-            draw.text((540, by + 34), line1, fill=color1, anchor="mm", font=f_title)
-            f_sub_title = get_pillow_font(size=32, bold=True, text=line2)
-            draw.text((540, by + 86), line2, fill=color2, anchor="mm", font=f_sub_title)
+    def _on_preset_selected(self, _):
+        sk = self.combo_sub_style.currentData() or "tiktok_slim"
+        preset = SUBTITLE_PRESETS.get(sk, SUBTITLE_PRESETS["tiktok_slim"])
+
+        widgets = [self.sp_sub_size, self.sp_sub_outline, self.sp_sub_shadow, self.sp_sub_margin_v]
+        for w in widgets:
+            w.blockSignals(True)
+
+        self.sp_sub_size.setValue(preset["sub_size"])
+        self.sp_sub_outline.setValue(preset["sub_outline"])
+        self.sp_sub_shadow.setValue(preset["sub_shadow"])
+        self.sp_sub_margin_v.setValue(preset["sub_margin_v"])
+
+        for w in widgets:
+            w.blockSignals(False)
+
+        self._schedule_refresh()
+
+    def _toggle_no_outline(self, state):
+        is_no = bool(state)
+        self.btn_outline.setEnabled(not is_no)
+        if is_no:
+            self._title_outline = "none"
         else:
-            draw.text((540, by + bh // 2), line1, fill=color1, anchor="mm", font=f_title)
+            if str(self._title_outline).lower() == "none":
+                self._title_outline = "#000000"
+            _apply_color_btn_visuals(self.btn_outline, self._title_outline)
+        self._schedule_refresh()
 
-    # 2. VẼ THẺ PART
-    if part_cfg.get("show_part", False):
-        part_num = str(part_cfg.get("part_number", "1"))
-        part_prefix = str(part_cfg.get("part_prefix", "Part"))
-        part_text = f"{part_prefix} {part_num}"
-        part_pos = part_cfg.get("position", "after_title")
+    def _choose_title_color(self, target: str):
+        mapping = {
+            "c1": (self._title_color1, "Chọn Màu Chữ Dòng 1", self.btn_c1),
+            "c2": (self._title_color2, "Chọn Màu Chữ Dòng 2", self.btn_c2),
+            "outline": (
+                self._title_outline if str(self._title_outline).lower() != "none" else "#000000",
+                "Chọn Màu Viền Chữ", self.btn_outline
+            ),
+            "bg": (self._title_bg, "Chọn Màu Nền Banner", self.btn_bg),
+        }
+        if target not in mapping:
+            return
+        cur_hex, title, btn = mapping[target]
+        picked = QColorDialog.getColor(QColor(cur_hex), self, title)
+        if not picked.isValid():
+            return
+        new_hex = picked.name().upper()
+        if target == "c1":
+            self._title_color1 = new_hex
+        elif target == "c2":
+            self._title_color2 = new_hex
+        elif target == "outline":
+            self._title_outline = new_hex
+        elif target == "bg":
+            self._title_bg = new_hex
+        _apply_color_btn_visuals(btn, new_hex)
+        self._schedule_refresh()
 
-        if part_pos == "after_title" and title_cfg.get("show_title", True):
-            # Ghép ngay bên phải Title hoặc trong Banner
-            pass
-        elif part_pos == "bottom_card" or not title_cfg.get("show_title", True):
-            p_y = int(part_cfg.get("bottom_y", 1500))
-            pw, ph = 240, 64
-            px = (1080 - pw) // 2
-            p_bg = title_cfg.get("title_bg_color", "#FFFFFF")
-            p_c = title_cfg.get("title_color1", "#000000")
-            draw_rounded_rectangle(draw, [(px, p_y), (px + pw, p_y + ph)], radius=18, fill=p_bg)
-            f_part = get_pillow_font(size=int(part_cfg.get("font_size", 28)), bold=True, text=part_text)
-            draw.text((540, p_y + ph // 2), part_text, fill=p_c, anchor="mm", font=f_part)
+    def _choose_sub_color(self, target: str):
+        if target == "color":
+            cur_hex = ass_to_hex(self._sub_color_ass)
+            title = "Chọn Màu Chữ Phụ Đề (Sẽ tự đổi sang ASS)"
+            btn = self.btn_sub_color
+        else:
+            cur_hex = ass_to_hex(self._sub_ol_ass)
+            title = "Chọn Màu Viền Phụ Đề (Sẽ tự đổi sang ASS)"
+            btn = self.btn_sub_outline_color
 
-    # 3. VẼ PHỤ ĐỀ SUBTITLE
-    if sub_cfg.get("show_sub", True):
-        sub_text = str(sub_cfg.get("sample_text", "Đây là phụ đề mẫu đang hiển thị thử nghiệm...")).strip()
-        if sub_text:
-            margin_v = int(sub_cfg.get("margin_v", 89))
-            sub_y = 1920 - margin_v
-            sub_c = sub_cfg.get("color", "#FFFFFF")
-            sub_out = sub_cfg.get("outline_color", "#000000")
-            f_size = int(sub_cfg.get("font_size", 26))
+        picked = QColorDialog.getColor(QColor(cur_hex), self, title)
+        if not picked.isValid():
+            return
+        new_hex = picked.name().upper()
+        new_ass = hex_to_ass(new_hex)
+        if target == "color":
+            self._sub_color_ass = new_ass
+        else:
+            self._sub_ol_ass = new_ass
+        _apply_color_btn_visuals(btn, new_hex)
+        self._schedule_refresh()
 
-            f_sub = get_pillow_font(size=f_size, bold=True, text=sub_text)
-            draw.text((540, sub_y), sub_text, fill=sub_c, stroke_fill=sub_out, stroke_width=3, anchor="mm", font=f_sub)
+    def _reset_to_defaults(self):
+        """Khôi phục về cấu hình TikTok Slim tối ưu mặc định."""
+        self.chk_title.setChecked(True)
+        self.txt_title.clear()
+        self.sp_title_y.setValue(320)
+        self._title_color1 = "#000000"
+        self._title_color2 = "#ff0000"
+        self._title_outline = "none"
+        self._title_bg = "#ffffff"
 
-    out_img.paste(overlay, (0, 0), overlay)
-    return out_img.convert("RGB")
+        _apply_color_btn_visuals(self.btn_c1, "#000000")
+        _apply_color_btn_visuals(self.btn_c2, "#ff0000")
+        _apply_color_btn_visuals(self.btn_outline, "#000000")
+        _apply_color_btn_visuals(self.btn_bg, "#ffffff")
+        self.chk_no_outline.setChecked(True)
+
+        self.chk_part.setChecked(True)
+        self.txt_part_format.setText("Part")
+        self.txt_part_test_num.setText("1")
+        self.rb_part_after_title.setChecked(True)
+        self.sp_part_y.setValue(1600)
+        self.sp_part_size.setValue(22)
+
+        idx_slim = self.combo_sub_style.findData("tiktok_slim")
+        self.combo_sub_style.setCurrentIndex(idx_slim if idx_slim >= 0 else 0)
+        self.chk_sub.setChecked(True)
+
+        self._sub_color_ass = DEFAULT_SUB_COLOR
+        self._sub_ol_ass = DEFAULT_SUB_OUTLINE_COLOR
+        _apply_color_btn_visuals(self.btn_sub_color, ass_to_hex(DEFAULT_SUB_COLOR))
+        _apply_color_btn_visuals(self.btn_sub_outline_color, ass_to_hex(DEFAULT_SUB_OUTLINE_COLOR))
+
+        self._schedule_refresh()
+
+    def get_values(self) -> Dict[str, Any]:
+        """Thu thập toàn bộ thông số cấu hình Title, Part & Subtitle."""
+        is_title = self.chk_title.isChecked()
+        is_sub = self.chk_sub.isChecked()
+        style_key = self.combo_sub_style.currentData() or "tiktok_slim"
+        preset = SUBTITLE_PRESETS.get(style_key, SUBTITLE_PRESETS["tiktok_slim"])
+        outline_val = "none" if self.chk_no_outline.isChecked() else self._title_outline
+
+        part_pos = "bottom" if self.rb_part_bottom.isChecked() else "after_title"
+
+        return {
+            # Tiêu đề Banner
+            "show_title": is_title,
+            "enable_title": is_title,
+            "title_text": self.txt_title.text().strip(),
+            "title_y_pos": self.sp_title_y.value(),
+            "title_color1": self._title_color1,
+            "title_color2": self._title_color2,
+            "title_outline_color": outline_val,
+            "title_bg_color": self._title_bg,
+            # Cấu hình Số Part
+            "show_part": self.chk_part.isChecked(),
+            "part_format": self.txt_part_format.text().strip() or "Part",
+            "part_position": part_pos,  # "after_title" hoặc "bottom"
+            "part_y_pos": self.sp_part_y.value(),
+            "part_size": self.sp_part_size.value(),
+            # Phụ đề Subtitle
+            "auto_sub": is_sub,
+            "enable_sub": is_sub,
+            "sub_style_type": style_key,
+            "sub_size": self.sp_sub_size.value(),
+            "sub_outline": self.sp_sub_outline.value(),
+            "sub_shadow": self.sp_sub_shadow.value(),
+            "sub_margin_v": self.sp_sub_margin_v.value(),
+            "sub_color": self._sub_color_ass,
+            "sub_outline_color": self._sub_ol_ass,
+            "sub_uppercase": preset["uppercase"],
+            "zoom_in": self.sp_zoom_in.value(),
+            "scale_x": self.sp_scale_x.value(),
+            "scale_y": self.sp_scale_y.value(),
+            "blur_bg": self.chk_blur_bg.isChecked(),
+        }
 
 
+# =====================================================================
+# 7. HÀM MỞ POPUP CONVENIENCE (ENTRY POINT)
+# =====================================================================
 def open_title_sub_studio_popup(
-    parent,
+    parent=None,
+    current_data: Optional[Dict[str, Any]] = None,
+    sample_video_path: str = "",
     video_source: Optional[str] = None,
     current_config: Optional[Dict[str, Any]] = None,
     on_save_callback: Optional[Callable[[Dict[str, Any]], None]] = None
 ) -> Dict[str, Any]:
-    """
-    Cửa sổ Studio Tiêu Đề Banner & Phụ Đề Subtitle (WYSIWYG 1:1).
-    Khớp 100% với giao diện Title & Subtitle Studio (Live 9:16 Interactive Preview).
-    """
-    cfg = dict(current_config or {})
-    video_path = video_source or cfg.get("video_source") or cfg.get("source_url_or_path") or cfg.get("youtube_url") or ""
-
-    # Nạp Background phôi Tầng 2 (color_base.jpg) hoặc Tầng 3 (layout_base.jpg)
-    bg_frame = COLOR_BASE_PATH if os.path.isfile(COLOR_BASE_PATH) else LAYOUT_BASE_PATH
-    if not os.path.isfile(bg_frame):
-        f_sample = get_sample_or_fallback_image(video_path)
-        z_val = float(cfg.get("zoom_in", cfg.get("zoom_percent", 178.0))) / 100.0 if float(cfg.get("zoom_in", cfg.get("zoom_percent", 178.0))) > 10.0 else 1.78
-        sx_val = float(cfg.get("scale_x", cfg.get("scale_w_percent", 102.0))) / 100.0 if float(cfg.get("scale_x", cfg.get("scale_w_percent", 102.0))) > 10.0 else 1.02
-        sy_val = float(cfg.get("scale_y", cfg.get("scale_h_percent", 120.0))) / 100.0 if float(cfg.get("scale_y", cfg.get("scale_h_percent", 120.0))) > 10.0 else 1.20
-
-        render_layout_image(
-            source_img_path=f_sample,
-            crop_x=int(cfg.get("crop_x", 0)),
-            crop_y=int(cfg.get("crop_y", 0)),
-            crop_w=int(cfg.get("crop_w", 1920)),
-            crop_h=int(cfg.get("crop_h", 1080)),
-            zoom_pct=z_val,
-            scale_x=sx_val,
-            scale_y=sy_val,
-            blur_bg=bool(cfg.get("blur_bg", True)),
-            blur_mask=cfg.get("blur_mask"),
-            output_path=LAYOUT_BASE_PATH
-        )
-        bg_frame = LAYOUT_BASE_PATH
-
-    base_img = Image.open(bg_frame).convert("RGB")
-
-    popup = tk.Toplevel(parent)
-    popup.title("Title & Subtitle Studio (Live 9:16 Interactive Preview)")
-    popup.geometry("1260x920")
-    popup.minsize(1060, 760)
-    popup.transient(parent)
-    popup.grab_set()
-    popup.configure(bg="#0B0F19")
-
-    # Main Container
-    main_container = tk.Frame(popup, bg="#0B0F19")
-    main_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-    left_frame = tk.Frame(main_container, bg="#0F172A", width=440, padx=10, pady=10, highlightthickness=1, highlightbackground="#334155")
-    left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-    left_frame.pack_propagate(False)
-
-    right_frame = tk.Frame(main_container, bg="#0F172A", padx=10, pady=10, highlightthickness=1, highlightbackground="#334155")
-    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-    # --- VARIABLES ---
-    # Frame params (Header)
-    zoom_val_str = tk.StringVar(value=f"{int(float(cfg.get('zoom_in', cfg.get('zoom_percent', 178.0))))} %")
-    scale_x_str = tk.StringVar(value=f"{int(float(cfg.get('scale_x', cfg.get('scale_w_percent', 102.0))))} %")
-    scale_y_str = tk.StringVar(value=f"{int(float(cfg.get('scale_y', cfg.get('scale_h_percent', 120.0))))} %")
-    blur_bg_var = tk.BooleanVar(value=bool(cfg.get("blur_bg", True)))
-
-    # Title
-    show_title_var = tk.BooleanVar(value=bool(cfg.get("enable_title", cfg.get("show_title", True))))
-    title_custom_var = tk.StringVar(value=cfg.get("title_text", cfg.get("title_custom", "")))
-    title_line1_var = tk.StringVar(value=cfg.get("title_line1", "TIÊU ĐỀ VIDEO MẪU DÒNG PHỤ BANNER"))
-    title_line2_var = tk.StringVar(value=cfg.get("title_line2", ""))
-    title_y_var = tk.IntVar(value=int(cfg.get("title_y_pos", cfg.get("title_y", 320))))
-    title_color1_var = tk.StringVar(value=cfg.get("title_color1", cfg.get("title_color", "#000000")))
-    title_color2_var = tk.StringVar(value=cfg.get("title_color2", "#AA0000"))
-    title_outline_var = tk.StringVar(value=cfg.get("title_outline_color", "Không Viền"))
-    title_bg_color_var = tk.StringVar(value=cfg.get("title_bg_color", "#FFFFFF"))
-
-    # Part
-    show_part_var = tk.BooleanVar(value=bool(cfg.get("show_part", True)))
-    part_format_var = tk.StringVar(value=cfg.get("part_prefix", "Part"))
-    part_num_var = tk.StringVar(value=str(cfg.get("part_number", "1")))
-    part_pos_var = tk.StringVar(value=cfg.get("part_position", "bottom_card"))
-    part_bottom_y_var = tk.IntVar(value=int(cfg.get("part_bottom_y", 1500)))
-    part_size_var = tk.IntVar(value=int(cfg.get("part_font_size", 16)))
-
-    # Subtitle
-    show_sub_var = tk.BooleanVar(value=bool(cfg.get("show_sub", True)))
-    sub_style_var = tk.StringVar(value=cfg.get("sub_style_type", "Tiêu Chuẩn (Standard - Segoe UI)"))
-    sub_size_var = tk.IntVar(value=int(cfg.get("sub_font_size", 21)))
-    sub_margin_v_var = tk.IntVar(value=int(cfg.get("sub_margin_v", 89)))
-    sub_sample_var = tk.StringVar(value=cfg.get("sub_sample_text", "Đây là phụ đề mẫu đang hiển thị thử nghiệm..."))
-    sub_color_var = tk.StringVar(value=cfg.get("sub_color", "#FFFFFF"))
-    sub_outline_color_var = tk.StringVar(value=cfg.get("sub_outline_color", "#000000"))
-
-    # --- LEFT CONTROLS (SCROLLABLE) ---
-    c_canvas = tk.Canvas(left_frame, bg="#0F172A", highlightthickness=0)
-    c_scroll = ttk.Scrollbar(left_frame, orient="vertical", command=c_canvas.yview)
-    c_content = tk.Frame(c_canvas, bg="#0F172A")
-    c_content.bind("<Configure>", lambda e: c_canvas.configure(scrollregion=c_canvas.bbox("all")))
-    c_canvas.create_window((0, 0), window=c_content, anchor="nw", width=405)
-    c_canvas.configure(yscrollcommand=c_scroll.set)
-
-    c_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-    c_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-
-    # 1. THÔNG SỐ KHUNG HÌNH
-    g_geo = ttk.LabelFrame(c_content, text=" 🔍 THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER) ", padding=8)
-    g_geo.pack(fill=tk.X, pady=(0, 6))
-
-    row_geo = ttk.Frame(g_geo)
-    row_geo.pack(fill=tk.X, pady=2)
-    ttk.Label(row_geo, text="Zoom-in:").pack(side=tk.LEFT)
-    ttk.Entry(row_geo, textvariable=zoom_val_str, width=6, state="readonly").pack(side=tk.LEFT, padx=(2, 8))
-    ttk.Label(row_geo, text="Scale X:").pack(side=tk.LEFT)
-    ttk.Entry(row_geo, textvariable=scale_x_str, width=6, state="readonly").pack(side=tk.LEFT, padx=(2, 8))
-    ttk.Label(row_geo, text="Scale Y:").pack(side=tk.LEFT)
-    ttk.Entry(row_geo, textvariable=scale_y_str, width=6, state="readonly").pack(side=tk.LEFT, padx=(2, 6))
-    ttk.Checkbutton(row_geo, text="Làm mờ 2 đầu", variable=blur_bg_var, state="disabled").pack(side=tk.LEFT)
-
-    # 2. CẤU HÌNH TIÊU ĐỀ BANNER (PILL BANNER)
-    g_title = ttk.LabelFrame(c_content, text=" 📌 CẤU HÌNH TIÊU ĐỀ BANNER (PILL BANNER) ", padding=8)
-    g_title.pack(fill=tk.X, pady=(0, 6))
-
-    ttk.Checkbutton(g_title, text="Bật Hiển Thị Tiêu Đề Banner Trên Video", variable=show_title_var, command=lambda: redraw_title_preview()).pack(anchor=tk.W, pady=(0, 4))
-
-    ttk.Label(g_title, text="Tùy Chỉnh Chữ:").pack(anchor=tk.W)
-    ttk.Entry(g_title, textvariable=title_custom_var, width=36).pack(fill=tk.X, pady=(1, 4))
-
-    # Tọa độ Y px
-    y_row = ttk.Frame(g_title)
-    y_row.pack(fill=tk.X, pady=(2, 4))
-    ttk.Label(y_row, text="Tọa Độ Y (px):").pack(side=tk.LEFT)
-    ttk.Entry(y_row, textvariable=title_y_var, width=6).pack(side=tk.LEFT, padx=4)
-    ttk.Scale(y_row, from_=50, to=1800, variable=title_y_var, orient=tk.HORIZONTAL).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-
-    # Bảng Màu Swatches
-    def choose_color(target_var, title="Chọn màu"):
-        c = colorchooser.askcolor(title=title, color=target_var.get())
-        if c and c[1]:
-            target_var.set(c[1].upper())
-            redraw_title_preview()
-
-    col_grid = ttk.Frame(g_title)
-    col_grid.pack(fill=tk.X, pady=2)
-
-    # Dòng 1 Màu
-    r_c1 = ttk.Frame(col_grid)
-    r_c1.pack(fill=tk.X, pady=2)
-    ttk.Label(r_c1, text="Màu Chữ Dòng 1:", width=16).pack(side=tk.LEFT)
-    btn_col1 = tk.Button(r_c1, text=title_color1_var.get(), bg=title_color1_var.get(), fg="#FFFFFF" if title_color1_var.get() == "#000000" else "#000000", width=10, relief=tk.RIDGE, command=lambda: (choose_color(title_color1_var), btn_col1.config(text=title_color1_var.get(), bg=title_color1_var.get())))
-    btn_col1.pack(side=tk.LEFT, padx=4)
-
-    # Dòng 2 Màu
-    r_c2 = ttk.Frame(col_grid)
-    r_c2.pack(fill=tk.X, pady=2)
-    ttk.Label(r_c2, text="Màu Chữ Dòng 2:", width=16).pack(side=tk.LEFT)
-    btn_col2 = tk.Button(r_c2, text=title_color2_var.get(), bg=title_color2_var.get(), fg="#FFFFFF", width=10, relief=tk.RIDGE, command=lambda: (choose_color(title_color2_var), btn_col2.config(text=title_color2_var.get(), bg=title_color2_var.get())))
-    btn_col2.pack(side=tk.LEFT, padx=4)
-
-    # Viền Chữ
-    r_out = ttk.Frame(col_grid)
-    r_out.pack(fill=tk.X, pady=2)
-    ttk.Label(r_out, text="Màu Viền Chữ:", width=16).pack(side=tk.LEFT)
-    cb_out = ttk.Combobox(r_out, textvariable=title_outline_var, values=["Không Viền", "Viền Đen (#000000)", "Viền Trắng (#FFFFFF)", "Tùy Chỉnh"], state="readonly", width=12)
-    cb_out.pack(side=tk.LEFT, padx=2)
-    cb_out.bind("<<ComboboxSelected>>", lambda e: redraw_title_preview())
-
-    # Nền Banner
-    r_bg = ttk.Frame(col_grid)
-    r_bg.pack(fill=tk.X, pady=2)
-    ttk.Label(r_bg, text="Màu Nền Banner:", width=16).pack(side=tk.LEFT)
-    btn_bg_swatch = tk.Button(r_bg, text=title_bg_color_var.get(), bg=title_bg_color_var.get(), fg="#000000", width=10, relief=tk.RIDGE, command=lambda: (choose_color(title_bg_color_var), btn_bg_swatch.config(text=title_bg_color_var.get(), bg=title_bg_color_var.get())))
-    btn_bg_swatch.pack(side=tk.LEFT, padx=4)
-
-    # 3. CẤU HÌNH SỐ PART (CHUNG MÀU VỚI TIÊU ĐỀ)
-    g_part = ttk.LabelFrame(c_content, text=" 🏷 CẤU HÌNH SỐ PART (CHUNG MÀU VỚI TIÊU ĐỀ) ", padding=8)
-    g_part.pack(fill=tk.X, pady=(0, 6))
-
-    ttk.Checkbutton(g_part, text="Bật Hiển Thị Số Part Trên Video", variable=show_part_var, command=lambda: redraw_title_preview()).pack(anchor=tk.W, pady=(0, 2))
-
-    p_fmt_row = ttk.Frame(g_part)
-    p_fmt_row.pack(fill=tk.X, pady=2)
-    ttk.Label(p_fmt_row, text="Ký Hiệu Part:").pack(side=tk.LEFT)
-    ttk.Label(p_fmt_row, text="Định Dạng:").pack(side=tk.LEFT, padx=(6, 2))
-    ttk.Entry(p_fmt_row, textvariable=part_format_var, width=6).pack(side=tk.LEFT)
-    ttk.Label(p_fmt_row, text="Số Thử Nghiệm:").pack(side=tk.LEFT, padx=(6, 2))
-    ttk.Entry(p_fmt_row, textvariable=part_num_var, width=4).pack(side=tk.LEFT)
-
-    p_pos_lbl = ttk.Label(g_part, text="Vị Trí Hiển Thị:")
-    p_pos_lbl.pack(anchor=tk.W, pady=(4, 0))
-    ttk.Radiobutton(g_part, text="1. Hiện ở sau Title ở trên cùng (Ghép chung Banner)", variable=part_pos_var, value="after_title", command=lambda: redraw_title_preview()).pack(anchor=tk.W, padx=12)
-    ttk.Radiobutton(g_part, text="2. Hiện ở bên dưới (Tùy chỉnh tọa độ Y như Sub)", variable=part_pos_var, value="bottom_card", command=lambda: redraw_title_preview()).pack(anchor=tk.W, padx=12)
-
-    p_sub_row = ttk.Frame(g_part)
-    p_sub_row.pack(fill=tk.X, pady=2)
-    ttk.Label(p_sub_row, text="Thông Số Khi Ở Dưới:").pack(side=tk.LEFT)
-    ttk.Label(p_sub_row, text="Tọa Độ Y:").pack(side=tk.LEFT, padx=(4, 2))
-    ttk.Spinbox(p_sub_row, from_=100, to=1900, increment=10, textvariable=part_bottom_y_var, width=6).pack(side=tk.LEFT)
-    ttk.Label(p_sub_row, text="Cỡ Chữ:").pack(side=tk.LEFT, padx=(6, 2))
-    ttk.Spinbox(p_sub_row, from_=10, to=60, increment=1, textvariable=part_size_var, width=5).pack(side=tk.LEFT)
-
-    ttk.Label(g_part, text="📌 Số Part tự động dùng chung Màu Chữ, Nền và Viền với Tiêu Đề Banner.", font=("Segoe UI", 8), foreground="#94A3B8").pack(anchor=tk.W, pady=(4, 0))
-
-    # 4. CẤU HÌNH PHỤ ĐỀ SUBTITLE (0% LỖI TOFU)
-    g_sub = ttk.LabelFrame(c_content, text=" 💬 CẤU HÌNH PHỤ ĐỀ SUBTITLE (0% LỖI TOFU) ", padding=8)
-    g_sub.pack(fill=tk.X, pady=(0, 6))
-
-    ttk.Checkbutton(g_sub, text="Tự Động Tạo / Nhúng Phụ Đề (Whisper AI)", variable=show_sub_var, command=lambda: redraw_title_preview()).pack(anchor=tk.W, pady=(0, 2))
-
-    sub_style_row = ttk.Frame(g_sub)
-    sub_style_row.pack(fill=tk.X, pady=2)
-    ttk.Label(sub_style_row, text="Phong Cách (Style):").pack(side=tk.LEFT)
-    sub_style_cb = ttk.Combobox(
-        sub_style_row, textvariable=sub_style_var,
-        values=["Tiêu Chuẩn (Standard - Segoe UI)", "Cổ Điển (Classic - Impact)", "Thanh Mảnh (TikTok Slim - Arial)"],
-        state="readonly", width=22
-    )
-    sub_style_cb.pack(side=tk.LEFT, padx=4)
-    sub_style_cb.bind("<<ComboboxSelected>>", lambda e: redraw_title_preview())
-
-    sub_font_row = ttk.Frame(g_sub)
-    sub_font_row.pack(fill=tk.X, pady=2)
-    ttk.Label(sub_font_row, text="Cỡ Chữ (FontSize):").pack(side=tk.LEFT)
-    ttk.Spinbox(sub_font_row, from_=12, to=60, increment=1, textvariable=sub_size_var, width=6).pack(side=tk.LEFT, padx=4)
-
-    # --- RIGHT PANEL: LIVE 9:16 CANVAS & TEST CONTROLS ---
-    g_top_src = ttk.LabelFrame(right_frame, text=" 🖼 HÌNH ẢNH MẪU VIDEO (NỀN CANVAS 9:16) ", padding=6)
-    g_top_src.pack(fill=tk.X, pady=(0, 6))
-
-    top_btn_row = ttk.Frame(g_top_src)
-    top_btn_row.pack(fill=tk.X, pady=1)
-
-    vid_status_lbl = ttk.Label(g_top_src, text=f"✅ Đã trích xuất frame từ video: {os.path.basename(video_path) if video_path else 'anhmau.jpg'} (1920x1080)", font=("Segoe UI", 8), foreground="#10B981")
-
-    def on_choose_video_ts():
-        fn = filedialog.askopenfilename(title="Chọn Video Mẫu", filetypes=[("Video Files", "*.mp4;*.mkv;*.mov;*.avi;*.webm"), ("All Files", "*.*")])
-        if fn:
-            res = extract_frame_from_video(fn, timestamp_sec=2.0)
-            if res:
-                nonlocal base_img
-                reload_title_base_frame(res)
-                vid_status_lbl.config(text=f"✅ Đã trích xuất frame từ video: {os.path.basename(fn)} (1920x1080)")
-
-    ttk.Button(top_btn_row, text="📁 Chọn Video", command=on_choose_video_ts, width=12).pack(side=tk.LEFT, padx=2)
-
-    def on_reload_frame_ts():
-        nonlocal base_img
-        reload_title_base_frame()
-        messagebox.showinfo("Thông báo", "Đã nạp lại frame mẫu từ phôi layout!")
-
-    ttk.Button(top_btn_row, text="🔄 Nạp Lại Frame", command=on_reload_frame_ts, width=14).pack(side=tk.LEFT, padx=2)
-
-    yt_ts_url_var = tk.StringVar(value="")
-    ttk.Entry(top_btn_row, textvariable=yt_ts_url_var, width=28).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
-
-    def on_get_yt_sample_ts():
-        url = yt_ts_url_var.get().strip()
-        if not url:
-            messagebox.showwarning("Thiếu link", "Vui lòng nhập link YouTube hoặc Video ID!")
-            return
-        res = fetch_youtube_sample(url, CACHE_FRAME_PATH)
-        if res and os.path.isfile(res):
-            reload_title_base_frame(res)
-            vid_status_lbl.config(text=f"✅ Đã lấy mẫu từ YouTube: {url[:20]}... (1920x1080)")
-            messagebox.showinfo("Thành công", "Đã lấy frame mẫu từ YouTube!")
-        else:
-            messagebox.showerror("Lỗi", "Không thể lấy frame từ link YouTube này.")
-
-    ttk.Button(top_btn_row, text="⚡ Lấy Mẫu YouTube", command=on_get_yt_sample_ts, width=16).pack(side=tk.LEFT, padx=2)
-    vid_status_lbl.pack(anchor=tk.W, pady=(2, 0))
-
-    def reload_title_base_frame(source_override: Optional[str] = None):
-        nonlocal base_img
-        s_path = source_override or get_sample_or_fallback_image(video_path)
-        z_val = float(cfg.get("zoom_in", cfg.get("zoom_percent", 178.0))) / 100.0 if float(cfg.get("zoom_in", cfg.get("zoom_percent", 178.0))) > 10.0 else 1.78
-        sx_val = float(cfg.get("scale_x", cfg.get("scale_w_percent", 102.0))) / 100.0 if float(cfg.get("scale_x", cfg.get("scale_w_percent", 102.0))) > 10.0 else 1.02
-        sy_val = float(cfg.get("scale_y", cfg.get("scale_h_percent", 120.0))) / 100.0 if float(cfg.get("scale_y", cfg.get("scale_h_percent", 120.0))) > 10.0 else 1.20
-
-        render_layout_image(
-            source_img_path=s_path,
-            crop_x=int(cfg.get("crop_x", 0)),
-            crop_y=int(cfg.get("crop_y", 0)),
-            crop_w=int(cfg.get("crop_w", 1920)),
-            crop_h=int(cfg.get("crop_h", 1080)),
-            zoom_pct=z_val,
-            scale_x=sx_val,
-            scale_y=sy_val,
-            blur_bg=bool(cfg.get("blur_bg", True)),
-            blur_mask=cfg.get("blur_mask"),
-            output_path=LAYOUT_BASE_PATH
-        )
-        base_img = Image.open(LAYOUT_BASE_PATH).convert("RGB")
-        redraw_title_preview()
-
-    # LIVE 9:16 CANVAS
-    title_canvas = tk.Canvas(right_frame, bg="#020617", highlightthickness=1, highlightbackground="#1E293B")
-    title_canvas.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
-
-    # BOTTOM BOX: NHẬP VĂN BẢN THỬ NGHIỆM XEM NGAY
-    g_bottom_test = ttk.LabelFrame(right_frame, text=" 📝 Nhập Văn Bản Thử Nghiệm Xem Ngay ", padding=6)
-    g_bottom_test.pack(fill=tk.X)
-
-    r_test1 = ttk.Frame(g_bottom_test)
-    r_test1.pack(fill=tk.X, pady=1)
-    ttk.Label(r_test1, text="Title test:", width=10).pack(side=tk.LEFT)
-    ttk.Entry(r_test1, textvariable=title_line1_var, width=46).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    r_test2 = ttk.Frame(g_bottom_test)
-    r_test2.pack(fill=tk.X, pady=1)
-    ttk.Label(r_test2, text="Sub test:", width=10).pack(side=tk.LEFT)
-    ttk.Entry(r_test2, textvariable=sub_sample_var, width=46).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    footer_summary_lbl = ttk.Label(
-        g_bottom_test,
-        text="Phong cách: Tiêu Chuẩn (Standard - Segoe UI) | Cỡ Sub: 21px (Lề 89px) | Title Y: 320px | Vị trí Part: Dưới Y=1500px",
-        font=("Segoe UI", 8), foreground="#94A3B8"
-    )
-    footer_summary_lbl.pack(anchor=tk.W, pady=(2, 0))
-
-    def update_footer_summary():
-        style_short = sub_style_var.get()
-        footer_summary_lbl.config(
-            text=f"Phong cách: {style_short} | Cỡ Sub: {sub_size_var.get()}px (Lề {sub_margin_v_var.get()}px) | Title Y: {title_y_var.get()}px | Vị trí Part: {'Dưới Y=' + str(part_bottom_y_var.get()) + 'px' if part_pos_var.get() == 'bottom_card' else 'Trong Banner'}"
-        )
-
-    photo_title_cache = None
-
-    def redraw_title_preview():
-        nonlocal photo_title_cache
-        c_w = title_canvas.winfo_width()
-        c_h = title_canvas.winfo_height()
-        if c_w < 50 or c_h < 50:
-            c_w, c_h = 440, 680
-
-        scale = min((c_w - 20) / 1080.0, (c_h - 20) / 1920.0)
-        offset_x = (c_w - 1080.0 * scale) / 2.0
-        offset_y = (c_h - 1920.0 * scale) / 2.0
-
-        t_out = None
-        if "Đen" in title_outline_var.get():
-            t_out = "#000000"
-        elif "Trắng" in title_outline_var.get():
-            t_out = "#FFFFFF"
-
-        t_cfg = {
-            "show_title": show_title_var.get(),
-            "title_line1": title_line1_var.get(),
-            "title_line2": title_line2_var.get(),
-            "title_y_pos": title_y_var.get(),
-            "title_bg_color": title_bg_color_var.get(),
-            "title_color1": title_color1_var.get(),
-            "title_color2": title_color2_var.get(),
-            "title_outline_color": t_out
-        }
-
-        s_cfg = {
-            "show_sub": show_sub_var.get(),
-            "sample_text": sub_sample_var.get(),
-            "style_type": sub_style_var.get(),
-            "margin_v": sub_margin_v_var.get(),
-            "color": sub_color_var.get(),
-            "outline_color": sub_outline_color_var.get(),
-            "font_size": sub_size_var.get()
-        }
-
-        p_cfg = {
-            "show_part": show_part_var.get(),
-            "part_prefix": part_format_var.get(),
-            "part_number": part_num_var.get(),
-            "position": part_pos_var.get(),
-            "bottom_y": part_bottom_y_var.get(),
-            "font_size": part_size_var.get()
-        }
-
-        rendered = render_title_and_sub_overlay(base_img, t_cfg, s_cfg, p_cfg)
-
-        disp_w = int(1080 * scale)
-        disp_h = int(1920 * scale)
-        preview_disp = rendered.resize((disp_w, disp_h), Image.BILINEAR)
-
-        photo_title_cache = ImageTk.PhotoImage(preview_disp)
-        title_canvas.delete("all")
-        title_canvas.create_image(int(offset_x), int(offset_y), anchor="nw", image=photo_title_cache)
-
-        # Viền 9:16 Canvas
-        title_canvas.create_rectangle(
-            offset_x, offset_y, offset_x + disp_w, offset_y + disp_h,
-            outline="#38BDF8", width=2
-        )
-
-        # Badge 9:16 PRO
-        title_canvas.create_rectangle(
-            offset_x + 8, offset_y + 8, offset_x + 100, offset_y + 32,
-            fill="#020617", outline="#38BDF8", width=1
-        )
-        title_canvas.create_text(
-            offset_x + 54, offset_y + 20,
-            text="9:16 PRO", fill="#38BDF8", font=("Segoe UI", 8, "bold")
-        )
-
-        update_footer_summary()
-
-    # Kéo thả Title Banner trực tiếp trên Canvas
-    dragging_title = False
-
-    def on_canvas_press(event):
-        nonlocal dragging_title
-        c_h = title_canvas.winfo_height()
-        scale = min((title_canvas.winfo_width() - 20) / 1080.0, (c_h - 20) / 1920.0)
-        offset_y = (c_h - 1920.0 * scale) / 2.0
-        cur_y_px = int((event.y - offset_y) / scale)
-        title_y = title_y_var.get()
-        if abs(cur_y_px - title_y) < 100:
-            dragging_title = True
-
-    def on_canvas_drag(event):
-        nonlocal dragging_title
-        if dragging_title:
-            c_h = title_canvas.winfo_height()
-            scale = min((title_canvas.winfo_width() - 20) / 1080.0, (c_h - 20) / 1920.0)
-            offset_y = (c_h - 1920.0 * scale) / 2.0
-            new_y = int((event.y - offset_y) / scale)
-            new_y = max(50, min(1800, new_y))
-            title_y_var.set(new_y)
-
-    def on_canvas_release(event):
-        nonlocal dragging_title
-        dragging_title = False
-
-    title_canvas.bind("<ButtonPress-1>", on_canvas_press)
-    title_canvas.bind("<B1-Motion>", on_canvas_drag)
-    title_canvas.bind("<ButtonRelease-1>", on_canvas_release)
-    title_canvas.bind("<Configure>", lambda e: redraw_title_preview())
-
-    for var in [title_line1_var, title_line2_var, title_y_var, sub_sample_var, sub_size_var, sub_margin_v_var, part_bottom_y_var, part_size_var, part_num_var, part_format_var, title_custom_var]:
-        var.trace_add("write", lambda *a: redraw_title_preview())
-
-    # NÚT LƯU CẤU HÌNH & THOÁT (BIG SAVE BUTTON AT BOTTOM LEFT)
-    saved_title_result = {}
-
-    def on_save_title_sub():
-        nonlocal saved_title_result
-        t_out = None
-        if "Đen" in title_outline_var.get():
-            t_out = "#000000"
-        elif "Trắng" in title_outline_var.get():
-            t_out = "#FFFFFF"
-
-        saved_title_result = {
-            "enable_title": bool(show_title_var.get()),
-            "show_title": bool(show_title_var.get()),
-            "title_text": title_custom_var.get().strip() or title_line1_var.get().strip(),
-            "title_line1": title_line1_var.get().strip(),
-            "title_line2": title_line2_var.get().strip(),
-            "title_y_pos": int(title_y_var.get()),
-            "title_y": int(title_y_var.get()),
-            "title_bg_color": title_bg_color_var.get(),
-            "title_color1": title_color1_var.get(),
-            "title_color": title_color1_var.get(),
-            "title_color2": title_color2_var.get(),
-            "title_outline_color": t_out or "none",
-            "show_sub": bool(show_sub_var.get()),
-            "sub_style_type": sub_style_var.get(),
-            "sub_font_size": int(sub_size_var.get()),
-            "sub_size": int(sub_size_var.get()),
-            "sub_margin_v": int(sub_margin_v_var.get()),
-            "sub_margin": int(sub_margin_v_var.get()),
-            "sub_sample_text": sub_sample_var.get(),
-            "sub_color": sub_color_var.get(),
-            "sub_outline_color": sub_outline_color_var.get(),
-            "show_part": bool(show_part_var.get()),
-            "part_prefix": part_format_var.get(),
-            "part_number": part_num_var.get(),
-            "part_position": part_pos_var.get(),
-            "part_bottom_y": int(part_bottom_y_var.get()),
-            "part_font_size": int(part_size_var.get()),
-        }
-        redraw_title_preview()
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+    cfg = dict(current_config or current_data or {})
+    vpath = video_source or sample_video_path or cfg.get("video_source") or cfg.get("source_url_or_path") or cfg.get("youtube_url") or ""
+    dlg = TitleSubStudioDialog(cfg, sample_video_path=vpath, parent=None)
+    if dlg.exec() == QDialog.Accepted:
+        res = dlg.get_values()
         if on_save_callback:
-            on_save_callback(saved_title_result)
-        popup.destroy()
-
-    btn_save_ts = tk.Button(
-        c_content, text="💾 LƯU CẤU HÌNH TIÊU ĐỀ & PHỤ ĐỀ",
-        bg="#10B981", fg="#FFFFFF", font=("Segoe UI", 10, "bold"),
-        relief=tk.FLAT, pady=8, command=on_save_title_sub
-    )
-    btn_save_ts.pack(fill=tk.X, pady=(8, 4))
-
-    popup.after(120, redraw_title_preview)
-    popup.wait_window()
-    return saved_title_result
+            on_save_callback(res)
+        return res
+    return cfg
