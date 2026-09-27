@@ -586,17 +586,43 @@ class TikTokRemixerTab(ttk.Frame):
                 self.log(f"⚠️ Lỗi nghe thử giọng: {e}")
         threading.Thread(target=play_thread, daemon=True).start()
 
+    def _on_studio_saved(self, saved_dict: dict):
+        """Lưu toàn bộ kết quả cấu hình từ Studio (Title, Sub, Màu sắc, Zoom/Scale) vào config_tiktok_remixer.json."""
+        if not isinstance(saved_dict, dict):
+            return
+        self.config.update(saved_dict)
+        save_tiktok_remixer_config(self.config)
+        self.log("💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Zoom) vào config_tiktok_remixer.json!")
+
     def _open_color_studio(self):
+        self._collect_config_from_ui()
+        self.config["is_tiktok_remixer"] = True
+        self.config["app_mode"] = "tiktok_remixer"
         if self.main_app and hasattr(self.main_app, "open_capcut_color_popup"):
-            self.main_app.open_capcut_color_popup(caller_config=self.config)
+            self.main_app.open_capcut_color_popup(
+                on_save_callback=self._on_studio_saved,
+                caller_config=self.config
+            )
 
     def _open_title_sub_studio(self):
+        self._collect_config_from_ui()
+        self.config["is_tiktok_remixer"] = True
+        self.config["app_mode"] = "tiktok_remixer"
         if self.main_app and hasattr(self.main_app, "open_title_sub_studio_popup"):
-            self.main_app.open_title_sub_studio_popup(caller_config=self.config)
+            self.main_app.open_title_sub_studio_popup(
+                on_save_callback=self._on_studio_saved,
+                caller_config=self.config
+            )
 
     def _open_crop_studio(self):
+        self._collect_config_from_ui()
+        self.config["is_tiktok_remixer"] = True
+        self.config["app_mode"] = "tiktok_remixer"
         if self.main_app and hasattr(self.main_app, "open_crop_tool_popup"):
-            self.main_app.open_crop_tool_popup(caller_config=self.config)
+            self.main_app.open_crop_tool_popup(
+                on_save_callback=self._on_studio_saved,
+                caller_config=self.config
+            )
 
     def _open_output_folder(self):
         out_dir = os.path.join(os.getcwd(), "output_tiktok_remix")

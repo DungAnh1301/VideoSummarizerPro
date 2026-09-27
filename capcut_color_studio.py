@@ -66,18 +66,87 @@ PREVIEW_6S_PATH = TEMP_PREVIEW_DIR / "preview_6s.mp4"
 SYSTEM_CACHE_PATH = APP_DIR / "system_data" / "crop_preview_cache.jpg"
 
 
+def _detect_mode(cfg: dict) -> str:
+    """Xác định chế độ gọi Studio: 'tiktok_remixer', 'compilation', hoặc 'summary'."""
+    if not isinstance(cfg, dict):
+        return "summary"
+    if (
+        cfg.get("is_tiktok_remixer")
+        or cfg.get("app_mode") == "tiktok_remixer"
+        or "auto_clean_core_crop" in cfg
+        or "shuffle_broll" in cfg
+    ):
+        return "tiktok_remixer"
+    if (
+        cfg.get("is_part_splitter")
+        or cfg.get("app_mode") == "compilation"
+        or "compilation_clip_count" in cfg
+        or "playlist_url" in cfg
+    ):
+        return "compilation"
+    return "summary"
+
+
 def _build_pure_color_filter(options: dict) -> str:
     """Wrapper chuẩn gọi build_adjust_filters để tạo chuỗi FFmpeg filter 15 thông số + Look Stack"""
     return build_adjust_filters(options or {}, allow_blur_fx=True)
 
 
+def _extract_frame_geom(cfg: dict) -> tuple[float, float, float, bool]:
+    """Trích xuất (zoom, scale_x, scale_y, blur_bg) an toàn từ config, chống xung đột boolean."""
+    is_tiktok = bool(
+        cfg.get("is_tiktok_remixer")
+        or cfg.get("app_mode") == "tiktok_remixer"
+        or "auto_clean_core_crop" in cfg
+        or "shuffle_broll" in cfg
+    )
+    def_zoom = 105.0 if is_tiktok else 178.0
+    def_sx = 100.0
+    def_sy = 100.0 if is_tiktok else 130.0
+    def_blur = False if is_tiktok else True
+
+    raw_z = cfg.get("zoom_percent")
+    if raw_z is None or isinstance(raw_z, bool):
+        raw_z = cfg.get("zoom_in")
+    if isinstance(raw_z, bool) or raw_z is None:
+        raw_z = def_zoom
+    try:
+        val_z = float(raw_z)
+        if 0 < val_z <= 5.0:
+            val_z *= 100.0
+        elif val_z <= 0:
+            val_z = def_zoom
+    except Exception:
+        val_z = def_zoom
+
+    raw_sx = cfg.get("scale_w") if cfg.get("scale_w") is not None else cfg.get("scale_x", def_sx)
+    try:
+        val_sx = float(raw_sx)
+        if 0 < val_sx <= 5.0:
+            val_sx *= 100.0
+    except Exception:
+        val_sx = def_sx
+
+    raw_sy = cfg.get("scale_h") if cfg.get("scale_h") is not None else cfg.get("scale_y", def_sy)
+    try:
+        val_sy = float(raw_sy)
+        if 0 < val_sy <= 5.0:
+            val_sy *= 100.0
+    except Exception:
+        val_sy = def_sy
+
+    blur_bg = bool(cfg.get("blur_bg", def_blur))
+    return val_z, val_sx, val_sy, blur_bg
+
+
+# ==============================================================================
 # ==============================================================================
 # WORKER 1: TRÍCH XUẤT BASE FRAME 9:16 (STAGE 1 PIPELINE)
 # ==============================================================================
 class AsyncLayoutBaseExtractor(QThread):
     finished_sig = Signal(bool, str) # (success, message)
 
-    def __init__(self, video_path: str, start_sec: float = 2.0, blur_bg: bool = True, zoom_in: float = 178.0, scale_x: float = 100.0, scale_y: float = 130.0, parent=None):
+    def __init__(self, video_path: str, start_sec: float = 2.0, blur_bg: bool = True, zoom_in: float = 178.0, scale_x: float = 100.0, scale_y: float = 130.0, is_tiktok_mode: bool = False, cache_crop_path: Optional[Path] = None, layout_base_path: Optional[Path] = None, parent=None):
         super().__init__(parent)
         self.video_path = video_path
         self.start_sec = max(0.0, float(start_sec))
@@ -85,6 +154,9 @@ class AsyncLayoutBaseExtractor(QThread):
         self.zoom_in = float(zoom_in)
         self.scale_x = float(scale_x)
         self.scale_y = float(scale_y)
+        self.is_tiktok_mode = bool(is_tiktok_mode)
+        self.cache_crop_path = cache_crop_path or SYSTEM_CACHE_PATH
+        self.layout_base_path = layout_base_path or LAYOUT_BASE_PATH
 
     def run(self):
         try:
@@ -95,27 +167,53 @@ class AsyncLayoutBaseExtractor(QThread):
                 ffmpeg_bin = str(dist_ffmpeg)
 
             vp = self.video_path
-            zoom_pct = float(self.zoom_in) / 100.0
-            sx = float(self.scale_x) / 100.0
-            sy = float(self.scale_y) / 100.0
-            fg_w = int(540 * zoom_pct * sx)
-            fg_h = int((540 * 1080 / 1920) * zoom_pct * sy)
-            if fg_w % 2 != 0: fg_w += 1
-            if fg_h % 2 != 0: fg_h += 1
+            target_layout = self.layout_base_path
+            target_cache = self.cache_crop_path
 
-            if getattr(self, "blur_bg", True):
-                filter_layout_9x16 = (
-                    "[0:v]split=2[orig][copy];"
-                    "[copy]scale=540:960:force_original_aspect_ratio=increase,crop=540:960,boxblur=20:10[bg];"
-                    f"[orig]scale={fg_w}:{fg_h}[fg];"
-                    "[bg][fg]overlay=(W-w)/2:(H-h)/2"
-                )
+            if self.is_tiktok_mode:
+                zoom_pct = float(self.zoom_in) / 100.0
+                sx = float(self.scale_x) / 100.0
+                sy = float(self.scale_y) / 100.0
+                fg_w = int(540 * zoom_pct * sx)
+                fg_h = int(960 * zoom_pct * sy)
+                if fg_w % 2 != 0: fg_w += 1
+                if fg_h % 2 != 0: fg_h += 1
+
+                if getattr(self, "blur_bg", False) or zoom_pct < 1.0 or sx < 1.0 or sy < 1.0:
+                    filter_layout_9x16 = (
+                        "[0:v]split=2[orig][copy];"
+                        "[copy]scale=540:960:force_original_aspect_ratio=increase,crop=540:960,boxblur=20:10[bg];"
+                        f"[orig]scale={fg_w}:{fg_h}[fg];"
+                        "[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1"
+                    )
+                else:
+                    filter_layout_9x16 = (
+                        f"[0:v]scale={fg_w}:{fg_h},crop=540:960:(iw-540)/2:(ih-960)/2"
+                    ) if (fg_w >= 540 and fg_h >= 960) else (
+                        f"color=c=black:s=540x960[bg];[0:v]scale={fg_w}:{fg_h}[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2"
+                    )
             else:
-                filter_layout_9x16 = (
-                    "color=c=black:s=540x960[bg];"
-                    f"[0:v]scale={fg_w}:{fg_h}[fg];"
-                    "[bg][fg]overlay=(W-w)/2:(H-h)/2"
-                )
+                zoom_pct = float(self.zoom_in) / 100.0
+                sx = float(self.scale_x) / 100.0
+                sy = float(self.scale_y) / 100.0
+                fg_w = int(540 * zoom_pct * sx)
+                fg_h = int((540 * 1080 / 1920) * zoom_pct * sy)
+                if fg_w % 2 != 0: fg_w += 1
+                if fg_h % 2 != 0: fg_h += 1
+
+                if getattr(self, "blur_bg", True):
+                    filter_layout_9x16 = (
+                        "[0:v]split=2[orig][copy];"
+                        "[copy]scale=540:960:force_original_aspect_ratio=increase,crop=540:960,boxblur=20:10[bg];"
+                        f"[orig]scale={fg_w}:{fg_h}[fg];"
+                        "[bg][fg]overlay=(W-w)/2:(H-h)/2"
+                    )
+                else:
+                    filter_layout_9x16 = (
+                        "color=c=black:s=540x960[bg];"
+                        f"[0:v]scale={fg_w}:{fg_h}[fg];"
+                        "[bg][fg]overlay=(W-w)/2:(H-h)/2"
+                    )
 
             # Nếu có video thật hợp lệ
             if vp and os.path.exists(vp):
@@ -126,26 +224,26 @@ class AsyncLayoutBaseExtractor(QThread):
                     "-vframes", "1",
                     "-filter_complex", filter_layout_9x16,
                     "-q:v", "2",
-                    str(LAYOUT_BASE_PATH)
+                    str(target_layout)
                 ]
                 sub_flags = 0x08000000 if os.name == 'nt' else 0
                 ret = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=sub_flags, timeout=30)
-                if ret.returncode == 0 and LAYOUT_BASE_PATH.exists() and LAYOUT_BASE_PATH.stat().st_size > 500:
+                if ret.returncode == 0 and target_layout.exists() and target_layout.stat().st_size > 500:
                     self.finished_sig.emit(True, f"Đã trích xuất base frame 9:16 tại {self.start_sec:.1f}s")
                     return
 
-            # Nếu có cache crop preview
-            if SYSTEM_CACHE_PATH.exists() and SYSTEM_CACHE_PATH.stat().st_size > 500:
+            # Nếu có cache preview riêng của chế độ này (không dùng chung cache chế độ khác)
+            if target_cache.exists() and target_cache.stat().st_size > 500:
                 cmd = [
                     ffmpeg_bin, "-hide_banner", "-y",
-                    "-i", str(SYSTEM_CACHE_PATH),
+                    "-i", str(target_cache),
                     "-filter_complex", filter_layout_9x16,
                     "-q:v", "2",
-                    str(LAYOUT_BASE_PATH)
+                    str(target_layout)
                 ]
                 sub_flags = 0x08000000 if os.name == 'nt' else 0
                 ret = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=sub_flags, timeout=15)
-                if ret.returncode == 0 and LAYOUT_BASE_PATH.exists():
+                if ret.returncode == 0 and target_layout.exists():
                     self.finished_sig.emit(True, "Đã tạo base frame 9:16 từ crop cache")
                     return
 
@@ -156,11 +254,11 @@ class AsyncLayoutBaseExtractor(QThread):
                 "-i", "testsrc=size=540x960:rate=1",
                 "-vframes", "1",
                 "-q:v", "2",
-                str(LAYOUT_BASE_PATH)
+                str(target_layout)
             ]
             sub_flags = 0x08000000 if os.name == 'nt' else 0
             subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=sub_flags, timeout=15)
-            if LAYOUT_BASE_PATH.exists():
+            if target_layout.exists():
                 self.finished_sig.emit(True, "Đã tạo base frame mẫu tiêu chuẩn")
             else:
                 self.finished_sig.emit(False, "Không thể tạo base frame")
@@ -174,14 +272,19 @@ class AsyncLayoutBaseExtractor(QThread):
 class AsyncColorGradeWorker(QThread):
     finished_sig = Signal(object, int, str) # (QPixmap or None, elapsed_ms, status_text)
 
-    def __init__(self, color_opts: dict, parent=None):
+    def __init__(self, color_opts: dict, layout_base_path: Optional[Path] = None, color_still_path: Optional[Path] = None, parent=None):
         super().__init__(parent)
         self.color_opts = dict(color_opts or {})
+        self.layout_base_path = layout_base_path or LAYOUT_BASE_PATH
+        self.color_still_path = color_still_path or COLOR_STILL_PATH
 
     def run(self):
         t0 = time.time()
         try:
-            if not LAYOUT_BASE_PATH.exists() or LAYOUT_BASE_PATH.stat().st_size < 500:
+            target_layout = self.layout_base_path
+            target_still = self.color_still_path
+
+            if not target_layout.exists() or target_layout.stat().st_size < 500:
                 self.finished_sig.emit(None, 0, "Chưa có layout base frame")
                 return
 
@@ -194,17 +297,17 @@ class AsyncColorGradeWorker(QThread):
             vf = color_filter if color_filter and color_filter != "null" else "null"
             cmd = [
                 ffmpeg_bin, "-hide_banner", "-y",
-                "-i", str(LAYOUT_BASE_PATH),
+                "-i", str(target_layout),
                 "-vf", vf,
                 "-q:v", "2",
-                str(COLOR_STILL_PATH)
+                str(target_still)
             ]
             sub_flags = 0x08000000 if os.name == 'nt' else 0
             ret = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=sub_flags, timeout=10)
 
             elapsed_ms = int((time.time() - t0) * 1000)
-            if ret.returncode == 0 and COLOR_STILL_PATH.exists():
-                pix = QPixmap(str(COLOR_STILL_PATH))
+            if ret.returncode == 0 and target_still.exists():
+                pix = QPixmap(str(target_still))
                 if not pix.isNull():
                     self.finished_sig.emit(pix, elapsed_ms, f"🟢 Đã đổ màu tức thì ({elapsed_ms}ms)")
                     return
@@ -240,15 +343,16 @@ class Async6sSampleWorker(QThread):
             if dist_ffmpeg.exists():
                 ffmpeg_bin = str(dist_ffmpeg)
 
-            zoom_pct = float(self.color_opts.get("zoom_in", 178.0)) / 100.0
-            sx = float(self.color_opts.get("scale_x", 100.0)) / 100.0
-            sy = float(self.color_opts.get("scale_y", 130.0)) / 100.0
+            zoom_pct_val, sx_val, sy_val, blur_bg_val = _extract_frame_geom(self.color_opts)
+            zoom_pct = zoom_pct_val / 100.0
+            sx = sx_val / 100.0
+            sy = sy_val / 100.0
             fg_w = int(540 * zoom_pct * sx)
             fg_h = int((540 * 1080 / 1920) * zoom_pct * sy)
             if fg_w % 2 != 0: fg_w += 1
             if fg_h % 2 != 0: fg_h += 1
 
-            blur_bg = bool(self.color_opts.get("blur_bg", True))
+            blur_bg = blur_bg_val
             if blur_bg:
                 filter_layout_9x16 = (
                     "[0:v]split=2[orig][copy];"
@@ -484,6 +588,13 @@ class CapCutColorStudioDialog(QDialog):
 
         self.current_colors = dict(current_data or {})
         self.sample_video_path = sample_video_path or ""
+        self.app_mode = _detect_mode(self.current_colors)
+        self.is_tiktok_mode = (self.app_mode == "tiktok_remixer")
+        self.system_cache_path = APP_DIR / "system_data" / f"crop_preview_cache_{self.app_mode}.jpg"
+        self.layout_base_path = TEMP_PREVIEW_DIR / f"layout_base_{self.app_mode}.jpg"
+        self.color_still_path = TEMP_PREVIEW_DIR / f"color_still_{self.app_mode}.jpg"
+        self.preview_6s_path = TEMP_PREVIEW_DIR / f"preview_6s_{self.app_mode}.mp4"
+
         self.look_stack: List[dict] = capcut_filters.normalize_stack(self.current_colors.get("color_look_stack", []))
 
         # Nếu chưa có stack nhưng có color_look cũ thì khởi tạo layer đầu tiên
@@ -661,18 +772,20 @@ class CapCutColorStudioDialog(QDialog):
         fl_frame.setContentsMargins(10, 10, 10, 6)
         fl_frame.setSpacing(6)
 
+        init_z, init_sx, init_sy, init_blur = _extract_frame_geom(self.current_colors)
+
         h_zoom = QHBoxLayout()
         self.sp_zoom_in = QDoubleSpinBox()
         self.sp_zoom_in.setRange(50.0, 300.0)
         self.sp_zoom_in.setSingleStep(1.0)
         self.sp_zoom_in.setDecimals(1)
         self.sp_zoom_in.setSuffix("%")
-        self.sp_zoom_in.setValue(float(self.current_colors.get("zoom_in", 178.0)))
+        self.sp_zoom_in.setValue(init_z)
         self.sp_zoom_in.valueChanged.connect(self._frame_debounce.start)
         h_zoom.addWidget(self.sp_zoom_in)
 
         self.chk_blur_bg = QCheckBox("Làm mờ nền 2 đầu (Blur BG)")
-        self.chk_blur_bg.setChecked(bool(self.current_colors.get("blur_bg", True)))
+        self.chk_blur_bg.setChecked(init_blur)
         self.chk_blur_bg.toggled.connect(self._frame_debounce.start)
         h_zoom.addWidget(self.chk_blur_bg)
         fl_frame.addRow("Zoom-in & Nền:", h_zoom)
@@ -683,7 +796,7 @@ class CapCutColorStudioDialog(QDialog):
         self.sp_scale_x.setSingleStep(1.0)
         self.sp_scale_x.setDecimals(1)
         self.sp_scale_x.setSuffix("%")
-        self.sp_scale_x.setValue(float(self.current_colors.get("scale_x", 100.0)))
+        self.sp_scale_x.setValue(init_sx)
         self.sp_scale_x.valueChanged.connect(self._frame_debounce.start)
         h_scale.addWidget(QLabel("Rộng (X):"))
         h_scale.addWidget(self.sp_scale_x)
@@ -693,12 +806,20 @@ class CapCutColorStudioDialog(QDialog):
         self.sp_scale_y.setSingleStep(1.0)
         self.sp_scale_y.setDecimals(1)
         self.sp_scale_y.setSuffix("%")
-        self.sp_scale_y.setValue(float(self.current_colors.get("scale_y", 130.0)))
+        self.sp_scale_y.setValue(init_sy)
         self.sp_scale_y.valueChanged.connect(self._frame_debounce.start)
         h_scale.addWidget(QLabel("Dài (Y):"))
         h_scale.addWidget(self.sp_scale_y)
-        fl_frame.addRow("Tỉ lệ X / Y:", h_scale)
-
+        self.gb_frame = gb_frame
+        self.is_tiktok_mode = bool(
+            self.current_colors.get("is_tiktok_remixer")
+            or self.current_colors.get("app_mode") == "tiktok_remixer"
+            or "auto_clean_core_crop" in self.current_colors
+            or "shuffle_broll" in self.current_colors
+        )
+        if self.is_tiktok_mode:
+            gb_frame.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
+            self.chk_blur_bg.setText("Nền mờ (nếu zoom nhỏ)")
         l_layout.addWidget(gb_frame)
 
         # KHỐI 2 (trước là khối 2): QUẢN LÝ BỘ LỌC LOOK STACK (17 PRESETS)
@@ -1066,11 +1187,17 @@ class CapCutColorStudioDialog(QDialog):
         for key, s in self.sliders.items():
             result[key] = s.value()
 
-        result["color_look_stack"] = list(self.look_stack)
-        result["blur_bg"] = self.chk_blur_bg.isChecked() if hasattr(self, "chk_blur_bg") else bool(self.current_colors.get("blur_bg", True))
-        result["zoom_in"] = self.sp_zoom_in.value() if hasattr(self, "sp_zoom_in") else float(self.current_colors.get("zoom_in", 178.0))
-        result["scale_x"] = self.sp_scale_x.value() if hasattr(self, "sp_scale_x") else float(self.current_colors.get("scale_x", 100.0))
-        result["scale_y"] = self.sp_scale_y.value() if hasattr(self, "sp_scale_y") else float(self.current_colors.get("scale_y", 130.0))
+        result["blur_bg"] = self.chk_blur_bg.isChecked() if hasattr(self, "chk_blur_bg") else bool(self.current_colors.get("blur_bg", False))
+        z_val = self.sp_zoom_in.value() if hasattr(self, "sp_zoom_in") else 105.0
+        result["zoom_percent"] = float(z_val)
+        result["zoom_in"] = bool(z_val != 100.0)
+        sx = self.sp_scale_x.value() if hasattr(self, "sp_scale_x") else 100.0
+        sy = self.sp_scale_y.value() if hasattr(self, "sp_scale_y") else 100.0
+        result["scale_x"] = float(sx)
+        result["scale_y"] = float(sy)
+        result["scale_w"] = float(sx)
+        result["scale_h"] = float(sy)
+
         # Giữ tương thích ngược với hệ thống cũ
         if self.look_stack:
             result["color_look"] = self.look_stack[0]["name"]
@@ -1096,6 +1223,23 @@ class CapCutColorStudioDialog(QDialog):
     # TIẾN TRÌNH LIVE PREVIEW 2-STAGE & DEBOUNCE 180ms
     # --------------------------------------------------------------------------
     def _initial_load(self):
+        vp = self.txt_video_path.text().strip() or self.sample_video_path
+        if not vp or not os.path.exists(vp):
+            if getattr(self, "is_tiktok_mode", False):
+                for t_dir in [APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+                    if t_dir.exists():
+                        mp4s = sorted(t_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                        if mp4s:
+                            self.sample_video_path = str(mp4s[0])
+                            self.txt_video_path.setText(str(mp4s[0]))
+                            break
+            else:
+                dl_dir = APP_DIR / "downloads"
+                if dl_dir.exists():
+                    mp4s = sorted([f for f in dl_dir.glob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000], key=lambda f: f.stat().st_mtime, reverse=True)
+                    if mp4s:
+                        self.sample_video_path = str(mp4s[0])
+                        self.txt_video_path.setText(str(mp4s[0]))
         self._extract_base_frame()
 
     def _browse_video(self):
@@ -1152,6 +1296,9 @@ class CapCutColorStudioDialog(QDialog):
         self._base_worker = AsyncLayoutBaseExtractor(
             vp, start_sec=start_sec, blur_bg=blur_bg,
             zoom_in=zoom_in, scale_x=scale_x, scale_y=scale_y,
+            is_tiktok_mode=getattr(self, "is_tiktok_mode", False),
+            cache_crop_path=getattr(self, "system_cache_path", SYSTEM_CACHE_PATH),
+            layout_base_path=getattr(self, "layout_base_path", LAYOUT_BASE_PATH),
             parent=self
         )
         self._base_worker.finished_sig.connect(self._on_base_frame_extracted)
@@ -1176,7 +1323,12 @@ class CapCutColorStudioDialog(QDialog):
             return
 
         opts = self.get_values()
-        self._color_worker = AsyncColorGradeWorker(opts, parent=self)
+        self._color_worker = AsyncColorGradeWorker(
+            opts,
+            layout_base_path=getattr(self, "layout_base_path", LAYOUT_BASE_PATH),
+            color_still_path=getattr(self, "color_still_path", COLOR_STILL_PATH),
+            parent=self
+        )
         self._color_worker.finished_sig.connect(self._on_color_graded)
         self._color_worker.start()
 

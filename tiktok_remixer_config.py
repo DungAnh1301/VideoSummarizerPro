@@ -10,6 +10,7 @@ CONFIG_TIKTOK_FILE = os.path.join(os.path.dirname(__file__), "config_tiktok_remi
 
 DEFAULT_TIKTOK_REMIXER_CONFIG = {
     # 1. Nguồn & Thị trường
+    "is_tiktok_remixer": True,
     "source_url_or_path": "",
     "target_market": "DE",
     "auto_voice_locale": True,
@@ -58,6 +59,15 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     "grain": 0.0,
     "blur": 0.0,
     "vignette": 0.0,
+
+    # 6.1 Khung hình Zoom & Scale nhẹ né quét bản quyền TikTok (mặc định 105%, không méo hình)
+    "zoom_in": True,
+    "zoom_percent": 105.0,
+    "scale_x": 100.0,
+    "scale_y": 100.0,
+    "scale_w": 100.0,
+    "scale_h": 100.0,
+    "blur_bg": False,
     
     # 7. Title & Subtitle Studio
     "enable_title": True,

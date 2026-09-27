@@ -45,8 +45,74 @@ except Exception:
 
 
 APP_DIR = Path(__file__).resolve().parent
-SYSTEM_CACHE_PATH = APP_DIR / "system_data" / "crop_preview_cache.jpg"
-LAYOUT_BASE_PATH = APP_DIR / "temp" / "filter_preview" / "layout_base.jpg"
+
+
+def _detect_mode(cfg: dict) -> str:
+    """Xác định chế độ gọi Studio: 'tiktok_remixer', 'compilation', hoặc 'summary'."""
+    if not isinstance(cfg, dict):
+        return "summary"
+    if (
+        cfg.get("is_tiktok_remixer")
+        or cfg.get("app_mode") == "tiktok_remixer"
+        or "auto_clean_core_crop" in cfg
+        or "shuffle_broll" in cfg
+    ):
+        return "tiktok_remixer"
+    if (
+        cfg.get("is_part_splitter")
+        or cfg.get("app_mode") == "compilation"
+        or "compilation_clip_count" in cfg
+        or "playlist_url" in cfg
+    ):
+        return "compilation"
+    return "summary"
+
+
+def _extract_frame_geom(cfg: dict) -> tuple[float, float, float, bool]:
+    """Trích xuất (zoom, scale_x, scale_y, blur_bg) an toàn từ config, chống xung đột boolean."""
+    is_tiktok = bool(
+        cfg.get("is_tiktok_remixer")
+        or cfg.get("app_mode") == "tiktok_remixer"
+        or "auto_clean_core_crop" in cfg
+        or "shuffle_broll" in cfg
+    )
+    def_zoom = 105.0 if is_tiktok else 178.0
+    def_sx = 100.0
+    def_sy = 100.0 if is_tiktok else 130.0
+    def_blur = False if is_tiktok else True
+
+    raw_z = cfg.get("zoom_percent")
+    if raw_z is None or isinstance(raw_z, bool):
+        raw_z = cfg.get("zoom_in")
+    if isinstance(raw_z, bool) or raw_z is None:
+        raw_z = def_zoom
+    try:
+        val_z = float(raw_z)
+        if 0 < val_z <= 5.0:
+            val_z *= 100.0
+        elif val_z <= 0:
+            val_z = def_zoom
+    except Exception:
+        val_z = def_zoom
+
+    raw_sx = cfg.get("scale_w") if cfg.get("scale_w") is not None else cfg.get("scale_x", def_sx)
+    try:
+        val_sx = float(raw_sx)
+        if 0 < val_sx <= 5.0:
+            val_sx *= 100.0
+    except Exception:
+        val_sx = def_sx
+
+    raw_sy = cfg.get("scale_h") if cfg.get("scale_h") is not None else cfg.get("scale_y", def_sy)
+    try:
+        val_sy = float(raw_sy)
+        if 0 < val_sy <= 5.0:
+            val_sy *= 100.0
+    except Exception:
+        val_sy = def_sy
+
+    blur_bg = bool(cfg.get("blur_bg", def_blur))
+    return val_z, val_sx, val_sy, blur_bg
 
 
 # =====================================================================
@@ -288,9 +354,14 @@ class PreviewCanvas9x16(QWidget):
             ph = float(self.bg_pixmap.height())
             aspect = pw / max(1.0, ph)
 
+            zoom_val, sx_val, sy_val, blur_bg_val = _extract_frame_geom(self.cfg)
+            zoom_factor = zoom_val / 100.0
+            sx = sx_val / 100.0
+            sy = sy_val / 100.0
+
             if aspect > 0.65:
                 # Video ngang 16:9 -> Nền mờ 9:16 hoặc Nền đen tuyền #000000 theo config blur_bg
-                blur_bg = bool(self.cfg.get("blur_bg", True))
+                blur_bg = bool(self.cfg.get("blur_bg", blur_bg_val))
                 if blur_bg:
                     small_bg = self.bg_pixmap.scaled(54, 96, Qt.IgnoreAspectRatio, Qt.FastTransformation)
                     blurred_bg = small_bg.scaled(int(disp_w), int(disp_h), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
@@ -300,10 +371,6 @@ class PreviewCanvas9x16(QWidget):
                     p.fillRect(video_rect, QColor("#000000"))
 
                 # Video tiền cảnh sắc nét căn chính giữa khung 9:16 (Áp dụng Zoom-in & Scale X/Y từ config)
-                zoom_factor = float(self.cfg.get("zoom_in", 178.0)) / 100.0
-                sx = float(self.cfg.get("scale_x", 100.0)) / 100.0
-                sy = float(self.cfg.get("scale_y", 130.0)) / 100.0
-
                 fg_w = disp_w * zoom_factor * sx
                 fg_h = (disp_w * (ph / pw)) * zoom_factor * sy
                 fg_x = ox + (disp_w - fg_w) / 2.0
@@ -316,8 +383,28 @@ class PreviewCanvas9x16(QWidget):
                 p.drawRect(QRectF(fg_x, fg_y, fg_w, fg_h))
                 p.restore()
             else:
-                # Ảnh đã chuẩn tỷ lệ dọc 9:16 (ví dụ layout_base.jpg)
-                p.drawPixmap(video_rect, self.bg_pixmap, QRectF(0, 0, pw, ph))
+                # Video dọc 9:16 (TikTok) -> Áp dụng Zoom in/out & Scale (nhẹ) căn chính giữa
+                blur_bg = bool(self.cfg.get("blur_bg", blur_bg_val))
+                if blur_bg or zoom_factor < 1.0 or sx < 1.0 or sy < 1.0:
+                    small_bg = self.bg_pixmap.scaled(54, 96, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+                    blurred_bg = small_bg.scaled(int(disp_w), int(disp_h), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                    p.drawPixmap(QRectF(ox, oy, disp_w, disp_h), blurred_bg, QRectF(0, 0, disp_w, disp_h))
+                    p.fillRect(video_rect, QColor(0, 0, 0, 45))
+                else:
+                    p.fillRect(video_rect, QColor("#000000"))
+
+                fg_w = disp_w * zoom_factor * sx
+                fg_h = disp_h * zoom_factor * sy
+                fg_x = ox + (disp_w - fg_w) / 2.0
+                fg_y = oy + (disp_h - fg_h) / 2.0
+
+                p.save()
+                p.setClipRect(video_rect)
+                p.drawPixmap(QRectF(fg_x, fg_y, fg_w, fg_h), self.bg_pixmap, QRectF(0, 0, pw, ph))
+                if zoom_factor != 1.0 or sx != 1.0 or sy != 1.0:
+                    p.setPen(QPen(QColor("#89b4fa"), 1, Qt.DashLine))
+                    p.drawRect(QRectF(fg_x, fg_y, fg_w, fg_h))
+                p.restore()
 
             p.restore()
 
@@ -646,6 +733,10 @@ class TitleSubStudioDialog(QDialog):
 
         self.ts_data: Dict[str, Any] = dict(current_data or {})
         self.sample_video_path = sample_video_path or ""
+        self.app_mode = _detect_mode(self.ts_data)
+        self.is_tiktok_mode = (self.app_mode == "tiktok_remixer")
+        self.system_cache_path = APP_DIR / "system_data" / f"crop_preview_cache_{self.app_mode}.jpg"
+        self.layout_base_path = APP_DIR / "temp" / "filter_preview" / f"layout_base_{self.app_mode}.jpg"
 
         # Dữ liệu màu sắc nội bộ
         self._title_color1 = self.ts_data.get("title_color1", "#FFFFFF")
@@ -754,10 +845,12 @@ class TitleSubStudioDialog(QDialog):
         grid_frame.setSpacing(8)
         grid_frame.setContentsMargins(12, 14, 12, 10)
 
+        init_z, init_sx, init_sy, init_blur = _extract_frame_geom(self.ts_data)
+
         grid_frame.addWidget(QLabel("🔍 Zoom-in:"), 0, 0)
         self.sp_zoom_in = QSpinBox()
         self.sp_zoom_in.setRange(50, 300)
-        self.sp_zoom_in.setValue(int(round(float(self.ts_data.get("zoom_in", 178.0)))))
+        self.sp_zoom_in.setValue(int(round(init_z)))
         self.sp_zoom_in.setSuffix(" %")
         self.sp_zoom_in.valueChanged.connect(self._schedule_refresh)
         grid_frame.addWidget(self.sp_zoom_in, 0, 1)
@@ -765,7 +858,7 @@ class TitleSubStudioDialog(QDialog):
         grid_frame.addWidget(QLabel("↔️ Scale X:"), 0, 2)
         self.sp_scale_x = QSpinBox()
         self.sp_scale_x.setRange(50, 200)
-        self.sp_scale_x.setValue(int(round(float(self.ts_data.get("scale_x", 100.0)))))
+        self.sp_scale_x.setValue(int(round(init_sx)))
         self.sp_scale_x.setSuffix(" %")
         self.sp_scale_x.valueChanged.connect(self._schedule_refresh)
         grid_frame.addWidget(self.sp_scale_x, 0, 3)
@@ -773,17 +866,27 @@ class TitleSubStudioDialog(QDialog):
         grid_frame.addWidget(QLabel("↕️ Scale Y:"), 1, 0)
         self.sp_scale_y = QSpinBox()
         self.sp_scale_y.setRange(50, 200)
-        self.sp_scale_y.setValue(int(round(float(self.ts_data.get("scale_y", 130.0)))))
+        self.sp_scale_y.setValue(int(round(init_sy)))
         self.sp_scale_y.setSuffix(" %")
         self.sp_scale_y.valueChanged.connect(self._schedule_refresh)
         grid_frame.addWidget(self.sp_scale_y, 1, 1)
 
         self.chk_blur_bg = QCheckBox("🌫️ Làm mờ 2 đầu")
-        self.chk_blur_bg.setChecked(bool(self.ts_data.get("blur_bg", True)))
+        self.chk_blur_bg.setChecked(init_blur)
         self.chk_blur_bg.setStyleSheet("color: #a6e3a1; font-weight: bold;")
         self.chk_blur_bg.toggled.connect(self._schedule_refresh)
         grid_frame.addWidget(self.chk_blur_bg, 1, 2, 1, 2)
 
+        self.gb_frame = gb_frame
+        self.is_tiktok_mode = bool(
+            self.ts_data.get("is_tiktok_remixer")
+            or self.ts_data.get("app_mode") == "tiktok_remixer"
+            or "auto_clean_core_crop" in self.ts_data
+            or "shuffle_broll" in self.ts_data
+        )
+        if self.is_tiktok_mode:
+            gb_frame.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
+            self.chk_blur_bg.setText("🌫️ Nền mờ (nếu zoom nhỏ)")
         left_layout.addWidget(gb_frame)
 
         # --- NHÓM 1: CẤU HÌNH TIÊU ĐỀ BANNER 2 DÒNG ---
@@ -1134,41 +1237,57 @@ class TitleSubStudioDialog(QDialog):
     # CƠ CHẾ NẠP HÌNH ẢNH MẪU (VIDEO / CACHE / YOUTUBE)
     # -----------------------------------------------------------------
     def _load_initial_background(self):
-        # 1. Thử lấy từ SYSTEM_CACHE_PATH (ảnh gốc 16:9 để Canvas tự động co giãn zoom/blur theo config)
-        if SYSTEM_CACHE_PATH.exists():
-            pix = QPixmap(str(SYSTEM_CACHE_PATH))
+        # 1. Nếu có sample_video_path được truyền vào trực tiếp từ chế độ hiện tại -> BỐC NGAY TỪ VIDEO NÀY
+        if self.sample_video_path:
+            if os.path.exists(self.sample_video_path) and os.path.isfile(self.sample_video_path):
+                if self._extract_frame_from_video(self.sample_video_path):
+                    return
+            elif "youtube.com" in self.sample_video_path or "youtu.be" in self.sample_video_path:
+                self.txt_yt_url.setText(self.sample_video_path)
+                self._fetch_youtube_sample()
+                return
+
+        # 2. Thử lấy từ cache RIÊNG BIỆT của chế độ hiện tại (tuyệt đối không đọc cache chế độ khác)
+        if hasattr(self, "system_cache_path") and self.system_cache_path.exists():
+            pix = QPixmap(str(self.system_cache_path))
             if not pix.isNull():
                 self.canvas.set_background_pixmap(pix)
-                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Crop Preview Cache ({pix.width()}×{pix.height()})")
+                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Cache [{self.app_mode}] ({pix.width()}×{pix.height()})")
                 self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
                 return
 
-        # 2. Thử trích xuất từ sample_video_path (ảnh gốc 16:9)
-        if self.sample_video_path and os.path.exists(self.sample_video_path):
-            self._extract_frame_from_video(self.sample_video_path)
-            return
+        # 3. Thử tìm video theo đúng chế độ hiện tại:
+        if getattr(self, "is_tiktok_mode", False):
+            # Chế độ TikTok: tìm video trong output_tiktok_remix hoặc temp/tiktok_cache
+            for t_dir in [APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+                if t_dir.exists():
+                    mp4s = sorted(t_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                    if mp4s and self._extract_frame_from_video(str(mp4s[0])):
+                        return
+        else:
+            # Chế độ 1 và 2: tìm trong thư mục downloads
+            dl_dir = APP_DIR / "downloads"
+            if dl_dir.exists():
+                mp4s = sorted([f for f in dl_dir.glob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000], key=lambda f: f.stat().st_mtime, reverse=True)
+                if mp4s and self._extract_frame_from_video(str(mp4s[0])):
+                    return
 
-        # 3. Thử tìm video trong thư mục downloads (ảnh gốc 16:9)
-        dl_dir = APP_DIR / "downloads"
-        if dl_dir.exists():
-            mp4s = sorted(dl_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
-            if mp4s:
-                self._extract_frame_from_video(str(mp4s[0]))
-                return
-
-        # 4. Dự phòng: Thử lấy từ layout_base.jpg
-        if LAYOUT_BASE_PATH.exists():
-            pix = QPixmap(str(LAYOUT_BASE_PATH))
+        # 4. Dự phòng: Thử lấy từ layout_base riêng của chế độ hiện tại
+        if hasattr(self, "layout_base_path") and self.layout_base_path.exists():
+            pix = QPixmap(str(self.layout_base_path))
             if not pix.isNull():
                 self.canvas.set_background_pixmap(pix)
-                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Cache Layout Base ({pix.width()}×{pix.height()})")
+                self.lbl_src_status.setText(f"✅ Đã nạp ảnh nền từ Cache Layout Base [{self.app_mode}] ({pix.width()}×{pix.height()})")
                 self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
                 return
 
-        self.lbl_src_status.setText("ℹ️ Chưa có ảnh mẫu. Dán link YouTube hoặc bấm 'Chọn Video' để xem thử trên video thật.")
+        if getattr(self, "is_tiktok_mode", False):
+            self.lbl_src_status.setText("ℹ️ Chưa có video TikTok mẫu. Chọn video hoặc nhập link TikTok ở màn hình chính.")
+        else:
+            self.lbl_src_status.setText("ℹ️ Chưa có ảnh mẫu. Dán link YouTube hoặc bấm 'Chọn Video' để xem thử trên video thật.")
         self.lbl_src_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
 
-    def _extract_frame_from_video(self, video_path: str):
+    def _extract_frame_from_video(self, video_path: str) -> bool:
         try:
             import cv2
             cap = cv2.VideoCapture(video_path)
@@ -1185,13 +1304,21 @@ class TitleSubStudioDialog(QDialog):
                     qimg = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
                     pix = QPixmap.fromImage(qimg)
                     self.canvas.set_background_pixmap(pix)
-                    self.lbl_src_status.setText(f"✅ Đã trích xuất frame từ video: {Path(video_path).name} ({w}×{h})")
+                    self.lbl_src_status.setText(f"✅ Đã trích xuất frame từ: {Path(video_path).name} ({w}×{h})")
                     self.lbl_src_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
-                    return
+                    # Lưu cache riêng của chế độ hiện tại
+                    if hasattr(self, "system_cache_path"):
+                        try:
+                            self.system_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                            cv2.imwrite(str(self.system_cache_path), frame)
+                        except Exception:
+                            pass
+                    return True
         except Exception:
             pass
         self.lbl_src_status.setText(f"⚠️ Không đọc được frame từ: {Path(video_path).name}")
         self.lbl_src_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
+        return False
 
     def _on_choose_video_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1377,7 +1504,7 @@ class TitleSubStudioDialog(QDialog):
 
         part_pos = "bottom" if self.rb_part_bottom.isChecked() else "after_title"
 
-        return {
+        result = {
             # Tiêu đề Banner
             "show_title": is_title,
             "enable_title": is_title,
@@ -1404,11 +1531,16 @@ class TitleSubStudioDialog(QDialog):
             "sub_color": self._sub_color_ass,
             "sub_outline_color": self._sub_ol_ass,
             "sub_uppercase": preset["uppercase"],
-            "zoom_in": self.sp_zoom_in.value(),
-            "scale_x": self.sp_scale_x.value(),
-            "scale_y": self.sp_scale_y.value(),
+            # Khung hình & Tỉ lệ
+            "zoom_in": bool(self.sp_zoom_in.value() != 100),
+            "zoom_percent": float(self.sp_zoom_in.value()),
+            "scale_x": float(self.sp_scale_x.value()),
+            "scale_y": float(self.sp_scale_y.value()),
+            "scale_w": float(self.sp_scale_x.value()),
+            "scale_h": float(self.sp_scale_y.value()),
             "blur_bg": self.chk_blur_bg.isChecked(),
         }
+        return result
 
 
 # =====================================================================

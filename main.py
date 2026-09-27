@@ -1808,44 +1808,149 @@ class ProfessionalVideoApp:
         self.prompt_cb.set(p_name)
         messagebox.showinfo("Thành công", f"Đã lưu prompt '{p_name}' thành công!")
 
+    def _check_and_ensure_pyside6(self) -> bool:
+        """Kiểm tra và hỗ trợ tự động cài đặt PySide6 nếu máy người dùng chưa có."""
+        try:
+            import PySide6
+            return True
+        except ImportError:
+            ans = messagebox.askyesno(
+                "Cần thư viện đồ họa PySide6",
+                "Tính năng Studio trực quan (Màu sắc, Cắt xén, Title & Sub) yêu cầu thư viện đồ họa PySide6.\n\n"
+                "Bạn có muốn tự động cài đặt PySide6 ngay bây giờ không? (Quá trình tải mất khoảng 30-60 giây)",
+                parent=self.root
+            )
+            if not ans:
+                return False
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "PySide6"])
+                import PySide6
+                messagebox.showinfo("Thành công", "Đã cài đặt PySide6 thành công! Bạn có thể mở Studio ngay bây giờ.", parent=self.root)
+                return True
+            except Exception as e:
+                messagebox.showerror("Lỗi cài đặt", f"Không thể tự động cài đặt PySide6:\n{e}\n\nVui lòng mở CMD hoặc terminal chạy:\npip install PySide6", parent=self.root)
+                return False
+
+    def _sync_studio_result_to_main_gui(self, res: dict):
+        """Đồng bộ các thông số từ Studio (Zoom, Scale, Blur) về các widget GUI chính."""
+        if not isinstance(res, dict):
+            return
+        z_val = res.get("zoom_percent")
+        if z_val is None or isinstance(z_val, bool):
+            z_val = res.get("zoom_in", 168.0)
+        if hasattr(self, "zoom_spin"):
+            self.zoom_spin.set(z_val if isinstance(z_val, (int, float)) else 168.0)
+        if hasattr(self, "zoom_var"):
+            self.zoom_var.set(bool(res.get("zoom_in", True)))
+        if hasattr(self, "scale_w_spin"):
+            self.scale_w_spin.set(res.get("scale_w") or res.get("scale_x", 100.0))
+        if hasattr(self, "scale_h_spin"):
+            self.scale_h_spin.set(res.get("scale_h") or res.get("scale_y", 125.0))
+        if hasattr(self, "blur_chk") and "blur_bg" in res:
+            self.blur_var.set(bool(res["blur_bg"]))
+
     def open_capcut_color_popup(self, on_save_callback=None, caller_config=None):
         """Mở Studio Bảng Màu CapCut Pro 15 thông số & Bộ lọc Look (WYSIWYG 1:1)."""
+        if not self._check_and_ensure_pyside6():
+            return None
+        if not caller_config:
+            try:
+                self.save_configs_to_json()
+            except Exception:
+                pass
         from capcut_color_studio import open_capcut_color_popup as open_color_popup
-        src_cfg = caller_config if isinstance(caller_config, dict) else self.config
-        vid_source = getattr(self, "source_video_path", None) or getattr(self, "video_path", None) or src_cfg.get("source_url_or_path") or src_cfg.get("youtube_url")
+        if caller_config and isinstance(caller_config, dict):
+            src_cfg = caller_config
+            vid_source = (
+                src_cfg.get("source_url_or_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("compilation_source_path")
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("sample_video")
+            )
+        else:
+            src_cfg = self.config
+            vid_source = (
+                getattr(self, "source_video_path", None)
+                or getattr(self, "video_path", None)
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("source_url_or_path")
+            )
         res = open_color_popup(self.root, video_source=vid_source, current_config=src_cfg, on_save_callback=on_save_callback)
         if res and not caller_config:
             self.config.update(res)
+            self._sync_studio_result_to_main_gui(res)
             save_config(self.config)
         return res
 
     def open_crop_tool_popup(self, on_save_callback=None, caller_config=None):
         """Mở Studio Cắt xén, Tỷ lệ Co Giãn & Nền Mờ 9:16 (WYSIWYG 1:1)."""
+        if not self._check_and_ensure_pyside6():
+            return None
+        if not caller_config:
+            try:
+                self.save_configs_to_json()
+            except Exception:
+                pass
         from crop_blur_studio import open_crop_blur_studio_popup
-        src_cfg = caller_config if isinstance(caller_config, dict) else self.config
-        vid_source = getattr(self, "source_video_path", None) or getattr(self, "video_path", None) or src_cfg.get("source_url_or_path") or src_cfg.get("youtube_url")
+        if caller_config and isinstance(caller_config, dict):
+            src_cfg = caller_config
+            vid_source = (
+                src_cfg.get("source_url_or_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("compilation_source_path")
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("sample_video")
+            )
+        else:
+            src_cfg = self.config
+            vid_source = (
+                getattr(self, "source_video_path", None)
+                or getattr(self, "video_path", None)
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("source_url_or_path")
+            )
         res = open_crop_blur_studio_popup(self.root, video_source=vid_source, current_config=src_cfg, on_save_callback=on_save_callback)
         if res and not caller_config:
             self.config.update(res)
-            if hasattr(self, "zoom_spin"):
-                self.zoom_spin.set(res.get("zoom_in", 168.0))
-            if hasattr(self, "scale_w_spin"):
-                self.scale_w_spin.set(res.get("scale_x", 100.0))
-            if hasattr(self, "scale_h_spin"):
-                self.scale_h_spin.set(res.get("scale_y", 125.0))
-            if hasattr(self, "blur_chk") and "blur_bg" in res:
-                self.blur_var.set(bool(res["blur_bg"]))
+            self._sync_studio_result_to_main_gui(res)
             save_config(self.config)
         return res
 
     def open_title_sub_studio_popup(self, on_save_callback=None, caller_config=None):
         """Mở Studio Tiêu Đề Banner Bo Góc 2 Dòng, Phụ Đề & Thẻ Part (WYSIWYG 1:1)."""
+        if not self._check_and_ensure_pyside6():
+            return None
+        if not caller_config:
+            try:
+                self.save_configs_to_json()
+            except Exception:
+                pass
         from title_sub_studio import open_title_sub_studio_popup as open_ts_popup
-        src_cfg = caller_config if isinstance(caller_config, dict) else self.config
-        vid_source = getattr(self, "source_video_path", None) or getattr(self, "video_path", None) or src_cfg.get("source_url_or_path") or src_cfg.get("youtube_url")
+        if caller_config and isinstance(caller_config, dict):
+            src_cfg = caller_config
+            vid_source = (
+                src_cfg.get("source_url_or_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("compilation_source_path")
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("sample_video")
+            )
+        else:
+            src_cfg = self.config
+            vid_source = (
+                getattr(self, "source_video_path", None)
+                or getattr(self, "video_path", None)
+                or src_cfg.get("local_source_path")
+                or src_cfg.get("youtube_url")
+                or src_cfg.get("source_url_or_path")
+            )
         res = open_ts_popup(self.root, video_source=vid_source, current_config=src_cfg, on_save_callback=on_save_callback)
         if res and not caller_config:
             self.config.update(res)
+            self._sync_studio_result_to_main_gui(res)
             save_config(self.config)
         return res
 

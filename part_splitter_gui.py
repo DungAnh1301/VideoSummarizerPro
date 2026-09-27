@@ -1302,12 +1302,41 @@ class PartSplitterFrame(ttk.Frame):
                 for k, v in saved_dict.items():
                     self.config["saved_configs"][c_sel][k] = deepcopy(v)
             save_part_config(self.config)
-            print("💾 [PART SPLITTER] Đã lưu cấu hình Studio độc lập vào config_part_splitter.json!")
+
+            # Đồng bộ trực tiếp ngược lại lên các Widget trên GUI
+            if "zoom_percent" in saved_dict and hasattr(self, "zoom_spin"):
+                self.zoom_spin.set(saved_dict["zoom_percent"])
+            elif "zoom_in" in saved_dict and isinstance(saved_dict["zoom_in"], (int, float)) and hasattr(self, "zoom_spin"):
+                self.zoom_spin.set(saved_dict["zoom_in"])
+
+            if hasattr(self, "zoom_var"):
+                if "zoom_in" in saved_dict and isinstance(saved_dict["zoom_in"], bool):
+                    self.zoom_var.set(saved_dict["zoom_in"])
+                elif "zoom_percent" in saved_dict:
+                    self.zoom_var.set(abs(float(saved_dict["zoom_percent"]) - 100.0) >= 0.1)
+
+            if "scale_w" in saved_dict and hasattr(self, "scale_w_spin"):
+                self.scale_w_spin.set(saved_dict["scale_w"])
+            elif "scale_x" in saved_dict and hasattr(self, "scale_w_spin"):
+                self.scale_w_spin.set(saved_dict["scale_x"])
+
+            if "scale_h" in saved_dict and hasattr(self, "scale_h_spin"):
+                self.scale_h_spin.set(saved_dict["scale_h"])
+            elif "scale_y" in saved_dict and hasattr(self, "scale_h_spin"):
+                self.scale_h_spin.set(saved_dict["scale_y"])
+
+            if "blur_bg" in saved_dict and hasattr(self, "blur_var"):
+                self.blur_var.set(bool(saved_dict["blur_bg"]))
+
+            print("💾 [PART SPLITTER] Đã lưu cấu hình Studio độc lập vào config_part_splitter.json và đồng bộ giao diện!")
 
     def _sync_from_parent_after_studio(self):
         pass
 
     def open_crop_tool_popup(self):
+        self._save_ui_to_config()
+        self.config["app_mode"] = "compilation"
+        self.config["is_part_splitter"] = True
         if self.app and hasattr(self.app, "open_crop_tool_popup"):
             popup = self.app.open_crop_tool_popup(
                 on_save_callback=self._on_studio_saved,
@@ -1319,6 +1348,9 @@ class PartSplitterFrame(ttk.Frame):
             messagebox.showinfo("Crop Tool", "Mở công cụ Crop Studio từ cửa sổ ứng dụng chính.")
 
     def open_capcut_color_popup(self):
+        self._save_ui_to_config()
+        self.config["app_mode"] = "compilation"
+        self.config["is_part_splitter"] = True
         if self.app and hasattr(self.app, "open_capcut_color_popup"):
             popup = self.app.open_capcut_color_popup(
                 on_save_callback=self._on_studio_saved,
@@ -1330,6 +1362,9 @@ class PartSplitterFrame(ttk.Frame):
             messagebox.showinfo("CapCut Color", "Mở công cụ Chỉnh Màu CapCut từ cửa sổ chính.")
 
     def open_title_sub_studio_popup(self):
+        self._save_ui_to_config()
+        self.config["app_mode"] = "compilation"
+        self.config["is_part_splitter"] = True
         if self.app and hasattr(self.app, "open_title_sub_studio_popup"):
             popup = self.app.open_title_sub_studio_popup(
                 on_save_callback=self._on_studio_saved,

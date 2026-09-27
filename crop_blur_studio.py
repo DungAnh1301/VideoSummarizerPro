@@ -67,16 +67,38 @@ HANDLE_SIZE = 10
 PREVIEW_CACHE_FILE = APP_DIR / "system_data" / "crop_preview_cache.jpg"
 
 
+def _detect_mode(cfg: dict) -> str:
+    """Xác định chế độ gọi Studio: 'tiktok_remixer', 'compilation', hoặc 'summary'."""
+    if not isinstance(cfg, dict):
+        return "summary"
+    if (
+        cfg.get("is_tiktok_remixer")
+        or cfg.get("app_mode") == "tiktok_remixer"
+        or "auto_clean_core_crop" in cfg
+        or "shuffle_broll" in cfg
+    ):
+        return "tiktok_remixer"
+    if (
+        cfg.get("is_part_splitter")
+        or cfg.get("app_mode") == "compilation"
+        or "compilation_clip_count" in cfg
+        or "playlist_url" in cfg
+    ):
+        return "compilation"
+    return "summary"
+
+
 # ==============================================================================
 # WORKER THREAD: BỐC FRAME VIDEO BẤT ĐỒNG BỘ (CHỐNG LAG TUYỆT ĐỐI KHI MỞ CỬA SỔ)
 # ==============================================================================
 class AsyncVideoFrameExtractor(QThread):
     frame_ready = Signal(object, int, int) # (QImage or None, w, h)
 
-    def __init__(self, video_path: str, timestamp_sec: float = 2.0, parent=None):
+    def __init__(self, video_path: str, timestamp_sec: float = 2.0, cache_file_path: Optional[Path] = None, parent=None):
         super().__init__(parent)
         self.video_path = video_path
         self.timestamp_sec = timestamp_sec
+        self.cache_file_path = cache_file_path or PREVIEW_CACHE_FILE
 
     def run(self):
         vp = self.video_path
@@ -104,8 +126,8 @@ class AsyncVideoFrameExtractor(QThread):
                 qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
 
                 try:
-                    PREVIEW_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    cv2.imwrite(str(PREVIEW_CACHE_FILE), frame)
+                    self.cache_file_path.parent.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(self.cache_file_path), frame)
                 except Exception:
                     pass
 
@@ -1007,6 +1029,9 @@ class CapCutCropStudioDialog(QDialog):
 
         self.sample_video_path = sample_video_path
         self.config_data = dict(current_data or {})
+        self.app_mode = _detect_mode(self.config_data)
+        self.is_tiktok_mode = (self.app_mode == "tiktok_remixer")
+        self.preview_cache_file = APP_DIR / "system_data" / f"crop_preview_cache_{self.app_mode}.jpg"
 
         self._build_ui()
         self._load_data_to_ui()
@@ -1166,7 +1191,7 @@ class CapCutCropStudioDialog(QDialog):
         l_zoom.addWidget(lbl_sx)
         l_zoom.addWidget(self.sp_scale_x)
         l_zoom.addWidget(lbl_sy)
-        l_zoom.addWidget(self.sp_scale_y)
+        self.gb_zoom = gb_zoom
         left_panel.addWidget(gb_zoom)
 
         self.chk_blur_bg = QCheckBox("🌫️ Làm mờ nền 2 đầu (Blur Background)")
@@ -1469,11 +1494,58 @@ class CapCutCropStudioDialog(QDialog):
         self.sp_blur_w.setValue(int(cfg.get("blur_mask_w", 932)))
         self.sp_blur_h.setValue(int(cfg.get("blur_mask_h", 210)))
 
-        self.sp_zoom_in.setValue(int(round(float(cfg.get("zoom_in", 178.0)))))
-        self.sp_scale_x.setValue(int(round(float(cfg.get("scale_x", 100.0)))))
-        self.sp_scale_y.setValue(int(round(float(cfg.get("scale_y", 130.0)))))
-        self.chk_blur_bg.setChecked(bool(cfg.get("blur_bg", True)))
+        # ZOOM: Hỗ trợ linh hoạt cả zoom_percent (số) và zoom_in (tránh boolean True -> 1.0 -> 50%)
+        self.is_tiktok_mode = bool(
+            cfg.get("is_tiktok_remixer")
+            or cfg.get("app_mode") == "tiktok_remixer"
+            or "auto_clean_core_crop" in cfg
+            or "shuffle_broll" in cfg
+        )
+        if hasattr(self, "gb_zoom") and self.is_tiktok_mode:
+            self.gb_zoom.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
+            self.chk_blur_bg.setText("Nền mờ (nếu zoom nhỏ)")
 
+        def_zoom = 105.0 if self.is_tiktok_mode else 178.0
+        def_sx = 100.0
+        def_sy = 100.0 if self.is_tiktok_mode else 130.0
+        raw_zoom = cfg.get("zoom_percent")
+        if raw_zoom is None or isinstance(raw_zoom, bool):
+            raw_zoom = cfg.get("zoom_in")
+        if isinstance(raw_zoom, bool) or raw_zoom is None:
+            raw_zoom = cfg.get("zoom_percent", def_zoom)
+            if isinstance(raw_zoom, bool):
+                raw_zoom = def_zoom
+        try:
+            val_zoom = float(raw_zoom)
+            if 0 < val_zoom <= 5.0:
+                val_zoom *= 100.0
+            elif val_zoom <= 0:
+                val_zoom = def_zoom
+        except Exception:
+            val_zoom = def_zoom
+
+        raw_sx = cfg.get("scale_w") if cfg.get("scale_w") is not None else cfg.get("scale_x", def_sx)
+        try:
+            val_sx = float(raw_sx)
+            if 0 < val_sx <= 5.0:
+                val_sx *= 100.0
+        except Exception:
+            val_sx = def_sx
+
+        raw_sy = cfg.get("scale_h") if cfg.get("scale_h") is not None else cfg.get("scale_y", def_sy)
+        try:
+            val_sy = float(raw_sy)
+            if 0 < val_sy <= 5.0:
+                val_sy *= 100.0
+        except Exception:
+            val_sy = def_sy
+
+        self.sp_zoom_in.setValue(int(round(val_zoom)))
+        self.sp_scale_x.setValue(int(round(val_sx)))
+        self.sp_scale_y.setValue(int(round(val_sy)))
+
+        def_blur = False if self.is_tiktok_mode else True
+        self.chk_blur_bg.setChecked(bool(cfg.get("blur_bg", def_blur)))
         # Nạp vào Canvas
         self.canvas.base_w = self.sp_base_w.value()
         self.canvas.base_h = self.sp_base_h.value()
@@ -1498,9 +1570,10 @@ class CapCutCropStudioDialog(QDialog):
 
         # Nạp ảnh từ Cache nếu có (mở popup tức thì 0.001s, Zero Delay!)
         has_cache = False
-        if PREVIEW_CACHE_FILE.exists():
+        target_cache = getattr(self, "preview_cache_file", PREVIEW_CACHE_FILE)
+        if target_cache.exists():
             try:
-                cache_pix = QPixmap(str(PREVIEW_CACHE_FILE))
+                cache_pix = QPixmap(str(target_cache))
                 if cache_pix and not cache_pix.isNull():
                     self.canvas.set_preview_pixmap(cache_pix)
                     self.sp_base_w.setValue(cache_pix.width())
@@ -1657,12 +1730,19 @@ class CapCutCropStudioDialog(QDialog):
         target = self.sample_video_path
         if target and os.path.exists(target):
             return target
-        dl_dir = APP_DIR / "downloads"
-        if dl_dir.exists():
-            mp4s = [f for f in dl_dir.glob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000]
-            if mp4s:
-                mp4s.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-                return str(mp4s[0])
+        if getattr(self, "is_tiktok_mode", False):
+            for t_dir in [APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+                if t_dir.exists():
+                    mp4s = sorted(t_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                    if mp4s:
+                        return str(mp4s[0])
+        else:
+            dl_dir = APP_DIR / "downloads"
+            if dl_dir.exists():
+                mp4s = [f for f in dl_dir.glob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000]
+                if mp4s:
+                    mp4s.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+                    return str(mp4s[0])
         return ""
 
     def _start_async_frame_reload(self):
@@ -1670,17 +1750,22 @@ class CapCutCropStudioDialog(QDialog):
         if not video_path:
             return
 
+        target_cache = getattr(self, "preview_cache_file", PREVIEW_CACHE_FILE)
         # Nếu file cache đã có và mới hơn file video thì không cần bốc lại
-        if PREVIEW_CACHE_FILE.exists():
+        if target_cache.exists():
             try:
                 v_mtime = os.path.getmtime(video_path)
-                c_mtime = PREVIEW_CACHE_FILE.stat().st_mtime
+                c_mtime = target_cache.stat().st_mtime
                 if c_mtime >= v_mtime and self.canvas.preview_pixmap and not self.canvas.preview_pixmap.isNull():
                     return
             except Exception:
                 pass
 
-        self._extractor_thread = AsyncVideoFrameExtractor(video_path, timestamp_sec=2.0, parent=self)
+        self._extractor_thread = AsyncVideoFrameExtractor(
+            video_path, timestamp_sec=2.0,
+            cache_file_path=target_cache,
+            parent=self
+        )
         self._extractor_thread.frame_ready.connect(self._on_async_frame_ready)
         self._extractor_thread.start()
 
@@ -1695,13 +1780,17 @@ class CapCutCropStudioDialog(QDialog):
     def action_reload_frame(self):
         video_path = self._find_best_sample_video()
         if not video_path:
-            self.lbl_yt_status.setText("⚠️ Chưa tìm thấy video MP4 hợp lệ trong thư mục downloads!")
+            if getattr(self, "is_tiktok_mode", False):
+                self.lbl_yt_status.setText("⚠️ Chưa tìm thấy video TikTok hợp lệ!")
+            else:
+                self.lbl_yt_status.setText("⚠️ Chưa tìm thấy video MP4 hợp lệ trong thư mục downloads!")
             self.lbl_yt_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
             return
 
         self.btn_reload_frame.setEnabled(False)
         self.btn_reload_frame.setText("⏳ Đang đọc...")
 
+        target_cache = getattr(self, "preview_cache_file", PREVIEW_CACHE_FILE)
         def _on_done(qimg, w, h):
             self.btn_reload_frame.setEnabled(True)
             self.btn_reload_frame.setText("🔄 Load lại frame")
@@ -1713,7 +1802,11 @@ class CapCutCropStudioDialog(QDialog):
                 self.lbl_yt_status.setText("❌ Không đọc được frame từ video này.")
                 self.lbl_yt_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
 
-        self._manual_extractor = AsyncVideoFrameExtractor(video_path, timestamp_sec=2.0, parent=self)
+        self._manual_extractor = AsyncVideoFrameExtractor(
+            video_path, timestamp_sec=2.0,
+            cache_file_path=target_cache,
+            parent=self
+        )
         self._manual_extractor.frame_ready.connect(_on_done)
         self._manual_extractor.start()
 
@@ -1821,12 +1914,15 @@ class CapCutCropStudioDialog(QDialog):
             "blur_mask_x": self.sp_blur_x.value(),
             "blur_mask_y": self.sp_blur_y.value(),
             "blur_mask_w": self.sp_blur_w.value(),
-            "blur_mask_h": self.sp_blur_h.value(),
-            "zoom_in": self.sp_zoom_in.value(),
-            "scale_x": self.sp_scale_x.value(),
-            "scale_y": self.sp_scale_y.value(),
-            "blur_bg": self.chk_blur_bg.isChecked()
         }
+        res["zoom_in"] = bool(self.sp_zoom_in.value() != 100)
+        res["zoom_percent"] = float(self.sp_zoom_in.value())
+        res["scale_x"] = float(self.sp_scale_x.value())
+        res["scale_y"] = float(self.sp_scale_y.value())
+        res["scale_w"] = float(self.sp_scale_x.value())
+        res["scale_h"] = float(self.sp_scale_y.value())
+        res["blur_bg"] = self.chk_blur_bg.isChecked()
+        return res
 
 
 # ==============================================================================

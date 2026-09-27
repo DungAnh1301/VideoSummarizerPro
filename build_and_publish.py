@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.48"
+VERSION = "1.3.49"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.48: Tích hợp trực tiếp bộ mã nguồn gốc PySide6 chuẩn 100% từ v32_pro cho cả 3 Studio: (1) CapCut Pro Video Crop Studio với 8 chốt kéo thả chuột và preview tức thì; (2) CapCut Pro Color Studio 15 thanh trượt & 17 Look Presets; (3) Title & Subtitle Studio với Canvas tương tác đa ngôn ngữ không lỗi font."
+NOTES = "Bản phát hành v1.3.49: Cô lập hoàn toàn cấu hình 3 chế độ (AI Tóm Tắt 16:9, Cắt Part 16:9, TikTok Remixer 9:16). Hỗ trợ chỉnh sửa và lưu Title/Sub chuẩn xác cho Chế độ 3. Bổ sung cơ chế Zoom/Scale nhẹ (mặc định 105% / 100%) chống quét bản quyền chuyên biệt cho video dọc TikTok 9:16, không bị áp zoom nặng 178% của 16:9. Mở khóa Crop Studio cho Chế độ 3 và tự động cài đặt PySide6 nếu thiếu."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

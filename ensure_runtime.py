@@ -44,6 +44,7 @@ REQUIRED_PACKAGES = [
     "requests",
     "pillow",
     "youtube-transcript-api",
+    "PySide6",
 ]
 
 LogFn = Callable[[str], None]
