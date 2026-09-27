@@ -482,15 +482,44 @@ OUTPUT FORMAT (JSON ONLY):
             f"MarginV={sub_margin_v}'"
         ) if (options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt)) else "null"
 
+        # Thông số Zoom, Scale, Speed, Blur nền từ GUI bên ngoài (options)
+        zoom_val = float(options.get("zoom_percent", 105.0) or 105.0)
+        zoom_in = bool(options.get("zoom_in", True))
+        zoom_factor = (zoom_val / 100.0) if zoom_in else 1.0
+        sx = (float(options.get("scale_w") or options.get("scale_x", 100.0) or 100.0)) / 100.0
+        sy = (float(options.get("scale_h") or options.get("scale_y", 100.0) or 100.0)) / 100.0
+        blur_bg = bool(options.get("blur_bg", False))
+        video_speed = float(options.get("speed") or options.get("source_speed", 1.05) or 1.05)
+        audio_boost = float(options.get("audio_boost", 6.0) or 6.0)
+
+        # Kích thước khung hình foreground sau zoom & scale
+        fg_w = int(round(1080 * zoom_factor * sx))
+        fg_w = fg_w + (fg_w % 2)
+        fg_h = int(round(1920 * zoom_factor * sy))
+        fg_h = fg_h + (fg_h % 2)
+
+        if blur_bg:
+            bg_stream = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=8[bg];"
+        else:
+            bg_stream = f"color=c=black:s=1080x1920[bg];"
+
+        # Tốc độ video (setpts)
+        speed_filter = f",setpts={1.0 / video_speed:.4f}*PTS" if abs(video_speed - 1.0) >= 0.01 else ""
+
         # Filter complex master
         master_vf = (
-            f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=8[bg];"
-            f"[0:v]scale=1080:-2[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_mid];"
-            f"[v_mid]{color_filter_str}[v_color];"
+            f"{bg_stream}"
+            f"[0:v]scale={fg_w}:{fg_h}[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+            f"[v_base]{color_filter_str}{speed_filter}[v_color];"
             f"[v_color][1:v]overlay={banner_x}:{banner_y}[v_banner];"
             f"[v_banner]{sub_style_str}[vout]"
         )
+
+        # Xử lý âm thanh (Audio Boost)
+        audio_opts = []
+        if audio_boost != 0:
+            audio_opts.extend(["-filter:a", f"volume={audio_boost:.1f}dB"])
 
         cmd_final = [
             "ffmpeg", "-y",
@@ -500,6 +529,7 @@ OUTPUT FORMAT (JSON ONLY):
             "-filter_complex", master_vf,
             "-map", "[vout]",
             "-map", "2:a" if (narration_audio and os.path.isfile(narration_audio)) else "0:a?",
+            *audio_opts,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",

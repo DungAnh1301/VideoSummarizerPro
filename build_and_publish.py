@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.49"
+VERSION = "1.3.50"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.49: Cô lập hoàn toàn cấu hình 3 chế độ (AI Tóm Tắt 16:9, Cắt Part 16:9, TikTok Remixer 9:16). Hỗ trợ chỉnh sửa và lưu Title/Sub chuẩn xác cho Chế độ 3. Bổ sung cơ chế Zoom/Scale nhẹ (mặc định 105% / 100%) chống quét bản quyền chuyên biệt cho video dọc TikTok 9:16, không bị áp zoom nặng 178% của 16:9. Mở khóa Crop Studio cho Chế độ 3 và tự động cài đặt PySide6 nếu thiếu."
+NOTES = "Bản phát hành v1.3.50: Chuyển toàn bộ các thông số Tốc độ (Speed), Âm lượng (Audio Boost), Làm mờ nền (Blur), Zoom in/out (%) và Scale ngang/dọc (%) ra ngoài GUI chính (Tab 3) cho Chế độ 3 (TikTok Remixer) đồng bộ chuẩn như Tóm Tắt. Xóa bỏ hoàn toàn các thanh chỉnh khung hình zoom/scale bên trong cả 3 Studio (Title & Sub, Bảng Màu, Crop & Blur), các Studio chỉ đọc thông số từ bên ngoài để render preview chính xác và không bao giờ ghi đè lên cấu hình GUI bên ngoài."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -40,7 +40,7 @@ files = [
     "config.example.json", "Chay_App.bat", "README_CAI_DAT.md",
     "font_manager.py", "studio_helpers.py", "part_splitter_config.py", "part_pruner_ai.py",
     "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
-    "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py",
+    "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.example.json",
     "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",
     "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md"
 ]

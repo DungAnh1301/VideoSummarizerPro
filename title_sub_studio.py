@@ -314,7 +314,9 @@ class PreviewCanvas9x16(QWidget):
         self.update()
 
     def update_data(self, cfg: Dict[str, Any], title_sample: str, sub_sample: str, part_num: str = "1"):
-        self.cfg = dict(cfg or {})
+        merged = dict(self.cfg)
+        merged.update(cfg or {})
+        self.cfg = merged
         self.title_sample_text = title_sample if title_sample is not None else ""
         self.sub_sample_text = sub_sample if sub_sample is not None else ""
         self.part_sample_number = str(part_num or "1").strip()
@@ -838,56 +840,12 @@ class TitleSubStudioDialog(QDialog):
         scroll.setWidget(left_widget)
         root.addWidget(scroll)
 
-        # --- NHÓM 0: THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER) ---
-        gb_frame = QGroupBox("🔍 THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER)")
-        gb_frame.setStyleSheet("QGroupBox { color: #89b4fa; }")
-        grid_frame = QGridLayout(gb_frame)
-        grid_frame.setSpacing(8)
-        grid_frame.setContentsMargins(12, 14, 12, 10)
-
-        init_z, init_sx, init_sy, init_blur = _extract_frame_geom(self.ts_data)
-
-        grid_frame.addWidget(QLabel("🔍 Zoom-in:"), 0, 0)
-        self.sp_zoom_in = QSpinBox()
-        self.sp_zoom_in.setRange(50, 300)
-        self.sp_zoom_in.setValue(int(round(init_z)))
-        self.sp_zoom_in.setSuffix(" %")
-        self.sp_zoom_in.valueChanged.connect(self._schedule_refresh)
-        grid_frame.addWidget(self.sp_zoom_in, 0, 1)
-
-        grid_frame.addWidget(QLabel("↔️ Scale X:"), 0, 2)
-        self.sp_scale_x = QSpinBox()
-        self.sp_scale_x.setRange(50, 200)
-        self.sp_scale_x.setValue(int(round(init_sx)))
-        self.sp_scale_x.setSuffix(" %")
-        self.sp_scale_x.valueChanged.connect(self._schedule_refresh)
-        grid_frame.addWidget(self.sp_scale_x, 0, 3)
-
-        grid_frame.addWidget(QLabel("↕️ Scale Y:"), 1, 0)
-        self.sp_scale_y = QSpinBox()
-        self.sp_scale_y.setRange(50, 200)
-        self.sp_scale_y.setValue(int(round(init_sy)))
-        self.sp_scale_y.setSuffix(" %")
-        self.sp_scale_y.valueChanged.connect(self._schedule_refresh)
-        grid_frame.addWidget(self.sp_scale_y, 1, 1)
-
-        self.chk_blur_bg = QCheckBox("🌫️ Làm mờ 2 đầu")
-        self.chk_blur_bg.setChecked(init_blur)
-        self.chk_blur_bg.setStyleSheet("color: #a6e3a1; font-weight: bold;")
-        self.chk_blur_bg.toggled.connect(self._schedule_refresh)
-        grid_frame.addWidget(self.chk_blur_bg, 1, 2, 1, 2)
-
-        self.gb_frame = gb_frame
         self.is_tiktok_mode = bool(
             self.ts_data.get("is_tiktok_remixer")
             or self.ts_data.get("app_mode") == "tiktok_remixer"
             or "auto_clean_core_crop" in self.ts_data
             or "shuffle_broll" in self.ts_data
         )
-        if self.is_tiktok_mode:
-            gb_frame.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
-            self.chk_blur_bg.setText("🌫️ Nền mờ (nếu zoom nhỏ)")
-        left_layout.addWidget(gb_frame)
 
         # --- NHÓM 1: CẤU HÌNH TIÊU ĐỀ BANNER 2 DÒNG ---
         gb_title = QGroupBox("🏷️ CẤU HÌNH TIÊU ĐỀ BANNER (PILL BANNER)")
@@ -1204,6 +1162,7 @@ class TitleSubStudioDialog(QDialog):
 
         # 2. Canvas 9:16 Preview
         self.canvas = PreviewCanvas9x16()
+        self.canvas.cfg = dict(self.ts_data)
         right_layout.addWidget(self.canvas, 1)
 
         # 3. 2 Ô Nhập Mẫu Thử Nghiệm
@@ -1531,14 +1490,6 @@ class TitleSubStudioDialog(QDialog):
             "sub_color": self._sub_color_ass,
             "sub_outline_color": self._sub_ol_ass,
             "sub_uppercase": preset["uppercase"],
-            # Khung hình & Tỉ lệ
-            "zoom_in": bool(self.sp_zoom_in.value() != 100),
-            "zoom_percent": float(self.sp_zoom_in.value()),
-            "scale_x": float(self.sp_scale_x.value()),
-            "scale_y": float(self.sp_scale_y.value()),
-            "scale_w": float(self.sp_scale_x.value()),
-            "scale_h": float(self.sp_scale_y.value()),
-            "blur_bg": self.chk_blur_bg.isChecked(),
         }
         return result
 

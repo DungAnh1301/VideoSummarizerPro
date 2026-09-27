@@ -1155,51 +1155,7 @@ class CapCutCropStudioDialog(QDialog):
         l_crop.addLayout(grid_crop)
         left_panel.addWidget(gb_crop)
 
-        # KHỐI 1.5: 🔍 TỈ LỆ ZOOM & SCALE (ĐỒNG BỘ CẤU HÌNH RENDER)
-        gb_zoom = QGroupBox("🔍 TỈ LỆ ZOOM & SCALE (KHỚP RENDER)")
-        gb_zoom.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold; color: #89b4fa;
-                border: 1px solid #45475a; border-radius: 6px;
-                margin-top: 4px; padding-top: 10px;
-            }
-        """)
-        l_zoom = QHBoxLayout(gb_zoom)
-        l_zoom.setSpacing(8)
-        l_zoom.setContentsMargins(10, 8, 10, 8)
 
-        lbl_zm = QLabel("Zoom:")
-        lbl_zm.setStyleSheet("color: #cdd6f4; font-size: 11px;")
-        self.sp_zoom_in = _create_clean_spin(50, 300, 178)
-        self.sp_zoom_in.setSuffix(" %")
-        self.sp_zoom_in.valueChanged.connect(self._on_zoom_scale_changed)
-
-        lbl_sx = QLabel("↔️ Scale X:")
-        lbl_sx.setStyleSheet("color: #cdd6f4; font-size: 11px;")
-        self.sp_scale_x = _create_clean_spin(50, 200, 100)
-        self.sp_scale_x.setSuffix(" %")
-        self.sp_scale_x.valueChanged.connect(self._on_zoom_scale_changed)
-
-        lbl_sy = QLabel("↕️ Scale Y:")
-        lbl_sy.setStyleSheet("color: #cdd6f4; font-size: 11px;")
-        self.sp_scale_y = _create_clean_spin(50, 200, 130)
-        self.sp_scale_y.setSuffix(" %")
-        self.sp_scale_y.valueChanged.connect(self._on_zoom_scale_changed)
-
-        l_zoom.addWidget(lbl_zm)
-        l_zoom.addWidget(self.sp_zoom_in)
-        l_zoom.addWidget(lbl_sx)
-        l_zoom.addWidget(self.sp_scale_x)
-        l_zoom.addWidget(lbl_sy)
-        self.gb_zoom = gb_zoom
-        left_panel.addWidget(gb_zoom)
-
-        self.chk_blur_bg = QCheckBox("🌫️ Làm mờ nền 2 đầu (Blur Background)")
-        self.chk_blur_bg.setStyleSheet("color: #a6e3a1; font-weight: bold; font-size: 11px; margin-top: 2px; margin-bottom: 2px;")
-        self.chk_blur_bg.setToolTip("Tích chọn: Nền 2 đầu trên/dưới bị làm mờ (Blur)\nBỏ tích: Nền 2 đầu màu đen tuyền (#000000) không bị mờ")
-        self.chk_blur_bg.setChecked(True)
-        self.chk_blur_bg.toggled.connect(self._on_blur_bg_toggled)
-        left_panel.addWidget(self.chk_blur_bg)
 
         # KHỐI 2: 🛡️ LÀM MỜ VÙNG CHỌN (BLUR MASK)
         gb_blur = QGroupBox("🛡️ LÀM MỜ VÙNG CHỌN (BLUR MASK)")
@@ -1501,9 +1457,6 @@ class CapCutCropStudioDialog(QDialog):
             or "auto_clean_core_crop" in cfg
             or "shuffle_broll" in cfg
         )
-        if hasattr(self, "gb_zoom") and self.is_tiktok_mode:
-            self.gb_zoom.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
-            self.chk_blur_bg.setText("Nền mờ (nếu zoom nhỏ)")
 
         def_zoom = 105.0 if self.is_tiktok_mode else 178.0
         def_sx = 100.0
@@ -1540,12 +1493,9 @@ class CapCutCropStudioDialog(QDialog):
         except Exception:
             val_sy = def_sy
 
-        self.sp_zoom_in.setValue(int(round(val_zoom)))
-        self.sp_scale_x.setValue(int(round(val_sx)))
-        self.sp_scale_y.setValue(int(round(val_sy)))
-
         def_blur = False if self.is_tiktok_mode else True
-        self.chk_blur_bg.setChecked(bool(cfg.get("blur_bg", def_blur)))
+        blur_val = bool(cfg.get("blur_bg", def_blur))
+
         # Nạp vào Canvas
         self.canvas.base_w = self.sp_base_w.value()
         self.canvas.base_h = self.sp_base_h.value()
@@ -1563,10 +1513,10 @@ class CapCutCropStudioDialog(QDialog):
         self.canvas.blur_mask_w = self.sp_blur_w.value()
         self.canvas.blur_mask_h = self.sp_blur_h.value()
 
-        self.canvas.zoom_in = float(self.sp_zoom_in.value())
-        self.canvas.scale_x = float(self.sp_scale_x.value())
-        self.canvas.scale_y = float(self.sp_scale_y.value())
-        self.canvas.blur_bg = self.chk_blur_bg.isChecked()
+        self.canvas.zoom_in = float(val_zoom)
+        self.canvas.scale_x = float(val_sx)
+        self.canvas.scale_y = float(val_sy)
+        self.canvas.blur_bg = blur_val
 
         # Nạp ảnh từ Cache nếu có (mở popup tức thì 0.001s, Zero Delay!)
         has_cache = False
@@ -1709,15 +1659,6 @@ class CapCutCropStudioDialog(QDialog):
             })
         self.canvas.update()
 
-    def _on_zoom_scale_changed(self):
-        self.canvas.zoom_in = float(self.sp_zoom_in.value())
-        self.canvas.scale_x = float(self.sp_scale_x.value())
-        self.canvas.scale_y = float(self.sp_scale_y.value())
-        self.canvas.update()
-
-    def _on_blur_bg_toggled(self, checked: bool):
-        self.canvas.blur_bg = checked
-        self.canvas.update()
 
     def _update_info_labels(self):
         self.lbl_info_base.setText(f"Base Canvas: {self.canvas.base_w} × {self.canvas.base_h}")
@@ -1914,15 +1855,8 @@ class CapCutCropStudioDialog(QDialog):
             "blur_mask_x": self.sp_blur_x.value(),
             "blur_mask_y": self.sp_blur_y.value(),
             "blur_mask_w": self.sp_blur_w.value(),
+            "blur_mask_h": self.sp_blur_h.value(),
         }
-        res["zoom_in"] = bool(self.sp_zoom_in.value() != 100)
-        res["zoom_percent"] = float(self.sp_zoom_in.value())
-        res["scale_x"] = float(self.sp_scale_x.value())
-        res["scale_y"] = float(self.sp_scale_y.value())
-        res["scale_w"] = float(self.sp_scale_x.value())
-        res["scale_h"] = float(self.sp_scale_y.value())
-        res["blur_bg"] = self.chk_blur_bg.isChecked()
-        return res
 
 
 # ==============================================================================

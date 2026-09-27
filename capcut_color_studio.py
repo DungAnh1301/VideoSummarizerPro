@@ -765,62 +765,12 @@ class CapCutColorStudioDialog(QDialog):
         l_layout.setContentsMargins(0, 0, 0, 0)
         l_layout.setSpacing(10)
 
-        # KHỐI 1: THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER)
-        gb_frame = QGroupBox("🔍 THÔNG SỐ KHUNG HÌNH (ĐỒNG BỘ CONFIG RENDER)")
-        gb_frame.setStyleSheet("QGroupBox { color: #89dceb; font-weight: bold; }")
-        fl_frame = QFormLayout(gb_frame)
-        fl_frame.setContentsMargins(10, 10, 10, 6)
-        fl_frame.setSpacing(6)
-
-        init_z, init_sx, init_sy, init_blur = _extract_frame_geom(self.current_colors)
-
-        h_zoom = QHBoxLayout()
-        self.sp_zoom_in = QDoubleSpinBox()
-        self.sp_zoom_in.setRange(50.0, 300.0)
-        self.sp_zoom_in.setSingleStep(1.0)
-        self.sp_zoom_in.setDecimals(1)
-        self.sp_zoom_in.setSuffix("%")
-        self.sp_zoom_in.setValue(init_z)
-        self.sp_zoom_in.valueChanged.connect(self._frame_debounce.start)
-        h_zoom.addWidget(self.sp_zoom_in)
-
-        self.chk_blur_bg = QCheckBox("Làm mờ nền 2 đầu (Blur BG)")
-        self.chk_blur_bg.setChecked(init_blur)
-        self.chk_blur_bg.toggled.connect(self._frame_debounce.start)
-        h_zoom.addWidget(self.chk_blur_bg)
-        fl_frame.addRow("Zoom-in & Nền:", h_zoom)
-
-        h_scale = QHBoxLayout()
-        self.sp_scale_x = QDoubleSpinBox()
-        self.sp_scale_x.setRange(50.0, 200.0)
-        self.sp_scale_x.setSingleStep(1.0)
-        self.sp_scale_x.setDecimals(1)
-        self.sp_scale_x.setSuffix("%")
-        self.sp_scale_x.setValue(init_sx)
-        self.sp_scale_x.valueChanged.connect(self._frame_debounce.start)
-        h_scale.addWidget(QLabel("Rộng (X):"))
-        h_scale.addWidget(self.sp_scale_x)
-
-        self.sp_scale_y = QDoubleSpinBox()
-        self.sp_scale_y.setRange(50.0, 200.0)
-        self.sp_scale_y.setSingleStep(1.0)
-        self.sp_scale_y.setDecimals(1)
-        self.sp_scale_y.setSuffix("%")
-        self.sp_scale_y.setValue(init_sy)
-        self.sp_scale_y.valueChanged.connect(self._frame_debounce.start)
-        h_scale.addWidget(QLabel("Dài (Y):"))
-        h_scale.addWidget(self.sp_scale_y)
-        self.gb_frame = gb_frame
         self.is_tiktok_mode = bool(
             self.current_colors.get("is_tiktok_remixer")
             or self.current_colors.get("app_mode") == "tiktok_remixer"
             or "auto_clean_core_crop" in self.current_colors
             or "shuffle_broll" in self.current_colors
         )
-        if self.is_tiktok_mode:
-            gb_frame.setTitle("🔍 KHUNG HÌNH 9:16 (Zoom & Scale nhẹ né quét TikTok)")
-            self.chk_blur_bg.setText("Nền mờ (nếu zoom nhỏ)")
-        l_layout.addWidget(gb_frame)
 
         # KHỐI 2 (trước là khối 2): QUẢN LÝ BỘ LỌC LOOK STACK (17 PRESETS)
         gb_look = QGroupBox("✨ BỘ LỌC XẾP CHỒNG (LOOK STACK ENGINE - 17 PRESETS)")
@@ -1187,17 +1137,6 @@ class CapCutColorStudioDialog(QDialog):
         for key, s in self.sliders.items():
             result[key] = s.value()
 
-        result["blur_bg"] = self.chk_blur_bg.isChecked() if hasattr(self, "chk_blur_bg") else bool(self.current_colors.get("blur_bg", False))
-        z_val = self.sp_zoom_in.value() if hasattr(self, "sp_zoom_in") else 105.0
-        result["zoom_percent"] = float(z_val)
-        result["zoom_in"] = bool(z_val != 100.0)
-        sx = self.sp_scale_x.value() if hasattr(self, "sp_scale_x") else 100.0
-        sy = self.sp_scale_y.value() if hasattr(self, "sp_scale_y") else 100.0
-        result["scale_x"] = float(sx)
-        result["scale_y"] = float(sy)
-        result["scale_w"] = float(sx)
-        result["scale_h"] = float(sy)
-
         # Giữ tương thích ngược với hệ thống cũ
         if self.look_stack:
             result["color_look"] = self.look_stack[0]["name"]
@@ -1261,10 +1200,7 @@ class CapCutColorStudioDialog(QDialog):
         self.lbl_status.setText("⏳ Đang tải thumbnail YouTube...")
         self.btn_fetch_yt.setEnabled(False)
 
-        blur_bg = self.chk_blur_bg.isChecked() if hasattr(self, "chk_blur_bg") else bool(self.current_colors.get("blur_bg", True))
-        zoom_in = self.sp_zoom_in.value() if hasattr(self, "sp_zoom_in") else float(self.current_colors.get("zoom_in", 178.0))
-        scale_x = self.sp_scale_x.value() if hasattr(self, "sp_scale_x") else float(self.current_colors.get("scale_x", 100.0))
-        scale_y = self.sp_scale_y.value() if hasattr(self, "sp_scale_y") else float(self.current_colors.get("scale_y", 130.0))
+        zoom_in, scale_x, scale_y, blur_bg = _extract_frame_geom(self.current_colors)
         self._yt_worker = YouTubeSampleFetcher(
             url, blur_bg=blur_bg,
             zoom_in=zoom_in, scale_x=scale_x, scale_y=scale_y,
@@ -1289,10 +1225,7 @@ class CapCutColorStudioDialog(QDialog):
         self.lbl_status.setText("⏳ Đang trích xuất base frame 9:16...")
         self.btn_reload_base.setEnabled(False)
 
-        blur_bg = self.chk_blur_bg.isChecked() if hasattr(self, "chk_blur_bg") else bool(self.current_colors.get("blur_bg", True))
-        zoom_in = self.sp_zoom_in.value() if hasattr(self, "sp_zoom_in") else float(self.current_colors.get("zoom_in", 178.0))
-        scale_x = self.sp_scale_x.value() if hasattr(self, "sp_scale_x") else float(self.current_colors.get("scale_x", 100.0))
-        scale_y = self.sp_scale_y.value() if hasattr(self, "sp_scale_y") else float(self.current_colors.get("scale_y", 130.0))
+        zoom_in, scale_x, scale_y, blur_bg = _extract_frame_geom(self.current_colors)
         self._base_worker = AsyncLayoutBaseExtractor(
             vp, start_sec=start_sec, blur_bg=blur_bg,
             zoom_in=zoom_in, scale_x=scale_x, scale_y=scale_y,

@@ -60,7 +60,9 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     "blur": 0.0,
     "vignette": 0.0,
 
-    # 6.1 Khung hình Zoom & Scale nhẹ né quét bản quyền TikTok (mặc định 105%, không méo hình)
+    # 6.1 Khung hình, Tốc độ, Zoom & Scale nhẹ né quét bản quyền TikTok (mặc định 105%, không méo hình)
+    "speed": 1.05,
+    "audio_boost": 6.0,
     "zoom_in": True,
     "zoom_percent": 105.0,
     "scale_x": 100.0,

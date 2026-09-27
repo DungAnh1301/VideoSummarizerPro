@@ -250,6 +250,46 @@ class TikTokRemixerTab(ttk.Frame):
         )
         chk_sub_over.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=1)
 
+        # Nhóm Tốc độ, Khung hình & Zoom / Scale ngoài GUI (Đồng bộ chuẩn Tóm Tắt)
+        post_group = ttk.LabelFrame(self.tab3, text=" ⚡ Tốc Độ, Khung Hình & Zoom / Scale (Chống Quét TikTok) ", padding=6)
+        post_group.pack(fill=tk.X, pady=(0, 4))
+        for col_idx in range(6):
+            post_group.columnconfigure(col_idx, weight=1)
+
+        # Hàng 0: Tốc độ, Âm lượng, Blur nền
+        ttk.Label(post_group, text="Tốc độ:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.speed_spin = ttk.Spinbox(post_group, from_=0.5, to=3.0, increment=0.05, width=6)
+        self.speed_spin.grid(row=0, column=1, sticky=tk.W, padx=3, pady=3)
+        self.speed_spin.set(self.config.get("speed", 1.05))
+
+        ttk.Label(post_group, text="Âm lượng (dB):").grid(row=0, column=2, sticky=tk.W, pady=3, padx=(8, 2))
+        self.audio_boost_spin = ttk.Spinbox(post_group, from_=0.0, to=20.0, increment=1.0, width=6)
+        self.audio_boost_spin.grid(row=0, column=3, sticky=tk.W, padx=3, pady=3)
+        self.audio_boost_spin.set(self.config.get("audio_boost", 6.0))
+
+        self.blur_var = tk.BooleanVar(value=bool(self.config.get("blur_bg", False)))
+        self.blur_chk = ttk.Checkbutton(post_group, text="Làm mờ nền (Blur)", variable=self.blur_var)
+        self.blur_chk.grid(row=0, column=4, columnspan=2, padx=8, sticky=tk.W)
+
+        # Hàng 1: Zoom-in & Scale ngang/dọc
+        self.zoom_var = tk.BooleanVar(value=bool(self.config.get("zoom_in", True)))
+        self.zoom_chk = ttk.Checkbutton(post_group, text="Zoom-in (%):", variable=self.zoom_var)
+        self.zoom_chk.grid(row=1, column=0, sticky=tk.W, pady=3)
+
+        self.zoom_spin = ttk.Spinbox(post_group, from_=50, to=300, increment=1, width=6)
+        self.zoom_spin.grid(row=1, column=1, sticky=tk.W, padx=3, pady=3)
+        self.zoom_spin.set(self.config.get("zoom_percent", 105.0))
+
+        ttk.Label(post_group, text="Scale ngang:").grid(row=1, column=2, sticky=tk.W, pady=2, padx=(8, 2))
+        self.scale_w_spin = ttk.Spinbox(post_group, from_=50, to=300, increment=1, width=6)
+        self.scale_w_spin.grid(row=1, column=3, sticky=tk.W, padx=3, pady=3)
+        self.scale_w_spin.set(self.config.get("scale_w", 100.0))
+
+        ttk.Label(post_group, text="Scale dọc:").grid(row=1, column=4, sticky=tk.W, pady=2, padx=(8, 2))
+        self.scale_h_spin = ttk.Spinbox(post_group, from_=50, to=300, increment=1, width=6)
+        self.scale_h_spin.grid(row=1, column=5, sticky=tk.W, padx=3, pady=3)
+        self.scale_h_spin.set(self.config.get("scale_h", 100.0))
+
         # Bộ 3 Studio Buttons
         studio_group = ttk.LabelFrame(self.tab3, text=" 🎛️ Bộ 3 Studio Chuyên Nghiệp ", padding=6)
         studio_group.pack(fill=tk.X, pady=(0, 2))
@@ -587,12 +627,15 @@ class TikTokRemixerTab(ttk.Frame):
         threading.Thread(target=play_thread, daemon=True).start()
 
     def _on_studio_saved(self, saved_dict: dict):
-        """Lưu toàn bộ kết quả cấu hình từ Studio (Title, Sub, Màu sắc, Zoom/Scale) vào config_tiktok_remixer.json."""
+        """Lưu kết quả chuyên biệt từ Studio (Title, Sub, Màu sắc, Crop) vào config_tiktok_remixer.json mà không đè thông số GUI bên ngoài."""
         if not isinstance(saved_dict, dict):
             return
-        self.config.update(saved_dict)
+        # Giữ nguyên toàn bộ thông số của GUI bên ngoài (zoom, scale, speed, blur, audio_boost)
+        OUTER_KEYS = {"speed", "audio_boost", "blur_bg", "zoom_in", "zoom_percent", "scale_w", "scale_h", "scale_x", "scale_y"}
+        cleaned_saved = {k: v for k, v in saved_dict.items() if k not in OUTER_KEYS}
+        self.config.update(cleaned_saved)
         save_tiktok_remixer_config(self.config)
-        self.log("💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Zoom) vào config_tiktok_remixer.json!")
+        self.log("💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Crop) vào config_tiktok_remixer.json!")
 
     def _open_color_studio(self):
         self._collect_config_from_ui()
@@ -875,6 +918,21 @@ class TikTokRemixerTab(ttk.Frame):
         if hasattr(self, "overlay_sub_on_blur_var"):
             self.overlay_sub_on_blur_var.set(self.config.get("overlay_sub_on_blur_zone", True))
 
+        if hasattr(self, "speed_spin"):
+            self.speed_spin.set(self.config.get("speed", 1.05))
+        if hasattr(self, "audio_boost_spin"):
+            self.audio_boost_spin.set(self.config.get("audio_boost", 6.0))
+        if hasattr(self, "blur_var"):
+            self.blur_var.set(bool(self.config.get("blur_bg", False)))
+        if hasattr(self, "zoom_var"):
+            self.zoom_var.set(bool(self.config.get("zoom_in", True)))
+        if hasattr(self, "zoom_spin"):
+            self.zoom_spin.set(self.config.get("zoom_percent", 105.0))
+        if hasattr(self, "scale_w_spin"):
+            self.scale_w_spin.set(self.config.get("scale_w", 100.0))
+        if hasattr(self, "scale_h_spin"):
+            self.scale_h_spin.set(self.config.get("scale_h", 100.0))
+
     def _collect_config_from_ui(self) -> dict:
         self.config["source_url_or_path"] = self.url_entry.get().strip()
         self.config["auto_clean_core_crop"] = bool(self.auto_clean_core_var.get())
@@ -898,4 +956,38 @@ class TikTokRemixerTab(ttk.Frame):
         self.config["shuffle_broll"] = bool(self.shuffle_broll_var.get())
         self.config["mirror_broll"] = bool(self.mirror_broll_var.get())
         self.config["overlay_sub_on_blur_zone"] = bool(self.overlay_sub_on_blur_var.get())
+
+        if hasattr(self, "speed_spin"):
+            try:
+                self.config["speed"] = float(self.speed_spin.get() or 1.05)
+            except Exception:
+                self.config["speed"] = 1.05
+        if hasattr(self, "audio_boost_spin"):
+            try:
+                self.config["audio_boost"] = float(self.audio_boost_spin.get() or 6.0)
+            except Exception:
+                self.config["audio_boost"] = 6.0
+        if hasattr(self, "blur_var"):
+            self.config["blur_bg"] = bool(self.blur_var.get())
+        if hasattr(self, "zoom_var"):
+            self.config["zoom_in"] = bool(self.zoom_var.get())
+        if hasattr(self, "zoom_spin"):
+            try:
+                self.config["zoom_percent"] = float(self.zoom_spin.get() or 105.0)
+            except Exception:
+                self.config["zoom_percent"] = 105.0
+        if hasattr(self, "scale_w_spin"):
+            try:
+                self.config["scale_w"] = float(self.scale_w_spin.get() or 100.0)
+                self.config["scale_x"] = self.config["scale_w"]
+            except Exception:
+                self.config["scale_w"] = 100.0
+                self.config["scale_x"] = 100.0
+        if hasattr(self, "scale_h_spin"):
+            try:
+                self.config["scale_h"] = float(self.scale_h_spin.get() or 100.0)
+                self.config["scale_y"] = self.config["scale_h"]
+            except Exception:
+                self.config["scale_h"] = 100.0
+                self.config["scale_y"] = 100.0
         return self.config
