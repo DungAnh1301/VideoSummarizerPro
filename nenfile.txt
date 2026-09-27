@@ -1,0 +1,42 @@
+powershell -File build_setup.ps1
+
+1. Chỉ nén ra ZIP
+powershell -ExecutionPolicy Bypass -File .\build_update.ps1 -Version 1.1.8 -Notes "Nội dung cập nhật"
+
+
+2. Gửi ZIP đã nén lên GitHub
+Nếu release chưa tồn tại:
+gh release create v1.1.8 ".\release\VideoSummarizerPro_Update_1.1.8.zip" ".\release\latest.json" --repo DungAnh1301/VideoSummarizerPro --title "Video Summarizer Pro v1.1.8" --notes "Nội dung cập nhật" --latest
+Nếu release đã tồn tại và muốn ghi đè file:
+gh release upload v1.1.8 ".\release\VideoSummarizerPro_Update_1.1.8.zip" ".\release\latest.json" --repo DungAnh1301/VideoSummarizerPro --clobber
+
+
+
+Đúng, nếu chỉ sửa mã nguồn hoặc giao diện như:
+- main.py
+- editor_processor.py
+- ai_processor.py
+- scene_mapper.py
+- update_manager.py
+- Các file Python khác
+- Ảnh, LUT hoặc tài nguyên giao diện
+thì dùng:
+powershell -ExecutionPolicy Bypass -File .\build_update.ps1 -Version 1.1.1 -Notes "Mô tả thay đổi"
+Mỗi lần phát hành phải tăng phiên bản:
+1.1.1
+1.1.2
+1.1.3
+Nếu thay requirements.txt hoặc thêm thư viện Python mới, dùng thêm -RuntimeUpdate:
+powershell -ExecutionPolicy Bypass -File .\build_update.ps1 -Version 1.2.0 -Notes "Thêm thư viện mới" -RuntimeUpdate
+Nếu thay những thành phần lớn sau thì nên build lại Setup:
+- Phiên bản Python.
+- Bản FFmpeg.
+- Cấu trúc thư mục cài đặt.
+- Cách hoạt động của trình cài đặt.
+- Thay đổi runtime quá lớn.
+powershell -ExecutionPolicy Bypass -File .\build_setup.ps1
+Tóm lại:
+- Sửa code Python thông thường → build_update.ps1.
+- Thêm thư viện → build_update.ps1 -RuntimeUpdate.
+- Thay Python/FFmpeg/bộ cài → build_setup.ps1.
+Sau mỗi lần chạy build_update.ps1, tạo Release GitHub mới và tải lên latest.json cùng file ZIP tương ứng

@@ -1,0 +1,8 @@
+;!@Install@!UTF-8!
+Title="Video Summarizer Pro"
+BeginPrompt="Cai dat Video Summarizer Pro?"
+InstallPath="%LocalAppData%\VideoSummarizerPro"
+GUIMode="1"
+Overwrite="1"
+RunProgram="setup.exe --no-pause"
+;!@InstallEnd@!

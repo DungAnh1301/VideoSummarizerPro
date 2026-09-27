@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.46"
+VERSION = "1.3.47"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.46: (1) Sửa triệt để lỗi import font_manager và tối ưu nạp font chữ quốc tế; (2) Fix lỗi màn hình đen ở khung hình mẫu preview 9:16 khi chưa chọn video bằng bộ sinh phôi frame rực rỡ trực quan 1920x1080; (3) Hoàn thiện đồng bộ 3 Tầng Studio WYSIWYG 1:1 (Crop Blur, CapCut Color, Title Sub) cho cả 3 Chế Độ."
+NOTES = "Bản phát hành v1.3.47: Hoàn thiện 100% giao diện & tính năng trực quan WYSIWYG 1:1 cho 3 Studio (Crop Blur Studio, CapCut Color Studio, Title & Subtitle Studio) theo chuẩn mẫu ClipCut Pro: (1) Khung hình mẫu 9:16 cập nhật thông số tức thì; (2) Hỗ trợ bốc frame trực tiếp từ link/ID YouTube và video cục bộ; (3) Tương tác kéo thả Title Banner mượt mà."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -38,7 +38,7 @@ files = [
     "hardware_manager.py", "local_source_processor.py", "market_profiles.py", "part_processor.py", "scene_mapper.py",
     "youtube_heatmap.py", "update_manager.py", "updater.py", "version.json", "requirements.txt",
     "config.example.json", "Chay_App.bat", "README_CAI_DAT.md",
-    "font_manager.py", "part_splitter_config.py", "part_pruner_ai.py",
+    "font_manager.py", "studio_helpers.py", "part_splitter_config.py", "part_pruner_ai.py",
     "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
     "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py",
     "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",

@@ -1,7 +1,7 @@
 """
-CROP & ZOOM SCALE & BLUR MASK STUDIO (WYSIWYG 1:1)
-Bố cục hình học, cắt viền, tỷ lệ co giãn ngang/dọc và nền mờ chuẩn 1080x1920 (9:16).
-Hệ quy chiếu chuẩn đích: 1080 x 1920.
+CAPCUT PRO VIDEO CROP STUDIO (FIXED RESOLUTION EDITION)
+Bố cục hình học, Cắt xén (Crop), Zoom Scale ngang/dọc và Nền mờ chuẩn 1080x1920 (9:16).
+Khớp 100% giao diện và thuật toán FFmpeg filter rendering.
 """
 import os
 import json
@@ -12,123 +12,11 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Optional, Dict, Any, Callable
 from PIL import Image, ImageTk, ImageFilter, ImageDraw
 import cv2
-import numpy as np
 
-# Thư mục lưu cache & phôi ảnh 3 tầng
-SYSTEM_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_data")
-os.makedirs(SYSTEM_DATA_DIR, exist_ok=True)
-CACHE_FRAME_PATH = os.path.join(SYSTEM_DATA_DIR, "crop_preview_cache.jpg")
-LAYOUT_BASE_PATH = os.path.join(SYSTEM_DATA_DIR, "layout_base.jpg")
-
-
-def generate_vibrant_sample_frame(output_path: str = CACHE_FRAME_PATH) -> str:
-    """Tạo ảnh mẫu 1920x1080 rực rỡ, tương phản cao để test Crop, Zoom, Blur & Màu sắc."""
-    w, h = 1920, 1080
-    base = Image.new("RGB", (w, h))
-    draw = ImageDraw.Draw(base)
-    # Gradient màu sắc từ chàm đậm sang cam hoàng hôn
-    for y in range(h):
-        r = int(24 + (230 - 24) * (y / h))
-        g = int(24 + (70 - 24) * (y / h))
-        b = int(70 + (25 - 70) * (y / h))
-        draw.line([(0, y), (w, y)], fill=(r, g, b))
-    
-    # Dải màu Color Bars chuẩn ở đáy
-    bar_colors = [
-        (255, 40, 40), (255, 140, 0), (255, 230, 0), (34, 197, 94),
-        (6, 182, 212), (59, 130, 246), (168, 85, 247), (255, 255, 255), (100, 116, 139)
-    ]
-    bar_w = w // len(bar_colors)
-    for i, col in enumerate(bar_colors):
-        draw.rectangle([i * bar_w, h - 90, (i + 1) * bar_w, h], fill=col)
-
-    # Khung trung tâm
-    cx, cy = w // 2, h // 2
-    draw.rounded_rectangle([cx - 440, cy - 250, cx + 440, cy + 250], radius=24, fill=(15, 23, 42), outline=(255, 255, 255), width=3)
-    
-    try:
-        font_large = ImageFont.truetype("arialbd.ttf", 48)
-        font_sub = ImageFont.truetype("arial.ttf", 28)
-        font_tag = ImageFont.truetype("arialbd.ttf", 22)
-    except Exception:
-        font_large = ImageFont.load_default()
-        font_sub = font_large
-        font_tag = font_large
-
-    draw.text((cx, cy - 100), "🎬 SOURCE VIDEO SAMPLE (16:9)", fill=(255, 230, 0), anchor="mm", font=font_large)
-    draw.text((cx, cy - 30), "Khung Hình Mẫu Trực Quan 1920 x 1080", fill=(255, 255, 255), anchor="mm", font=font_sub)
-    draw.text((cx, cy + 50), "Hỗ trợ xem trước Crop, Zoom Scale, Blur Background & Màu CapCut", fill=(200, 230, 255), anchor="mm", font=font_sub)
-
-    draw.rectangle([60, 50, 280, 105], fill=(239, 68, 68))
-    draw.text((170, 77), "LIVE PREVIEW", fill=(255, 255, 255), anchor="mm", font=font_tag)
-
-    draw.rectangle([w - 300, 50, w - 60, 105], fill=(59, 130, 246))
-    draw.text((w - 180, 77), "FHD 1080x1920", fill=(255, 255, 255), anchor="mm", font=font_tag)
-
-    base.save(output_path, quality=95)
-    return output_path
-
-
-def get_sample_or_fallback_image(video_path: Optional[str] = None) -> str:
-    """Lấy frame từ video hoặc tìm ảnh mẫu trong dự án, fallback sang ảnh rực rỡ sinh tự động."""
-    if video_path and os.path.isfile(video_path):
-        extracted = extract_sample_frame(video_path, timestamp_sec=2.0)
-        if extracted and os.path.isfile(extracted):
-            return extracted
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(base_dir, "anhmau.jpg"),
-        os.path.join(base_dir, "extracted_source_frame.jpg"),
-        os.path.join(base_dir, "frame_test.jpg"),
-        CACHE_FRAME_PATH
-    ]
-    for p in candidates:
-        if os.path.isfile(p):
-            try:
-                im = Image.open(p)
-                if im.size[0] >= 300 and im.size[1] >= 300:
-                    return p
-            except Exception:
-                pass
-
-    return generate_vibrant_sample_frame(CACHE_FRAME_PATH)
-
-
-def extract_sample_frame(video_path: str, timestamp_sec: float = 2.0) -> Optional[str]:
-    """Bốc frame mẫu ở giây thứ 2.0s (tránh màn hình đen 0.0s) và lưu vào cache."""
-    if not video_path or not os.path.isfile(video_path):
-        return None
-    try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return None
-        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        frame_num = int(timestamp_sec * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, frame = cap.read()
-        cap.release()
-        if ret and frame is not None:
-            cv2.imwrite(CACHE_FRAME_PATH, frame)
-            return CACHE_FRAME_PATH
-    except Exception as e:
-        print(f"[CROP STUDIO] cv2 extract frame error: {e}")
-
-    # Fallback FFmpeg
-    try:
-        cmd = [
-            "ffmpeg", "-y", "-ss", str(timestamp_sec), "-i", video_path,
-            "-vframes", "1", "-q:v", "2", CACHE_FRAME_PATH
-        ]
-        subprocess.run(cmd, capture_output=True, creationflags=0x08000000 if os.name == "nt" else 0)
-        if os.path.isfile(CACHE_FRAME_PATH):
-            return CACHE_FRAME_PATH
-    except Exception:
-        pass
-    return None
+from studio_helpers import (
+    SYSTEM_DATA_DIR, CACHE_FRAME_PATH, LAYOUT_BASE_PATH,
+    get_sample_or_fallback_image, extract_frame_from_video, fetch_youtube_sample, generate_vibrant_sample_frame
+)
 
 
 def calculate_fg_dimensions(
@@ -185,11 +73,8 @@ def render_layout_image(
     if os.path.isfile(source_img_path):
         src_img = Image.open(source_img_path).convert("RGB")
     else:
-        # Ảnh mẫu mặc định
-        src_img = Image.new("RGB", (1920, 1080), color=(40, 50, 70))
-        d = ImageDraw.Draw(src_img)
-        d.rectangle([100, 100, 1820, 980], outline=(255, 255, 255), width=4)
-        d.text((800, 500), "SAMPLE VIDEO FRAME (1920x1080)", fill=(255, 255, 255))
+        # Tự tạo frame mẫu trực quan nếu không tìm thấy file
+        src_img = Image.open(get_sample_or_fallback_image("")).convert("RGB")
 
     orig_w, orig_h = src_img.size
 
@@ -201,18 +86,14 @@ def render_layout_image(
 
     # 1. Tạo Background 1080x1920
     if blur_bg:
-        # Scale 360x640 cover -> Boxblur -> Scale 1080x1920
         bg_scale = max(360 / orig_w, 640 / orig_h)
         bg_w = int(orig_w * bg_scale)
         bg_h = int(orig_h * bg_scale)
         bg_img = src_img.resize((bg_w, bg_h), Image.BILINEAR)
-        # Crop 360x640 center
         left = (bg_w - 360) // 2
         top = (bg_h - 640) // 2
         bg_img = bg_img.crop((left, top, left + 360, top + 640))
-        # Blur
         bg_img = bg_img.filter(ImageFilter.GaussianBlur(radius=8))
-        # Scale up to 1080x1920
         bg_canvas = bg_img.resize((1080, 1920), Image.BILINEAR)
     else:
         bg_canvas = Image.new("RGB", (1080, 1920), color=(0, 0, 0))
@@ -239,7 +120,7 @@ def render_layout_image(
             bh = min(1920 - by, bh)
             mask_region = bg_canvas.crop((bx, by, bx + bw, by + bh))
             blurred_region = mask_region.filter(ImageFilter.GaussianBlur(radius=15))
-            if shape == "circle":
+            if shape in ("circle", "oval", "Hình tròn"):
                 mask_circle = Image.new("L", (bw, bh), 0)
                 draw_c = ImageDraw.Draw(mask_circle)
                 draw_c.ellipse((0, 0, bw, bh), fill=255)
@@ -263,30 +144,36 @@ def open_crop_blur_studio_popup(
 ) -> Dict[str, Any]:
     """
     Cửa sổ Studio Cắt xén, Tỷ lệ Co Giãn & Nền mờ 9:16 WYSIWYG 1:1.
+    Khớp 100% với giao diện CapCut Pro Video Crop Studio.
     """
     cfg = dict(current_config or {})
-    video_path = video_source or cfg.get("video_source") or cfg.get("source_url_or_path") or ""
+    video_path = video_source or cfg.get("video_source") or cfg.get("source_url_or_path") or cfg.get("youtube_url") or ""
 
-    # Trích xuất hoặc lấy ảnh mẫu chất lượng cao
+    # Trích xuất hoặc lấy ảnh mẫu
     frame_path = get_sample_or_fallback_image(video_path)
-
-    # Load kích thước ảnh gốc
     src_img = Image.open(frame_path).convert("RGB")
     orig_w, orig_h = src_img.size
 
     popup = tk.Toplevel(parent)
-    popup.title("🎨 Chế Độ 3: Crop, Zoom Scale & Blur Mask Studio (WYSIWYG 1:1)")
-    popup.geometry("1180x880")
-    popup.minsize(980, 720)
+    popup.title("CapCut Pro Video Crop Studio (Fixed Resolution Edition)")
+    popup.geometry("1220x900")
+    popup.minsize(1020, 740)
     popup.transient(parent)
     popup.grab_set()
 
-    # Bố cục 2 cột: Trái = Controls, Phải = Canvas Live 9:16
-    left_frame = ttk.LabelFrame(popup, text=" ⚙ Thông Số Bố Cục Hình Học & Nền Mờ ", padding=12)
-    left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+    # Apply Dark Styling
+    popup.configure(bg="#0B0F19")
 
-    right_frame = ttk.LabelFrame(popup, text=" 📱 Khung Hình Mẫu 9:16 (WYSIWYG 1:1 Chuẩn Đích) ", padding=10)
-    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+    # Main Container: Left (Controls Scrollable) & Right (Canvas 9:16 Preview)
+    main_container = tk.Frame(popup, bg="#0B0F19")
+    main_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+    left_frame = tk.Frame(main_container, bg="#0F172A", width=420, padx=12, pady=10, highlightthickness=1, highlightbackground="#334155")
+    left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+    left_frame.pack_propagate(False)
+
+    right_frame = tk.Frame(main_container, bg="#0F172A", padx=10, pady=10, highlightthickness=1, highlightbackground="#334155")
+    right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
     # Variables
     use_crop_var = tk.BooleanVar(value=bool(cfg.get("use_crop", False)))
@@ -297,117 +184,264 @@ def open_crop_blur_studio_popup(
     crop_w_var = tk.IntVar(value=int(cfg.get("crop_w", orig_w)))
     crop_h_var = tk.IntVar(value=int(cfg.get("crop_h", orig_h)))
 
-    zoom_in_var = tk.DoubleVar(value=float(cfg.get("zoom_in", cfg.get("zoom_percent", 168.0))))
-    scale_x_var = tk.DoubleVar(value=float(cfg.get("scale_x", cfg.get("scale_w_percent", 100.0))))
-    scale_y_var = tk.DoubleVar(value=float(cfg.get("scale_y", cfg.get("scale_h_percent", 125.0))))
+    z_val = float(cfg.get("zoom_in", cfg.get("zoom_percent", 178.0)))
+    if z_val <= 10.0:
+        z_val *= 100.0
+    sx_val = float(cfg.get("scale_x", cfg.get("scale_w_percent", 102.0)))
+    if sx_val <= 10.0:
+        sx_val *= 100.0
+    sy_val = float(cfg.get("scale_y", cfg.get("scale_h_percent", 120.0)))
+    if sy_val <= 10.0:
+        sy_val *= 100.0
+
+    zoom_in_var = tk.DoubleVar(value=z_val)
+    scale_x_var = tk.DoubleVar(value=sx_val)
+    scale_y_var = tk.DoubleVar(value=sy_val)
 
     blur_bg_var = tk.BooleanVar(value=bool(cfg.get("blur_bg", True)))
 
     blur_mask_cfg = cfg.get("blur_mask", {})
     use_blur_mask_var = tk.BooleanVar(value=bool(cfg.get("use_blur_mask", blur_mask_cfg.get("enabled", False))))
     blur_shape_var = tk.StringVar(value=cfg.get("blur_shape", blur_mask_cfg.get("shape", "Hình chữ nhật")))
-    blur_x_var = tk.IntVar(value=int(cfg.get("blur_mask_x", blur_mask_cfg.get("x", 100))))
-    blur_y_var = tk.IntVar(value=int(cfg.get("blur_mask_y", blur_mask_cfg.get("y", 1550))))
-    blur_w_var = tk.IntVar(value=int(cfg.get("blur_mask_w", blur_mask_cfg.get("w", 880))))
-    blur_h_var = tk.IntVar(value=int(cfg.get("blur_mask_h", blur_mask_cfg.get("h", 180))))
+    blur_x_var = tk.IntVar(value=int(cfg.get("blur_mask_x", blur_mask_cfg.get("x", 20))))
+    blur_y_var = tk.IntVar(value=int(cfg.get("blur_mask_y", blur_mask_cfg.get("y", 860))))
+    blur_w_var = tk.IntVar(value=int(cfg.get("blur_mask_w", blur_mask_cfg.get("w", 935))))
+    blur_h_var = tk.IntVar(value=int(cfg.get("blur_mask_h", blur_mask_cfg.get("h", 210))))
 
-    # --- WIDGETS LEFT PANEL ---
-    ttk.Checkbutton(left_frame, text="✅ Bật Cắt Xén (Crop)", variable=use_crop_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(0, 4))
+    yt_url_var = tk.StringVar(value=str(video_path if "youtu" in str(video_path) else ""))
 
-    # Tỷ lệ Crop
-    r_row = ttk.Frame(left_frame)
-    r_row.pack(fill=tk.X, pady=(2, 6))
-    ttk.Label(r_row, text="Tỷ lệ:").pack(side=tk.LEFT)
-    ratio_cb = ttk.Combobox(r_row, textvariable=ratio_var, values=["Tự do", "9:16", "16:9", "1:1", "4:5", "3:4"], state="readonly", width=12)
-    ratio_cb.pack(side=tk.LEFT, padx=4)
+    # --- LEFT CONTROLS (SCROLLABLE) ---
+    c_canvas = tk.Canvas(left_frame, bg="#0F172A", highlightthickness=0)
+    c_scroll = ttk.Scrollbar(left_frame, orient="vertical", command=c_canvas.yview)
+    c_content = tk.Frame(c_canvas, bg="#0F172A")
+    c_content.bind("<Configure>", lambda e: c_canvas.configure(scrollregion=c_canvas.bbox("all")))
+    c_canvas.create_window((0, 0), window=c_content, anchor="nw", width=380)
+    c_canvas.configure(yscrollcommand=c_scroll.set)
 
-    # Crop Coords
-    c_box = ttk.LabelFrame(left_frame, text=" Vùng Crop (Hệ tọa độ gốc) ", padding=6)
-    c_box.pack(fill=tk.X, pady=(0, 6))
-    
-    grid_c = ttk.Frame(c_box)
-    grid_c.pack(fill=tk.X)
-    ttk.Label(grid_c, text="X:").grid(row=0, column=0, sticky=tk.W)
-    sp_cx = ttk.Spinbox(grid_c, from_=0, to=orig_w, increment=10, textvariable=crop_x_var, width=6)
-    sp_cx.grid(row=0, column=1, padx=2, pady=2)
-    ttk.Label(grid_c, text="Y:").grid(row=0, column=2, sticky=tk.W, padx=(4, 0))
-    sp_cy = ttk.Spinbox(grid_c, from_=0, to=orig_h, increment=10, textvariable=crop_y_var, width=6)
-    sp_cy.grid(row=0, column=3, padx=2, pady=2)
+    c_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    c_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-    ttk.Label(grid_c, text="W:").grid(row=1, column=0, sticky=tk.W)
-    sp_cw = ttk.Spinbox(grid_c, from_=20, to=orig_w, increment=10, textvariable=crop_w_var, width=6)
-    sp_cw.grid(row=1, column=1, padx=2, pady=2)
-    ttk.Label(grid_c, text="H:").grid(row=1, column=2, sticky=tk.W, padx=(4, 0))
-    sp_ch = ttk.Spinbox(grid_c, from_=20, to=orig_h, increment=10, textvariable=crop_h_var, width=6)
-    sp_ch.grid(row=1, column=3, padx=2, pady=2)
+    # 1. CẤU HÌNH CẮT XÉN (CROP)
+    g_crop = ttk.LabelFrame(c_content, text=" ✂ CẤU HÌNH CẮT XÉN (CROP) ", padding=8)
+    g_crop.pack(fill=tk.X, pady=(0, 6))
 
-    # Zoom & Scale Controls
-    geo_box = ttk.LabelFrame(left_frame, text=" Phóng to & Co Giãn (9:16) ", padding=6)
-    geo_box.pack(fill=tk.X, pady=(0, 6))
+    ttk.Checkbutton(g_crop, text="Bật tính năng Cắt xén (Crop)", variable=use_crop_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(0, 4))
 
-    ttk.Label(geo_box, text="Phóng to (Zoom-in %):").pack(anchor=tk.W)
-    row_z = ttk.Frame(geo_box)
-    row_z.pack(fill=tk.X, pady=(1, 4))
-    scale_zoom = ttk.Scale(row_z, from_=100.0, to=250.0, variable=zoom_in_var, orient=tk.HORIZONTAL)
-    scale_zoom.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    spin_zoom = ttk.Spinbox(row_z, from_=100.0, to=250.0, increment=1.0, textvariable=zoom_in_var, width=6)
-    spin_zoom.pack(side=tk.LEFT, padx=(4, 0))
+    r_row = ttk.Frame(g_crop)
+    r_row.pack(fill=tk.X, pady=2)
+    ttk.Label(r_row, text="Tỷ lệ khung:").pack(side=tk.LEFT)
+    ratio_cb = ttk.Combobox(r_row, textvariable=ratio_var, values=["Tự do", "9:16", "16:9", "1:1", "4:5", "3:4"], state="readonly", width=14)
+    ratio_cb.pack(side=tk.LEFT, padx=6)
 
-    ttk.Label(geo_box, text="Co giãn ngang (Scale X %):").pack(anchor=tk.W)
-    row_sx = ttk.Frame(geo_box)
-    row_sx.pack(fill=tk.X, pady=(1, 4))
-    scale_sx = ttk.Scale(row_sx, from_=80.0, to=150.0, variable=scale_x_var, orient=tk.HORIZONTAL)
-    scale_sx.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    spin_sx = ttk.Spinbox(row_sx, from_=80.0, to=150.0, increment=1.0, textvariable=scale_x_var, width=6)
-    spin_sx.pack(side=tk.LEFT, padx=(4, 0))
+    # Gốc W x H
+    orig_row = ttk.Frame(g_crop)
+    orig_row.pack(fill=tk.X, pady=2)
+    ttk.Label(orig_row, text="Gốc (W × H):").pack(side=tk.LEFT)
+    ttk.Label(orig_row, text=f"{orig_w} × {orig_h}", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=8)
 
-    ttk.Label(geo_box, text="Co giãn dọc (Scale Y %):").pack(anchor=tk.W)
-    row_sy = ttk.Frame(geo_box)
-    row_sy.pack(fill=tk.X, pady=(1, 4))
-    scale_sy = ttk.Scale(row_sy, from_=80.0, to=150.0, variable=scale_y_var, orient=tk.HORIZONTAL)
-    scale_sy.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    spin_sy = ttk.Spinbox(row_sy, from_=80.0, to=150.0, increment=1.0, textvariable=scale_y_var, width=6)
-    spin_sy.pack(side=tk.LEFT, padx=(4, 0))
+    # Tọa độ X, Y
+    pos_row = ttk.Frame(g_crop)
+    pos_row.pack(fill=tk.X, pady=2)
+    ttk.Label(pos_row, text="Tọa độ (X, Y):").pack(side=tk.LEFT)
+    sp_cx = ttk.Spinbox(pos_row, from_=0, to=orig_w, increment=10, textvariable=crop_x_var, width=6)
+    sp_cx.pack(side=tk.LEFT, padx=2)
+    ttk.Label(pos_row, text=",").pack(side=tk.LEFT)
+    sp_cy = ttk.Spinbox(pos_row, from_=0, to=orig_h, increment=10, textvariable=crop_y_var, width=6)
+    sp_cy.pack(side=tk.LEFT, padx=2)
 
-    # Background Mode
-    ttk.Checkbutton(left_frame, text="🌌 Bật nền mờ 9:16 (Fast Boxblur)", variable=blur_bg_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(2, 6))
+    # Khung W x H
+    dim_row = ttk.Frame(g_crop)
+    dim_row.pack(fill=tk.X, pady=2)
+    ttk.Label(dim_row, text="Khung (W × H):").pack(side=tk.LEFT)
+    sp_cw = ttk.Spinbox(dim_row, from_=10, to=orig_w, increment=10, textvariable=crop_w_var, width=6)
+    sp_cw.pack(side=tk.LEFT, padx=2)
+    ttk.Label(dim_row, text="×").pack(side=tk.LEFT)
+    sp_ch = ttk.Spinbox(dim_row, from_=10, to=orig_h, increment=10, textvariable=crop_h_var, width=6)
+    sp_ch.pack(side=tk.LEFT, padx=2)
 
-    # Blur Mask Group
-    bm_group = ttk.LabelFrame(left_frame, text=" 🌫️ Làm mờ Vùng Chọn (Che Sub/Logo) ", padding=6)
-    bm_group.pack(fill=tk.X, pady=(0, 6))
+    # 2. TỈ LỆ ZOOM SCALE (KHỚP RENDER)
+    g_zoom = ttk.LabelFrame(c_content, text=" 🔍 TỈ LỆ ZOOM SCALE (KHỚP RENDER) ", padding=8)
+    g_zoom.pack(fill=tk.X, pady=(0, 6))
 
-    ttk.Checkbutton(bm_group, text="Bật che mờ Sub cũ / Watermark", variable=use_blur_mask_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(0, 2))
-    row_bm_shape = ttk.Frame(bm_group)
-    row_bm_shape.pack(fill=tk.X, pady=(1, 4))
-    ttk.Label(row_bm_shape, text="Hình dạng:").pack(side=tk.LEFT)
-    cb_shape = ttk.Combobox(row_bm_shape, textvariable=blur_shape_var, values=["Hình chữ nhật", "Hình tròn"], state="readonly", width=14)
-    cb_shape.pack(side=tk.LEFT, padx=4)
+    z_row = ttk.Frame(g_zoom)
+    z_row.pack(fill=tk.X, pady=2)
+    ttk.Label(z_row, text="Zoom:").pack(side=tk.LEFT)
+    ttk.Spinbox(z_row, from_=100, to=300, increment=1, textvariable=zoom_in_var, width=6).pack(side=tk.LEFT, padx=(2, 6))
+    ttk.Label(z_row, text="Scale X:").pack(side=tk.LEFT)
+    ttk.Spinbox(z_row, from_=50, to=200, increment=1, textvariable=scale_x_var, width=5).pack(side=tk.LEFT, padx=(2, 6))
+    ttk.Label(z_row, text="Scale Y:").pack(side=tk.LEFT)
+    ttk.Spinbox(z_row, from_=50, to=200, increment=1, textvariable=scale_y_var, width=5).pack(side=tk.LEFT, padx=(2, 0))
 
-    grid_bm = ttk.Frame(bm_group)
-    grid_bm.pack(fill=tk.X)
-    ttk.Label(grid_bm, text="X:").grid(row=0, column=0, sticky=tk.W)
-    sp_bx = ttk.Spinbox(grid_bm, from_=0, to=1080, increment=10, textvariable=blur_x_var, width=6)
-    sp_bx.grid(row=0, column=1, padx=2, pady=2)
-    ttk.Label(grid_bm, text="Y:").grid(row=0, column=2, sticky=tk.W, padx=(4, 0))
-    sp_by = ttk.Spinbox(grid_bm, from_=0, to=1920, increment=10, textvariable=blur_y_var, width=6)
-    sp_by.grid(row=0, column=3, padx=2, pady=2)
+    ttk.Checkbutton(g_zoom, text="Làm mờ nền 2 đầu (Blur Background)", variable=blur_bg_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(4, 0))
 
-    ttk.Label(grid_bm, text="W:").grid(row=1, column=0, sticky=tk.W)
-    sp_bw = ttk.Spinbox(grid_bm, from_=20, to=1080, increment=10, textvariable=blur_w_var, width=6)
-    sp_bw.grid(row=1, column=1, padx=2, pady=2)
-    ttk.Label(grid_bm, text="H:").grid(row=1, column=2, sticky=tk.W, padx=(4, 0))
-    sp_bh = ttk.Spinbox(grid_bm, from_=20, to=1920, increment=10, textvariable=blur_h_var, width=6)
-    sp_bh.grid(row=1, column=3, padx=2, pady=2)
+    # 3. LÀM MỜ VÙNG CHỌN (BLUR MASK)
+    g_mask = ttk.LabelFrame(c_content, text=" 🔲 LÀM MỜ VÙNG CHỌN (BLUR MASK) ", padding=8)
+    g_mask.pack(fill=tk.X, pady=(0, 6))
 
-    # Action Buttons (Bottom Left)
-    btn_box = ttk.Frame(left_frame)
-    btn_box.pack(fill=tk.X, pady=(10, 0))
+    ttk.Checkbutton(g_mask, text="Bật làm mờ 1 phần video (Che logo / sub)", variable=use_blur_mask_var, command=lambda: redraw_preview()).pack(anchor=tk.W, pady=(0, 2))
 
-    # --- RIGHT PANEL (CANVAS LIVE 9:16 WYSIWYG 1:1) ---
-    preview_canvas = tk.Canvas(right_frame, bg="#111827", highlightthickness=0)
+    m_shape_row = ttk.Frame(g_mask)
+    m_shape_row.pack(fill=tk.X, pady=2)
+    ttk.Label(m_shape_row, text="Hình dạng:").pack(side=tk.LEFT)
+    m_shape_cb = ttk.Combobox(m_shape_row, textvariable=blur_shape_var, values=["Hình chữ nhật", "Hình tròn / Oval"], state="readonly", width=14)
+    m_shape_cb.pack(side=tk.LEFT, padx=4)
+
+    m_pos_row = ttk.Frame(g_mask)
+    m_pos_row.pack(fill=tk.X, pady=2)
+    ttk.Label(m_pos_row, text="Tọa độ (X, Y):").pack(side=tk.LEFT)
+    sp_bx = ttk.Spinbox(m_pos_row, from_=0, to=1080, increment=10, textvariable=blur_x_var, width=6)
+    sp_bx.pack(side=tk.LEFT, padx=2)
+    ttk.Label(m_pos_row, text=",").pack(side=tk.LEFT)
+    sp_by = ttk.Spinbox(m_pos_row, from_=0, to=1920, increment=10, textvariable=blur_y_var, width=6)
+    sp_by.pack(side=tk.LEFT, padx=2)
+
+    m_dim_row = ttk.Frame(g_mask)
+    m_dim_row.pack(fill=tk.X, pady=2)
+    ttk.Label(m_dim_row, text="Khung (W × H):").pack(side=tk.LEFT)
+    sp_bw = ttk.Spinbox(m_dim_row, from_=10, to=1080, increment=10, textvariable=blur_w_var, width=6)
+    sp_bw.pack(side=tk.LEFT, padx=2)
+    ttk.Label(m_dim_row, text="×").pack(side=tk.LEFT)
+    sp_bh = ttk.Spinbox(m_dim_row, from_=10, to=1920, increment=10, textvariable=blur_h_var, width=6)
+    sp_bh.pack(side=tk.LEFT, padx=2)
+
+    # 4. THÔNG TIN QUY CHIẾU
+    g_info = ttk.LabelFrame(c_content, text=" ℹ THÔNG TIN QUY CHIẾU ", padding=8)
+    g_info.pack(fill=tk.X, pady=(0, 6))
+
+    lbl_info_base = ttk.Label(g_info, text="Base Canvas: 1920 × 1080", font=("Segoe UI", 8))
+    lbl_info_base.pack(anchor=tk.W)
+    lbl_info_crop = ttk.Label(g_info, text=f"Crop: X={crop_x_var.get()}, Y={crop_y_var.get()} | W={crop_w_var.get()} × H={crop_h_var.get()}", font=("Segoe UI", 8))
+    lbl_info_crop.pack(anchor=tk.W)
+
+    def update_info_text():
+        lbl_info_crop.config(text=f"Crop: X={crop_x_var.get()}, Y={crop_y_var.get()} | W={crop_w_var.get()} × H={crop_h_var.get()}")
+
+    # 5. LẤY ẢNH MẪU TỪ LINK YOUTUBE / VIDEO
+    g_yt = ttk.LabelFrame(c_content, text=" 🔗 LẤY ẢNH MẪU TỪ LINK YOUTUBE ", padding=8)
+    g_yt.pack(fill=tk.X, pady=(0, 6))
+
+    yt_entry = ttk.Entry(g_yt, textvariable=yt_url_var, width=32)
+    yt_entry.pack(fill=tk.X, pady=(0, 4))
+
+    yt_btn_row = ttk.Frame(g_yt)
+    yt_btn_row.pack(fill=tk.X)
+
+    def on_get_yt_thumbnail():
+        url = yt_url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Thiếu link", "Vui lòng dán link YouTube hoặc Video ID!")
+            return
+        res = fetch_youtube_sample(url, CACHE_FRAME_PATH)
+        if res and os.path.isfile(res):
+            nonlocal frame_path, src_img, orig_w, orig_h
+            frame_path = res
+            src_img = Image.open(frame_path).convert("RGB")
+            orig_w, orig_h = src_img.size
+            crop_w_var.set(orig_w)
+            crop_h_var.set(orig_h)
+            redraw_preview()
+            messagebox.showinfo("Thành công", "Đã tải ảnh bìa YouTube mẫu thành công!")
+        else:
+            messagebox.showerror("Lỗi", "Không thể lấy ảnh từ link YouTube này. Vui lòng kiểm tra lại link.")
+
+    def on_extract_yt_frame():
+        url = yt_url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Thiếu link", "Vui lòng dán link YouTube hoặc Video ID!")
+            return
+        res = fetch_youtube_sample(url, CACHE_FRAME_PATH)
+        if res and os.path.isfile(res):
+            nonlocal frame_path, src_img, orig_w, orig_h
+            frame_path = res
+            src_img = Image.open(frame_path).convert("RGB")
+            orig_w, orig_h = src_img.size
+            crop_w_var.set(orig_w)
+            crop_h_var.set(orig_h)
+            redraw_preview()
+            messagebox.showinfo("Thành công", "Đã trích xuất frame mẫu thành công!")
+        else:
+            messagebox.showerror("Lỗi", "Không thể bốc frame từ link YouTube. Vui lòng thử nút Lấy Thumbnail.")
+
+    ttk.Button(yt_btn_row, text="⚡ Lấy Thumbnail", command=on_get_yt_thumbnail, width=14).pack(side=tk.LEFT, padx=2)
+    ttk.Button(yt_btn_row, text="📸 Bốc Frame (2s)", command=on_extract_yt_frame, width=14).pack(side=tk.LEFT, padx=2)
+
+    # NÚT LƯU CẤU HÌNH (BIG GREEN BUTTON)
+    saved_result = {}
+
+    def on_save_crop_config():
+        nonlocal saved_result
+        saved_result = {
+            "use_crop": bool(use_crop_var.get()),
+            "crop_ratio": ratio_var.get(),
+            "crop_x": int(crop_x_var.get()),
+            "crop_y": int(crop_y_var.get()),
+            "crop_w": int(crop_w_var.get()),
+            "crop_h": int(crop_h_var.get()),
+            "zoom_in": float(zoom_in_var.get()),
+            "zoom_percent": float(zoom_in_var.get()),
+            "scale_x": float(scale_x_var.get()),
+            "scale_w_percent": float(scale_x_var.get()),
+            "scale_y": float(scale_y_var.get()),
+            "scale_h_percent": float(scale_y_var.get()),
+            "blur_bg": bool(blur_bg_var.get()),
+            "use_blur_mask": bool(use_blur_mask_var.get()),
+            "blur_shape": blur_shape_var.get(),
+            "blur_mask_x": int(blur_x_var.get()),
+            "blur_mask_y": int(blur_y_var.get()),
+            "blur_mask_w": int(blur_w_var.get()),
+            "blur_mask_h": int(blur_h_var.get()),
+            "blur_mask": {
+                "enabled": bool(use_blur_mask_var.get()),
+                "shape": "circle" if blur_shape_var.get() in ("Hình tròn / Oval", "Hình tròn", "circle") else "rectangle",
+                "x": int(blur_x_var.get()),
+                "y": int(blur_y_var.get()),
+                "w": int(blur_w_var.get()),
+                "h": int(blur_h_var.get())
+            }
+        }
+        redraw_preview()
+        if on_save_callback:
+            on_save_callback(saved_result)
+        popup.destroy()
+
+    btn_save_big = tk.Button(
+        c_content, text="💾 Lưu Cấu Hình Cắt Xén Làm Mờ",
+        bg="#10B981", fg="#FFFFFF", font=("Segoe UI", 10, "bold"),
+        activebackground="#059669", activeforeground="#FFFFFF",
+        relief=tk.FLAT, pady=8, command=on_save_crop_config
+    )
+    btn_save_big.pack(fill=tk.X, pady=(8, 4))
+
+    # --- RIGHT PANEL: LIVE 9:16 PREVIEW & TAB SWITCH ---
+    header_right = tk.Frame(right_frame, bg="#0F172A")
+    header_right.pack(fill=tk.X, pady=(0, 6))
+
+    ttk.Label(header_right, text="✂ MÔ PHỎNG ĐẦU RA 9:16 (CHUẨN XÁC 100% KHI RENDER)", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+
+    mode_switch_frame = tk.Frame(header_right, bg="#0F172A")
+    mode_switch_frame.pack(side=tk.RIGHT)
+
+    preview_mode = tk.StringVar(value="edit_crop")
+
+    def set_mode(m):
+        preview_mode.set(m)
+        if m == "edit_crop":
+            btn_mode_edit.configure(bg="#3B82F6", fg="#FFFFFF")
+            btn_mode_view.configure(bg="#1E293B", fg="#94A3B8")
+        else:
+            btn_mode_edit.configure(bg="#1E293B", fg="#94A3B8")
+            btn_mode_view.configure(bg="#EC4899", fg="#FFFFFF")
+        redraw_preview()
+
+    btn_mode_edit = tk.Button(mode_switch_frame, text="✏ Chỉnh Sửa Crop / Blur", bg="#3B82F6", fg="#FFFFFF", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=8, pady=2, command=lambda: set_mode("edit_crop"))
+    btn_mode_edit.pack(side=tk.LEFT, padx=2)
+
+    btn_mode_view = tk.Button(mode_switch_frame, text="👁 Xem Trước Đầu Ra (9:16)", bg="#1E293B", fg="#94A3B8", relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=8, pady=2, command=lambda: set_mode("view_output"))
+    btn_mode_view.pack(side=tk.LEFT, padx=2)
+
+    preview_canvas = tk.Canvas(right_frame, bg="#020617", highlightthickness=1, highlightbackground="#1E293B")
     preview_canvas.pack(fill=tk.BOTH, expand=True)
 
-    current_preview_img = None
     photo_cache = None
 
     def on_ratio_change(event=None):
@@ -439,16 +473,15 @@ def open_crop_blur_studio_popup(
         redraw_preview()
 
     ratio_cb.bind("<<ComboboxSelected>>", on_ratio_change)
-    cb_shape.bind("<<ComboboxSelected>>", lambda e: redraw_preview())
+    m_shape_cb.bind("<<ComboboxSelected>>", lambda e: redraw_preview())
 
     def redraw_preview():
-        nonlocal current_preview_img, photo_cache
+        nonlocal photo_cache
         c_w = preview_canvas.winfo_width()
         c_h = preview_canvas.winfo_height()
         if c_w < 50 or c_h < 50:
-            c_w, c_h = 420, 740
+            c_w, c_h = 480, 780
 
-        # Thuật toán co giãn hiển thị chuẩn WYSIWYG 1:1
         scale = min((c_w - 20) / 1080.0, (c_h - 20) / 1920.0)
         offset_x = (c_w - 1080.0 * scale) / 2.0
         offset_y = (c_h - 1920.0 * scale) / 2.0
@@ -465,7 +498,7 @@ def open_crop_blur_studio_popup(
 
         bm_dict = {
             "enabled": use_blur_mask_var.get(),
-            "shape": "circle" if blur_shape_var.get() == "Hình tròn" else "rectangle",
+            "shape": "circle" if blur_shape_var.get() in ("Hình tròn / Oval", "Hình tròn") else "rectangle",
             "x": blur_x_var.get(),
             "y": blur_y_var.get(),
             "w": blur_w_var.get(),
@@ -482,7 +515,6 @@ def open_crop_blur_studio_popup(
             output_path=LAYOUT_BASE_PATH
         )
 
-        # Scale vừa khít widget Canvas
         disp_w = int(1080 * scale)
         disp_h = int(1920 * scale)
         preview_disp = rendered_1080.resize((disp_w, disp_h), Image.BILINEAR)
@@ -491,86 +523,49 @@ def open_crop_blur_studio_popup(
         preview_canvas.delete("all")
         preview_canvas.create_image(int(offset_x), int(offset_y), anchor="nw", image=photo_cache)
 
-        # Vẽ viền Canvas 9:16
+        # Viền Canvas 9:16
         preview_canvas.create_rectangle(
             offset_x, offset_y, offset_x + disp_w, offset_y + disp_h,
-            outline="#3B82F6", width=2
+            outline="#38BDF8", width=2
         )
 
-        # Vẽ đường chỉ dẫn an toàn (Safe Zone)
-        preview_canvas.create_line(offset_x, offset_y + 260 * scale, offset_x + disp_w, offset_y + 260 * scale, fill="#EF4444", dash=(4, 4))
-        preview_canvas.create_text(offset_x + 10, offset_y + 250 * scale, text="Title Safe Zone", fill="#EF4444", anchor="w", font=("Segoe UI", 8))
+        # Badge góc
+        preview_canvas.create_rectangle(
+            offset_x + 8, offset_y + 8, offset_x + 130, offset_y + 32,
+            fill="#020617", outline="#38BDF8", width=1
+        )
+        tag_text = "▲ CHỈNH SỬA (9:16)" if preview_mode.get() == "edit_crop" else "9:16 PRO PREVIEW"
+        preview_canvas.create_text(
+            offset_x + 69, offset_y + 20,
+            text=tag_text, fill="#38BDF8", font=("Segoe UI", 8, "bold")
+        )
 
-        preview_canvas.create_line(offset_x, offset_y + 1600 * scale, offset_x + disp_w, offset_y + 1600 * scale, fill="#10B981", dash=(4, 4))
-        preview_canvas.create_text(offset_x + 10, offset_y + 1610 * scale, text="Subtitle Safe Zone", fill="#10B981", anchor="w", font=("Segoe UI", 8))
+        # Nếu ở chế độ edit_crop và có crop hoặc blur mask, vẽ đường chấm bao quanh
+        if preview_mode.get() == "edit_crop":
+            # Vẽ đường bao quanh Foreground video
+            fg_w, fg_h, pos_x, pos_y = calculate_fg_dimensions(cw, ch, z_pct, s_x, s_y, target_w=1080)
+            fx1 = offset_x + pos_x * scale
+            fy1 = offset_y + pos_y * scale
+            fx2 = fx1 + fg_w * scale
+            fy2 = fy1 + fg_h * scale
+            preview_canvas.create_rectangle(fx1, fy1, fx2, fy2, outline="#60A5FA", width=1, dash=(4, 4))
+
+            # Vẽ Blur Mask nếu có
+            if use_blur_mask_var.get():
+                mx1 = offset_x + blur_x_var.get() * scale
+                my1 = offset_y + blur_y_var.get() * scale
+                mx2 = mx1 + blur_w_var.get() * scale
+                my2 = my1 + blur_h_var.get() * scale
+                preview_canvas.create_rectangle(mx1, my1, mx2, my2, outline="#F43F5E", width=2, dash=(2, 2))
+                preview_canvas.create_text(mx1 + 4, my1 - 10, text="Blur Mask", fill="#F43F5E", anchor="w", font=("Segoe UI", 7, "bold"))
+
+        update_info_text()
 
     for var in [zoom_in_var, scale_x_var, scale_y_var, crop_x_var, crop_y_var, crop_w_var, crop_h_var, blur_x_var, blur_y_var, blur_w_var, blur_h_var]:
         var.trace_add("write", lambda *a: redraw_preview())
 
     preview_canvas.bind("<Configure>", lambda e: redraw_preview())
 
-    saved_result = {}
-
-    def on_save():
-        nonlocal saved_result
-        saved_result = {
-            "use_crop": bool(use_crop_var.get()),
-            "crop_ratio": ratio_var.get(),
-            "crop_x": int(crop_x_var.get()),
-            "crop_y": int(crop_y_var.get()),
-            "crop_w": int(crop_w_var.get()),
-            "crop_h": int(crop_h_var.get()),
-            "zoom_in": float(zoom_in_var.get()),
-            "zoom_percent": float(zoom_in_var.get()),
-            "scale_x": float(scale_x_var.get()),
-            "scale_w_percent": float(scale_x_var.get()),
-            "scale_y": float(scale_y_var.get()),
-            "scale_h_percent": float(scale_y_var.get()),
-            "blur_bg": bool(blur_bg_var.get()),
-            "use_blur_mask": bool(use_blur_mask_var.get()),
-            "blur_shape": blur_shape_var.get(),
-            "blur_mask_x": int(blur_x_var.get()),
-            "blur_mask_y": int(blur_y_var.get()),
-            "blur_mask_w": int(blur_w_var.get()),
-            "blur_mask_h": int(blur_h_var.get()),
-            "blur_mask": {
-                "enabled": bool(use_blur_mask_var.get()),
-                "shape": "circle" if blur_shape_var.get() == "Hình tròn" else "rectangle",
-                "x": int(blur_x_var.get()),
-                "y": int(blur_y_var.get()),
-                "w": int(blur_w_var.get()),
-                "h": int(blur_h_var.get())
-            }
-        }
-        # Lưu phôi layout_base.jpg
-        redraw_preview()
-        if on_save_callback:
-            on_save_callback(saved_result)
-        popup.destroy()
-
-    def on_reset():
-        use_crop_var.set(False)
-        ratio_var.set("Tự do")
-        crop_x_var.set(0)
-        crop_y_var.set(0)
-        crop_w_var.set(orig_w)
-        crop_h_var.set(orig_h)
-        zoom_in_var.set(168.0)
-        scale_x_var.set(100.0)
-        scale_y_var.set(125.0)
-        blur_bg_var.set(True)
-        use_blur_mask_var.set(False)
-        redraw_preview()
-
-    btn_save = ttk.Button(btn_box, text="💾 Lưu Bố Cục (1:1)", command=on_save, style="Primary.TButton")
-    btn_save.pack(side=tk.LEFT, padx=3, fill=tk.X, expand=True)
-
-    btn_reset = ttk.Button(btn_box, text="🔄 Mặc Định", command=on_reset, style="Tool.TButton")
-    btn_reset.pack(side=tk.LEFT, padx=3)
-
-    btn_cancel = ttk.Button(btn_box, text="❌ Hủy", command=popup.destroy, style="Tool.TButton")
-    btn_cancel.pack(side=tk.LEFT, padx=3)
-
-    popup.after(100, redraw_preview)
+    popup.after(120, redraw_preview)
     popup.wait_window()
     return saved_result
