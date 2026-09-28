@@ -850,6 +850,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 t_line2 = script_info.get("title_line2", options.get("title_line2", ""))
                 logger.info("🏷️ [TITLE AI] Áp dụng tiêu đề từ kịch bản AI: '%s' / '%s'", t_line1, t_line2)
 
+            # Tự động chia 2 dòng nếu có 1 dòng dài để thể hiện cả 2 màu chữ (Màu 1 & Màu 2)
+            if t_line1 and not t_line2 and len(t_line1.split()) >= 3:
+                words = t_line1.split()
+                mid = len(words) // 2
+                t_line1 = " ".join(words[:mid])
+                t_line2 = " ".join(words[mid:])
+                logger.info("🏷️ [TITLE BANNER 2 MÀU] Đã chia 2 dòng để hiển thị cả 2 màu chữ: '%s' (Màu 1) / '%s' (Màu 2)", t_line1, t_line2)
+
             b_path, banner_w, banner_h = EditorProcessor._create_dynamic_title_banner_custom(
                 work_dir, t_line1, t_line2, options
             )
@@ -879,13 +887,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         fg_h = int(round(fg_w / core_ar * sy))
         fg_h += fg_h % 2
 
-        # Tọa độ Subtitle đè CHÍNH XÁC lên dải sub cũ đã bôi mờ
-        top_y_canvas = (cls.OUTPUT_H - fg_h) / 2.0
-        rel_center_y = (rel_sub_ymin + rel_sub_ymax) / 2.0
-        sub_center_canvas_y = top_y_canvas + (rel_center_y * fg_h)
-        calculated_margin_v = int(cls.OUTPUT_H - sub_center_canvas_y)
-        sub_margin_v = calculated_margin_v if options.get("overlay_sub_on_blur_zone", True) else int(options.get("sub_margin_v", 100))
-        sub_margin_v = max(80, min(1200, sub_margin_v))
+        # Lề Đáy (MarginV) cho Subtitle:
+        # Ưu tiên tuyệt đối thông số MarginV bạn chỉnh trong Title & Sub Studio (mặc định 100px)
+        # để video xuất ra luôn hiển thị chuẩn xác 1:1 theo bản xem trước (WYSIWYG) ở đáy video 9:16
+        sub_margin_v = int(options.get("sub_margin_v", 100) or 100)
+        sub_margin_v = max(30, min(800, sub_margin_v))
+        logger.info("💬 [SUBTITLE POSITION] Lề đáy phụ đề: MarginV=%d px (khớp 1:1 xem trước Title & Sub Studio)", sub_margin_v)
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số + Look Stack
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
@@ -1069,7 +1076,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         sub_filter_chain = f"{prev_sub_layer}null[vout]"
 
         if enable_sub and narration_srt and os.path.isfile(narration_srt):
-            sub_font = options.get("sub_font") or options.get("font_name", "Arial")
+            from font_manager import FontManager
+            style_type = str(options.get("sub_style_type", "tiktok_slim"))
+            try:
+                with open(narration_srt, "r", encoding="utf-8", errors="ignore") as sf:
+                    sample_srt_text = sf.read(2048)
+            except Exception:
+                sample_srt_text = ""
+
+            style_specs = FontManager.get_subtitle_style_specs(
+                style_type=style_type,
+                sample_text=sample_srt_text,
+                custom_overrides=options
+            )
+
+            sub_font = style_specs.get("font_name", "Arial")
             sub_size = int(options.get("sub_size", 38) or 38)
             sub_size = max(18, min(120, sub_size))
 
@@ -1083,9 +1104,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             sub_outline = int(options.get("sub_outline", 4) or 4)
             sub_shadow = int(options.get("sub_shadow", 1) or 1)
 
+            # Nếu phong cách yêu cầu in hoa (ví dụ Classic), in hoa nội dung SRT
+            srt_to_use = narration_srt
+            if style_specs.get("uppercase", False):
+                try:
+                    upper_srt = os.path.join(work_dir, "narration_uppercase.srt")
+                    with open(narration_srt, "r", encoding="utf-8", errors="ignore") as inf:
+                        lines = inf.readlines()
+                    with open(upper_srt, "w", encoding="utf-8") as outf:
+                        for line in lines:
+                            s = line.strip()
+                            if s.isdigit() or "-->" in s or not s:
+                                outf.write(line)
+                            else:
+                                outf.write(line.upper())
+                    if os.path.isfile(upper_srt):
+                        srt_to_use = upper_srt
+                except Exception:
+                    pass
+
             ass_file = os.path.join(work_dir, "tiktok_subtitles.ass")
             converted = cls.convert_srt_to_ass(
-                srt_file=narration_srt,
+                srt_file=srt_to_use,
                 ass_file=ass_file,
                 font_name=sub_font,
                 font_size=sub_size,

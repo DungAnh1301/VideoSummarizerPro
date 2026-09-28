@@ -3254,7 +3254,18 @@ class EditorProcessor:
         stroke_col = outline_c if stroke_w else None
 
         raw = cls._join_banner_title_raw(line1, line2)
-        line1, line2, font, font_size = cls._layout_banner_title(raw, stroke_w=stroke_w)
+        orig_l1 = " ".join(str(line1 or "").split())
+        orig_l2 = " ".join(str(line2 or "").split())
+        if orig_l1 and orig_l2:
+            sz2, f2 = cls._largest_banner_font(
+                [orig_l1, orig_l2], cls.BANNER_FONT_MAX_2LINE, cls.BANNER_FONT_MIN, cls.BANNER_TEXT_MAX_W, stroke_w
+            )
+            if sz2 is not None:
+                line1, line2, font, font_size = orig_l1, orig_l2, f2, sz2
+            else:
+                line1, line2, font, font_size = cls._layout_banner_title(raw, stroke_w=stroke_w)
+        else:
+            line1, line2, font, font_size = cls._layout_banner_title(raw, stroke_w=stroke_w)
 
         pad_x = cls.BANNER_PAD_X
         pad_y = cls.BANNER_PAD_Y

@@ -29,7 +29,7 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     # 4. Re-mix chống bản quyền
     "shuffle_broll": True,                # Đảo trật tự cảnh b-roll hợp lý
     "mirror_broll": True,                 # Lật gương phản chiếu (hflip)
-    "overlay_sub_on_blur_zone": True,     # Đè Sub mới chính xác lên đúng tọa độ Sub cũ đã blur
+    "overlay_sub_on_blur_zone": False,    # Ưu tiên Sub chuẩn tại đáy (MarginV Studio), tắt đè dải mờ giữa hình
     "blur_bg_916": True,                  # Tạo nền mờ 9:16 điện ảnh phía sau lõi video sạch
     
     # 5. AI Kịch bản & Giọng đọc
