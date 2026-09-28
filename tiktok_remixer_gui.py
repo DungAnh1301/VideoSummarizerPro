@@ -7,6 +7,7 @@ Tích hợp đầy đủ:
 """
 import os
 import sys
+import re
 import copy
 import json
 import time
@@ -672,7 +673,7 @@ class TikTokRemixerTab(ttk.Frame):
             )
 
     def _open_output_folder(self):
-        out_dir = os.path.join(os.getcwd(), "output_tiktok_remix")
+        out_dir = os.path.join(os.getcwd(), "output")
         os.makedirs(out_dir, exist_ok=True)
         try:
             os.startfile(out_dir)
@@ -813,7 +814,7 @@ class TikTokRemixerTab(ttk.Frame):
             self.log(f"🚀 [BẮT ĐẦU JOB] Nguồn: {src}")
 
             work_dir = os.path.join("temp", f"remix_{item['id']}")
-            out_dir = os.path.join(os.getcwd(), "output_tiktok_remix")
+            out_dir = os.path.join(os.getcwd(), "output")
             os.makedirs(work_dir, exist_ok=True)
             os.makedirs(out_dir, exist_ok=True)
 
@@ -852,9 +853,35 @@ class TikTokRemixerTab(ttk.Frame):
                     output_dir=work_dir
                 )
 
-                # 4. Render Thành Phẩm
-                final_out_name = f"TikTok_Remix_{os.path.splitext(os.path.basename(local_vid))[0]}.mp4"
-                final_out_path = os.path.join(out_dir, final_out_name)
+                # 4. Xác Định Thư Mục Title Video Trong Output
+                def _sanitize_folder_name(name: str, max_len: int = 120) -> str:
+                    s = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', str(name or "")).strip()
+                    s = re.sub(r'\s+', ' ', s)
+                    return s[:max_len].strip(". _-")
+
+                t1 = str(narration_info.get("title_line1") or "").strip()
+                t2 = str(narration_info.get("title_line2") or "").strip()
+                title_full = f"{t1} {t2}".strip() if (t1 or t2) else ""
+                if not title_full:
+                    t_opt1 = str(opts.get("title_line1") or "").strip()
+                    t_opt2 = str(opts.get("title_line2") or "").strip()
+                    title_full = f"{t_opt1} {t_opt2}".strip() if (t_opt1 or t_opt2) else ""
+                if not title_full:
+                    title_full = os.path.splitext(os.path.basename(local_vid))[0]
+
+                folder_title = _sanitize_folder_name(title_full) or f"Remix_{item['id']}"
+                video_out_dir = os.path.join(out_dir, folder_title)
+                os.makedirs(video_out_dir, exist_ok=True)
+
+                final_out_name = f"{folder_title}.mp4"
+                final_out_path = os.path.join(video_out_dir, final_out_name)
+                counter = 1
+                while os.path.exists(final_out_path):
+                    final_out_name = f"{folder_title}_{counter}.mp4"
+                    final_out_path = os.path.join(video_out_dir, final_out_name)
+                    counter += 1
+
+                self.log(f"📁 [THƯ MỤC XUẤT] Thư mục Title: {video_out_dir}")
 
                 ok = TikTokRemixerEngine.render_tiktok_remix(
                     source_video=local_vid,
@@ -870,7 +897,9 @@ class TikTokRemixerTab(ttk.Frame):
                 if ok and os.path.isfile(final_out_path):
                     item["status"] = "completed"
                     item["output"] = final_out_path
-                    self.log(f"🎉 [JOB XONG] Thành phẩm: {final_out_path}")
+                    item["output_dir"] = video_out_dir
+                    self.log(f"🎉 [JOB XONG] Đã lưu vào thư mục: {video_out_dir}")
+                    self.log(f"   ➔ Thành phẩm: {final_out_path}")
                 else:
                     item["status"] = "failed"
                     self.log(f"❌ [JOB THẤT BẠI] Lỗi render.")

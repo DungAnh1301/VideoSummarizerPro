@@ -1165,9 +1165,9 @@ class CapCutColorStudioDialog(QDialog):
         vp = self.txt_video_path.text().strip() or self.sample_video_path
         if not vp or not os.path.exists(vp):
             if getattr(self, "is_tiktok_mode", False):
-                for t_dir in [APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+                for t_dir in [APP_DIR / "output", APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
                     if t_dir.exists():
-                        mp4s = sorted(t_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                        mp4s = sorted([f for f in t_dir.rglob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000], key=lambda f: f.stat().st_mtime, reverse=True)
                         if mp4s:
                             self.sample_video_path = str(mp4s[0])
                             self.txt_video_path.setText(str(mp4s[0]))

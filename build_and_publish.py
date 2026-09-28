@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.59"
+VERSION = "1.3.60"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.59: Bảo toàn 100% âm thanh gốc của Hook mở đầu (00:00), giọng đọc AI chỉ bắt đầu phát sau khi hết Hook, loại bỏ lặp cảnh Hook trong thân video."
+NOTES = "Bản phát hành v1.3.60: Chế độ 3 tự động lưu thành phẩm vào thư mục output chung, phân loại theo thư mục riêng mang tên Tiêu đề video (output/<title_video>/<title_video>.mp4)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

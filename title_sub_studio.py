@@ -1217,10 +1217,10 @@ class TitleSubStudioDialog(QDialog):
 
         # 3. Thử tìm video theo đúng chế độ hiện tại:
         if getattr(self, "is_tiktok_mode", False):
-            # Chế độ TikTok: tìm video trong output_tiktok_remix hoặc temp/tiktok_cache
-            for t_dir in [APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+            # Chế độ TikTok: tìm video trong output (kèm thư mục con), output_tiktok_remix hoặc temp/tiktok_cache
+            for t_dir in [APP_DIR / "output", APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
                 if t_dir.exists():
-                    mp4s = sorted(t_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                    mp4s = sorted([f for f in t_dir.rglob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000], key=lambda f: f.stat().st_mtime, reverse=True)
                     if mp4s and self._extract_frame_from_video(str(mp4s[0])):
                         return
         else:
