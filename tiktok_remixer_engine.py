@@ -668,13 +668,13 @@ OUTPUT FORMAT (JSON ONLY):
                     f"[core_clean]split=2[c_fg][c_bg];"
                     f"[c_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
                     f"[c_fg]scale={fg_w}:{fg_h}[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
                 )
             else:
                 bg_hook_chain = (
-                    f"color=c=black:s=1080x1920[bg];"
+                    f"color=c=black:s=1080x1920:d={hook_dur:.3f}:r=25[bg];"
                     f"[core_clean]scale={fg_w}:{fg_h}[fg];"
-                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
                 )
 
             hook_vf = (
@@ -684,7 +684,7 @@ OUTPUT FORMAT (JSON ONLY):
                 f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
                 f"{bg_hook_chain}"
                 f"[v_base]{color_filter_str}[v_color];"
-                f"[v_color][1:v]overlay={banner_x}:{banner_y}[vout]"
+                f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[vout]"
             )
 
             if has_src_audio:
@@ -692,7 +692,7 @@ OUTPUT FORMAT (JSON ONLY):
                     "ffmpeg", "-y",
                     "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
                     "-i", source_video,
-                    "-i", banner_path,
+                    "-loop", "1", "-i", banner_path,
                     "-filter_complex", hook_vf,
                     "-map", "[vout]",
                     "-map", "0:a:0",
@@ -701,6 +701,8 @@ OUTPUT FORMAT (JSON ONLY):
                     "-r", "25", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
                     "-avoid_negative_ts", "make_zero",
+                    "-t", f"{hook_dur:.3f}",
+                    "-shortest",
                     hook_rendered_mp4
                 ]
             else:
@@ -708,7 +710,7 @@ OUTPUT FORMAT (JSON ONLY):
                     "ffmpeg", "-y",
                     "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
                     "-i", source_video,
-                    "-i", banner_path,
+                    "-loop", "1", "-i", banner_path,
                     "-f", "lavfi", "-t", f"{hook_dur:.3f}", "-i", "anullsrc=r=44100:cl=stereo",
                     "-filter_complex", hook_vf,
                     "-map", "[vout]",
@@ -716,6 +718,9 @@ OUTPUT FORMAT (JSON ONLY):
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
                     "-r", "25", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                    "-avoid_negative_ts", "make_zero",
+                    "-t", f"{hook_dur:.3f}",
+                    "-shortest",
                     hook_rendered_mp4
                 ]
             res_hook = subprocess.run(cmd_hook_render, capture_output=True, text=True, creationflags=flags)
@@ -805,23 +810,23 @@ OUTPUT FORMAT (JSON ONLY):
         if blur_bg:
             bg_stream = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
         else:
-            bg_stream = f"color=c=black:s=1080x1920[bg];"
+            bg_stream = f"color=c=black:s=1080x1920:r=25[bg];"
 
         speed_filter = f",setpts={1.0 / video_speed:.4f}*PTS" if abs(video_speed - 1.0) >= 0.01 else ""
 
         master_vf = (
             f"{bg_stream}"
             f"[0:v]scale={fg_w}:{fg_h}[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
             f"[v_base]{color_filter_str}{speed_filter}[v_color];"
-            f"[v_color][1:v]overlay={banner_x}:{banner_y}[v_banner];"
+            f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[v_banner];"
             f"{sub_filter_chain}"
         )
 
         cmd_body_final = [
             "ffmpeg", "-y",
             "-i", body_cut_mp4,
-            "-i", banner_path,
+            "-loop", "1", "-i", banner_path,
             "-i", narration_audio if (narration_audio and os.path.isfile(narration_audio)) else body_cut_mp4,
             "-filter_complex", master_vf,
             "-map", "[vout]",
