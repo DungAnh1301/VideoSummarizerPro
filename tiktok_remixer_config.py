@@ -69,7 +69,7 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     "scale_y": 100.0,
     "scale_w": 100.0,
     "scale_h": 100.0,
-    "blur_bg": False,
+    "blur_bg": True,
     
     # 7. Title & Subtitle Studio
     "enable_title": True,

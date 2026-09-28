@@ -612,31 +612,93 @@ OUTPUT FORMAT (JSON ONLY):
         banner_x = int((cls.OUTPUT_W - banner_w) / 2)
         banner_y = int(options.get("title_y_pos", 260))
 
-        # 8. Tính Tọa Độ Subtitle Mới Đè Lên Vùng Sub Cũ Đã Blur
-        # Gán MarginV tự động từ sub_norm
-        sub_center_rel = (float(sub_norm.get("ymin", 0.74)) + float(sub_norm.get("ymax", 0.86))) / 2.0
-        calculated_margin_v = int(cls.OUTPUT_H * (1.0 - sub_center_rel))
+        # 8. Tính Kích Thước Tiền Cảnh (Foreground) & Tọa Độ Subtitle Mới
+        # Đảm bảo giữ nguyên tỷ lệ khung hình gốc của lõi video sạch (không bị kéo giãn dọc thành sợi bún)
+        core_ar = crop_w / max(1, crop_h)
+        zoom_val = float(options.get("zoom_percent", 105.0) or 105.0)
+        zoom_in = bool(options.get("zoom_in", True))
+        zoom_factor = (zoom_val / 100.0) if zoom_in else 1.0
+        sx = (float(options.get("scale_w") or options.get("scale_x", 100.0) or 100.0)) / 100.0
+        sy = (float(options.get("scale_h") or options.get("scale_y", 100.0) or 100.0)) / 100.0
+        blur_bg = bool(options.get("blur_bg", True))
+        video_speed = float(options.get("speed") or options.get("source_speed", 1.05) or 1.05)
+        audio_boost = float(options.get("audio_boost", 6.0) or 6.0)
+
+        # Kích thước tiền cảnh (lõi video) trên khung 1080x1920
+        fg_w = int(round(cls.OUTPUT_W * zoom_factor * sx))
+        fg_w += fg_w % 2
+        fg_h = int(round(fg_w / core_ar * sy))
+        fg_h += fg_h % 2
+
+        # Tọa độ Subtitle đè chính xác lên dải sub cũ đã bôi mờ
+        sub_center_orig = (float(sub_norm.get("ymin", 0.74)) + float(sub_norm.get("ymax", 0.86))) / 2.0
+        core_rel_y = (sub_center_orig - ymin) / max(0.01, (ymax - ymin))
+        top_y_canvas = (cls.OUTPUT_H - fg_h) / 2.0
+        sub_y_canvas = top_y_canvas + (core_rel_y * fg_h)
+        calculated_margin_v = int(cls.OUTPUT_H - sub_y_canvas)
         sub_margin_v = calculated_margin_v if options.get("overlay_sub_on_blur_zone", True) else int(options.get("sub_margin_v", 100))
+        sub_margin_v = max(30, min(800, sub_margin_v))
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
 
-        # 10. Xây Dựng Lệnh FFmpeg Filter Complex Hoàn Chỉnh
-        # Nhánh 1: Cắt Hook (Giữ âm thanh gốc)
-        hook_cut_mp4 = os.path.join(work_dir, "cut_hook.mp4")
+        # 10. Xử Lý Phân Đoạn Hook Đầu Video (Vị trí 00:00.000, giữ nguyên âm thanh gốc)
+        hook_rendered_mp4 = os.path.join(work_dir, "hook_rendered.mp4")
+        has_hook_segment = False
         flags = 0x08000000 if os.name == "nt" else 0
 
-        # Cắt Hook trực tiếp
-        cmd_hook = [
-            "ffmpeg", "-y", "-ss", f"{hook_start:.3f}", "-to", f"{hook_end:.3f}",
-            "-i", source_video,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
-            hook_cut_mp4
-        ]
-        subprocess.run(cmd_hook, capture_output=True, creationflags=flags)
+        audio_opts = []
+        if audio_boost != 0:
+            audio_opts.extend(["-filter:a", f"volume={audio_boost:.1f}dB"])
 
-        # Cắt và ghép các đoạn B-Roll thân video
+        if options.get("keep_original_hook", True) and hook_dur >= 0.8:
+            logger.info("🎬 [HOOK RENDER] Dựng đoạn Hook mở đầu (%.2fs - %.2fs) giữ nguyên âm thanh gốc...", hook_start, hook_end)
+            if blur_bg:
+                bg_hook_chain = (
+                    f"[core_clean]split=2[c_fg][c_bg];"
+                    f"[c_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
+                    f"[c_fg]scale={fg_w}:{fg_h}[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+                )
+            else:
+                bg_hook_chain = (
+                    f"color=c=black:s=1080x1920[bg];"
+                    f"[core_clean]scale={fg_w}:{fg_h}[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
+                )
+
+            hook_vf = (
+                f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+                f"split=2[c_orig][c_mask];"
+                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=12:3[c_blur];"
+                f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
+                f"{bg_hook_chain}"
+                f"[v_base]{color_filter_str}[v_color];"
+                f"[v_color][1:v]overlay={banner_x}:{banner_y}[vout]"
+            )
+
+            cmd_hook_render = [
+                "ffmpeg", "-y",
+                "-ss", f"{hook_start:.3f}", "-to", f"{hook_end:.3f}",
+                "-i", source_video,
+                "-i", banner_path,
+                "-filter_complex", hook_vf,
+                "-map", "[vout]",
+                "-map", "0:a?",
+                *audio_opts,
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                "-r", "25", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                hook_rendered_mp4
+            ]
+            res_hook = subprocess.run(cmd_hook_render, capture_output=True, text=True, creationflags=flags)
+            if res_hook.returncode == 0 and os.path.isfile(hook_rendered_mp4):
+                has_hook_segment = True
+                logger.info("✅ [HOOK RENDER] Đã dựng thành công đoạn Hook đầu tiên: %s", hook_rendered_mp4)
+            else:
+                logger.warning("⚠️ [HOOK RENDER] Lỗi dựng Hook: %s", res_hook.stderr)
+
+        # 11. Cắt và Ghép Các Đoạn B-Roll Thân Video
         body_cut_mp4 = os.path.join(work_dir, "cut_body.mp4")
         body_concat_list = os.path.join(work_dir, "body_clips.txt")
 
@@ -660,6 +722,7 @@ OUTPUT FORMAT (JSON ONLY):
                 "-vf", vf_clip,
                 "-an",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-r", "25", "-pix_fmt", "yuv420p",
                 c_file
             ]
             subprocess.run(cmd_c, capture_output=True, creationflags=flags)
@@ -671,14 +734,15 @@ OUTPUT FORMAT (JSON ONLY):
             for cf in clip_files:
                 bf.write(f"file '{os.path.abspath(cf).replace(chr(92), '/')}'\n")
 
-        # Ghép thân video thô
+        # Ghép thân video thô (dạng lõi sạch)
         cmd_concat_body = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", body_concat_list,
             "-c", "copy", body_cut_mp4
         ]
         subprocess.run(cmd_concat_body, capture_output=True, creationflags=flags)
 
-        # 9. Tổng hợp hoàn chỉnh lên khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
+        # 12. Dựng Thân Video Hoàn Chỉnh Lên Khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
+        body_rendered_mp4 = os.path.join(work_dir, "body_rendered.mp4")
         if options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt):
             abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
             if ":" in abs_srt:
@@ -704,31 +768,14 @@ OUTPUT FORMAT (JSON ONLY):
         else:
             sub_filter_chain = "[v_banner]null[vout]"
 
-        # Thông số Zoom, Scale, Speed, Blur nền từ GUI bên ngoài (options)
-        zoom_val = float(options.get("zoom_percent", 105.0) or 105.0)
-        zoom_in = bool(options.get("zoom_in", True))
-        zoom_factor = (zoom_val / 100.0) if zoom_in else 1.0
-        sx = (float(options.get("scale_w") or options.get("scale_x", 100.0) or 100.0)) / 100.0
-        sy = (float(options.get("scale_h") or options.get("scale_y", 100.0) or 100.0)) / 100.0
-        blur_bg = bool(options.get("blur_bg", False))
-        video_speed = float(options.get("speed") or options.get("source_speed", 1.05) or 1.05)
-        audio_boost = float(options.get("audio_boost", 6.0) or 6.0)
-
-        # Kích thước khung hình foreground sau zoom & scale
-        fg_w = int(round(1080 * zoom_factor * sx))
-        fg_w = fg_w + (fg_w % 2)
-        fg_h = int(round(1920 * zoom_factor * sy))
-        fg_h = fg_h + (fg_h % 2)
-
+        # Nền blur 2 đầu từ chính lõi sạch cho phần thân video
         if blur_bg:
-            bg_stream = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=8[bg];"
+            bg_stream = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
         else:
             bg_stream = f"color=c=black:s=1080x1920[bg];"
 
-        # Tốc độ video (setpts)
         speed_filter = f",setpts={1.0 / video_speed:.4f}*PTS" if abs(video_speed - 1.0) >= 0.01 else ""
 
-        # Filter complex master
         master_vf = (
             f"{bg_stream}"
             f"[0:v]scale={fg_w}:{fg_h}[fg];"
@@ -738,12 +785,7 @@ OUTPUT FORMAT (JSON ONLY):
             f"{sub_filter_chain}"
         )
 
-        # Xử lý âm thanh (Audio Boost)
-        audio_opts = []
-        if audio_boost != 0:
-            audio_opts.extend(["-filter:a", f"volume={audio_boost:.1f}dB"])
-
-        cmd_final = [
+        cmd_body_final = [
             "ffmpeg", "-y",
             "-i", body_cut_mp4,
             "-i", banner_path,
@@ -753,19 +795,54 @@ OUTPUT FORMAT (JSON ONLY):
             "-map", "2:a" if (narration_audio and os.path.isfile(narration_audio)) else "0:a?",
             *audio_opts,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-            "-c:a", "aac", "-b:a", "192k",
+            "-r", "25", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
             "-shortest",
-            output_path
+            body_rendered_mp4
         ]
+        logger.info(f"🚀 [BODY RENDER] Thực thi đóng gói thân video 9:16: {' '.join(cmd_body_final)}")
+        subprocess.run(cmd_body_final, capture_output=True, text=True, creationflags=flags)
 
-        logger.info(f"🚀 [MASTER RENDER] Thực thi đóng gói video 9:16: {' '.join(cmd_final)}")
-        res_final = subprocess.run(cmd_final, capture_output=True, text=True, creationflags=flags)
-        
-        if res_final.returncode == 0 and os.path.isfile(output_path):
+        # 13. NỐI HOÀN CHỈNH: HOOK Ở ĐẦU TIÊN (00:00) + THÂN VIDEO TIẾP THEO
+        if has_hook_segment and os.path.isfile(hook_rendered_mp4) and os.path.isfile(body_rendered_mp4):
+            logger.info("🔗 [MASTER CONCAT] Nối Hook gốc ở ĐẦU TIÊN (00:00) + Thân video B-Roll thuyết minh tiếp theo...")
+            final_concat_list = os.path.join(work_dir, "final_segments.txt")
+            with open(final_concat_list, "w", encoding="utf-8") as ff:
+                ff.write(f"file '{os.path.abspath(hook_rendered_mp4).replace(chr(92), '/')}'\n")
+                ff.write(f"file '{os.path.abspath(body_rendered_mp4).replace(chr(92), '/')}'\n")
+
+            cmd_final_merge = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", final_concat_list,
+                "-c", "copy",
+                output_path
+            ]
+            res_merge = subprocess.run(cmd_final_merge, capture_output=True, text=True, creationflags=flags)
+            if res_merge.returncode != 0 or not os.path.isfile(output_path):
+                # Fallback filter_complex concat
+                cmd_fallback_merge = [
+                    "ffmpeg", "-y",
+                    "-i", hook_rendered_mp4,
+                    "-i", body_rendered_mp4,
+                    "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vout][aout]",
+                    "-map", "[vout]", "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                    "-c:a", "aac", "-b:a", "192k",
+                    output_path
+                ]
+                res_merge = subprocess.run(cmd_fallback_merge, capture_output=True, text=True, creationflags=flags)
+        elif os.path.isfile(body_rendered_mp4):
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+            shutil.copy2(body_rendered_mp4, output_path)
+
+        if os.path.isfile(output_path):
             logger.info(f"🎉 [MASTER RENDER] XUẤT VIDEO THÀNH CÔNG: {output_path}")
             if progress_cb:
                 progress_cb("done", f"Xuất video hoàn tất: {os.path.basename(output_path)}")
             return True
         else:
-            logger.error(f"❌ [MASTER RENDER] Lỗi đóng gói: {res_final.stderr}")
+            logger.error("❌ [MASTER RENDER] Không tìm thấy file thành phẩm sau render.")
             return False

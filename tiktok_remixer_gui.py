@@ -268,7 +268,7 @@ class TikTokRemixerTab(ttk.Frame):
         self.audio_boost_spin.grid(row=0, column=3, sticky=tk.W, padx=3, pady=3)
         self.audio_boost_spin.set(self.config.get("audio_boost", 6.0))
 
-        self.blur_var = tk.BooleanVar(value=bool(self.config.get("blur_bg", False)))
+        self.blur_var = tk.BooleanVar(value=bool(self.config.get("blur_bg", True)))
         self.blur_chk = ttk.Checkbutton(post_group, text="Làm mờ nền (Blur)", variable=self.blur_var)
         self.blur_chk.grid(row=0, column=4, columnspan=2, padx=8, sticky=tk.W)
 
@@ -930,7 +930,7 @@ class TikTokRemixerTab(ttk.Frame):
         if hasattr(self, "audio_boost_spin"):
             self.audio_boost_spin.set(self.config.get("audio_boost", 6.0))
         if hasattr(self, "blur_var"):
-            self.blur_var.set(bool(self.config.get("blur_bg", False)))
+            self.blur_var.set(bool(self.config.get("blur_bg", True)))
         if hasattr(self, "zoom_var"):
             self.zoom_var.set(bool(self.config.get("zoom_in", True)))
         if hasattr(self, "zoom_spin"):

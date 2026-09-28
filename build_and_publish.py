@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.57"
+VERSION = "1.3.58"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.57: Sửa lỗi đóng gói FFmpeg Master Render ở Chế Độ 3. Escape dấu hai chấm ổ đĩa Windows (E\\:/) trong đường dẫn file phụ đề SRT và chuẩn hóa chuỗi force_style tránh lỗi original_size option."
+NOTES = "Bản phát hành v1.3.58: Cắt gọt chuẩn lõi video sạch (xóa 2 đầu blur và title cũ), dựng 9:16 tỉ lệ chuẩn không méo hình, blur nền 2 đầu từ chính lõi sạch, đặt Hook ở đúng vị trí đầu tiên (00:00) giữ nguyên âm thanh gốc, đè phụ đề mới chính xác vào vị trí phụ đề cũ."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
