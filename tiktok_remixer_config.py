@@ -114,8 +114,22 @@ def load_tiktok_remixer_config() -> dict:
 def save_tiktok_remixer_config(config: dict) -> bool:
     """Lưu cấu hình riêng biệt cho Chế Độ 3."""
     try:
+        # Làm sạch config để triệt tiêu mọi tham chiếu lặp (circular reference)
+        clean_config = {}
+        for k, v in config.items():
+            if k == "saved_configs" and isinstance(v, dict):
+                clean_saved = {}
+                for s_name, s_val in v.items():
+                    if isinstance(s_val, dict):
+                        clean_saved[s_name] = {sk: copy.deepcopy(sv) for sk, sv in s_val.items() if sk != "saved_configs"}
+                    else:
+                        clean_saved[s_name] = copy.deepcopy(s_val)
+                clean_config[k] = clean_saved
+            elif k != "saved_configs":
+                clean_config[k] = copy.deepcopy(v)
+
         with open(CONFIG_TIKTOK_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+            json.dump(clean_config, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
         print(f"⚠️ [TikTok Config] Lỗi lưu config: {e}")

@@ -7,6 +7,7 @@ Tích hợp đầy đủ:
 """
 import os
 import sys
+import copy
 import json
 import time
 import threading
@@ -444,15 +445,18 @@ class TikTokRemixerTab(ttk.Frame):
         if not name:
             messagebox.showwarning("Thiếu tên", "Vui lòng nhập Tên Config để lưu!", parent=self)
             return
-        cfg = self._collect_config_from_ui()
-        if "saved_configs" not in cfg or not isinstance(cfg["saved_configs"], dict):
-            cfg["saved_configs"] = {}
-        cfg["saved_configs"][name] = dict(cfg)
-        cfg["selected_config"] = name
-        save_tiktok_remixer_config(cfg)
+        self._collect_config_from_ui()
+        # Loại bỏ các key quản lý và trạng thái để tránh tạo vòng lặp tham chiếu (circular reference)
+        excluded = {"saved_configs", "selected_config", "source_url_or_path"}
+        payload = {k: copy.deepcopy(v) for k, v in self.config.items() if k not in excluded}
+
+        saved = self.config.setdefault("saved_configs", {})
+        saved[name] = payload
+        self.config["selected_config"] = name
+        save_tiktok_remixer_config(self.config)
         
         # Cập nhật lại dropdown
-        names = list(cfg["saved_configs"].keys())
+        names = list(saved.keys())
         self.config_cb["values"] = names
         self.config_cb.set(name)
         self.log(f"💾 Đã lưu cấu hình '{name}' thành công!")
@@ -631,7 +635,7 @@ class TikTokRemixerTab(ttk.Frame):
         if not isinstance(saved_dict, dict):
             return
         # Giữ nguyên toàn bộ thông số của GUI bên ngoài (zoom, scale, speed, blur, audio_boost)
-        OUTER_KEYS = {"speed", "audio_boost", "blur_bg", "zoom_in", "zoom_percent", "scale_w", "scale_h", "scale_x", "scale_y"}
+        OUTER_KEYS = {"speed", "audio_boost", "blur_bg", "zoom_in", "zoom_percent", "scale_w", "scale_h", "scale_x", "scale_y", "saved_configs"}
         cleaned_saved = {k: v for k, v in saved_dict.items() if k not in OUTER_KEYS}
         self.config.update(cleaned_saved)
         save_tiktok_remixer_config(self.config)
@@ -684,12 +688,13 @@ class TikTokRemixerTab(ttk.Frame):
 
         cfg_snapshot = self._collect_config_from_ui()
         job_id = f"job_{len(self.queue_items)+1:03d}_{int(time.time())}"
+        job_options = {k: copy.deepcopy(v) for k, v in cfg_snapshot.items() if k != "saved_configs"}
         job_data = {
             "id": job_id,
             "source": src,
             "market": cfg_snapshot.get("target_market", "DE"),
             "config_name": self.config_name_entry.get().strip() or "default",
-            "options": dict(cfg_snapshot),
+            "options": job_options,
             "status": "pending",
             "output": ""
         }

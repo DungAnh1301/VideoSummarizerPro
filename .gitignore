@@ -25,7 +25,7 @@ tools/
 msedgedriver/
 update_download/
 update_backup/
-update_success.json
 hardware_profile.json
 VideoSummarizerPro_Setup.exe
-
+config_tiktok_remixer.json
+output_tiktok_remix/
