@@ -771,12 +771,15 @@ class AntigravityProcessor:
         Path(request_file).write_text(full_request_content, encoding="utf-8")
 
         short_request = (
-            f"Open and inspect the full video file '{video_filename}' directly in this directory. "
-            "Read antigravity_request.txt. Perform deep, frame-accurate inspection of every scene, motion, and dialogue. "
-            "Follow all instructions and output ONLY valid JSON immediately."
+            f"Read antigravity_request.txt in this folder. Inspect video '{video_filename}' and output the complete JSON analysis "
+            "directly and immediately in a single response turn. Do not run multi-turn interactive code experiments."
         )
 
-        candidate_profiles = cls.get_candidate_profiles()
+        candidate_profiles = [
+            {"model": "gemini-3.8-flash-low", "effort": "low", "label": "Gemini 3.8 Flash (Low)"},
+            {"model": "gemini-3.7-flash-low", "effort": "low", "label": "Gemini 3.7 Flash (Low fallback)"},
+            {"model": "gemini-3.8-flash-high", "effort": "high", "label": "Gemini 3.8 Flash (High fallback)"},
+        ]
         max_retries = max(2, len(candidate_profiles))
         for attempt in range(1, max_retries + 1):
             prof = candidate_profiles[(attempt - 1) % len(candidate_profiles)]
@@ -789,10 +792,10 @@ class AntigravityProcessor:
                 "--dangerously-skip-permissions",
             ]
             try:
-                logger.info("🤖 [ANTIGRAVITY TIKTOK] Đang gửi yêu cầu soi chi tiết từng giây qua %s...", prof["label"])
+                logger.info("🤖 [ANTIGRAVITY TIKTOK] Đang gửi yêu cầu soi chi tiết qua %s...", prof["label"])
                 completed = subprocess.run(
                     command, cwd=analysis_dir, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=300,
+                    encoding="utf-8", errors="replace", timeout=600,
                     creationflags=0x08000000 if os.name == "nt" else 0,
                 )
                 if completed.returncode != 0:

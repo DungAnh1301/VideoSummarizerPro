@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.55"
+VERSION = "1.3.56"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.55: Cơ chế Atomic Write và tự phục hồi (Self-Healing) cho config_tiktok_remixer.json. Chống lỗi file dở dang khi bị ngắt, tự động khởi tạo cấu hình sạch sẽ nếu phát hiện file cũ lỗi."
+NOTES = "Bản phát hành v1.3.56: Khắc phục lỗi timeout khi gửi video TikTok qua Antigravity CLI. Tối ưu hóa profile Gemini 3.8 Flash (Low) xuất trực tiếp kết quả JSON trong 1 turn (chỉ 10-15s), tăng trần timeout lên 600s chống nghẽn."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
