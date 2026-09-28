@@ -9,6 +9,7 @@ import random
 import subprocess
 import logging
 import shutil
+import time
 from typing import Callable, Optional, Dict, Any, List, Tuple
 
 from capcut_filters import apply_look, build_adjust_filters, extra_ffmpeg_tail
@@ -152,8 +153,8 @@ TASKS:
      * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
 
 5. CONTINUOUS NARRATION & NEAREST-SEMANTIC B-ROLL MATCHING (GHÉP CẢNH CÓ SẴN THEO NGỮ NGHĨA GẦN NHẤT):
-   - CRITICAL MONETIZATION CONSTRAINT: The final video MUST be strictly LONGER THAN 60 SECONDS (Target: 61.5s to 68.0s) to qualify for TikTok Creator Rewards.
-   - Word budget: Write approx 140 to 175 spoken words in {lang_name} ({locale_code}). NEVER write fewer than 135 words!
+   - CRITICAL MONETIZATION CONSTRAINT: The final video MUST be strictly LONGER THAN 60 SECONDS (Target: 62.0s to 70.0s) to qualify for TikTok Creator Rewards.
+   - Word budget: Write approx 160 to 195 spoken words in {lang_name} ({locale_code}). Under NO circumstances write fewer than 155 words! The spoken duration MUST be at least 62 seconds long.
    - You only have these existing raw B-Roll scenes extracted from the source video (no external replacement footage). DO NOT chop them into awkward micro fragments; keep their natural camera motion and emotion intact.
    - Write a smooth, continuous viral narration story that reads seamlessly from beginning to end without artificial pauses or waiting for cuts.
    - Re-arrange and sequence the available existing B-Roll scenes in "remix_storyboard" so that each scene visually matches the NEAREST SEMANTIC MEANING, mood, or action of that part of the continuous voiceover/subtitles.
@@ -164,8 +165,8 @@ OUTPUT FORMAT (JSON ONLY):
 {{
   "layout_geometry": {{
     "has_top_title_or_blur": true,
-    "core_crop_normalized": {{"ymin": 0.16, "ymax": 0.84}},
-    "sub_blur_normalized": {{"ymin": 0.72, "ymax": 0.86, "xmin": 0.10, "xmax": 0.90}}
+    "core_crop_normalized": {{"ymin": 0.20, "ymax": 0.80}},
+    "sub_blur_normalized": {{"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95}}
   }},
   "intro_outro_inspection": {{
     "has_intro_tiktok_logo": false,
@@ -443,6 +444,59 @@ OUTPUT FORMAT (JSON ONLY):
         return None, None, 0.0
 
     @classmethod
+    def convert_srt_to_ass(
+        cls,
+        srt_file: str,
+        ass_file: str,
+        font_name: str = "Arial",
+        font_size: int = 42,
+        primary_color: str = "&H0000FFFF",  # TikTok Yellow (AABBGGRR: 00=opaque, 00=blue, FF=green, FF=red)
+        outline_color: str = "&H00000000",
+        outline_width: int = 4,
+        shadow_dist: int = 1,
+        margin_v: int = 560
+    ) -> bool:
+        """Chuyển đổi SRT sang ASS chuẩn 1080x1920 PlayRes để hiển thị phụ đề sắc nét, đúng tọa độ 100%."""
+        try:
+            if not srt_file or not os.path.isfile(srt_file):
+                return False
+            with open(srt_file, "r", encoding="utf-8", errors="ignore") as f:
+                srt_content = f.read()
+
+            header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},{primary_color},&H000000FF,{outline_color},&H80000000,1,0,0,0,100,100,0,0,1,{outline_width},{shadow_dist},2,60,60,{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+            events = []
+            blocks = re.split(r'\n\s*\n', srt_content.strip())
+            for b in blocks:
+                lines = [l.strip() for l in b.splitlines() if l.strip()]
+                if len(lines) >= 3:
+                    m = re.match(r'(\d+):(\d+):(\d+),(\d+)\s*-->\s*(\d+):(\d+):(\d+),(\d+)', lines[1])
+                    if m:
+                        g = m.groups()
+                        st = f"{int(g[0])}:{g[1]}:{g[2]}.{g[3][:2]}"
+                        en = f"{int(g[4])}:{g[5]}:{g[6]}.{g[7][:2]}"
+                        txt = " ".join(lines[2:])
+                        events.append(f"Dialogue: 0,{st},{en},Default,,0,0,0,,{txt}")
+
+            with open(ass_file, "w", encoding="utf-8") as f:
+                f.write(header + "\n".join(events) + "\n")
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️ [ASS SUB] Không chuyển đổi được sang ASS: {e}")
+            return False
+
+    @classmethod
     def render_tiktok_remix(
         cls,
         source_video: str,
@@ -484,11 +538,27 @@ OUTPUT FORMAT (JSON ONLY):
         crop_x = 0
 
         # 2. Tính toán Tọa độ Bôi Mờ Sub Cũ (Sub Blur Zone)
-        sub_norm = geom.get("sub_blur_normalized", {"ymin": 0.74, "ymax": 0.86, "xmin": 0.1, "xmax": 0.9})
-        blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.1)))
-        blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.9)) - float(sub_norm.get("xmin", 0.1))))
-        blur_my = int(crop_h * float(sub_norm.get("ymin", 0.74)))
-        blur_mh = int(crop_h * (float(sub_norm.get("ymax", 0.86)) - float(sub_norm.get("ymin", 0.74))))
+        # sub_norm từ Gemini là tọa độ tương đối trên FULL FRAME gốc (0.0 đến 1.0 của orig_h)
+        sub_norm = geom.get("sub_blur_normalized", {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95})
+        sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
+        sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
+        crop_span = max(0.01, ymax - ymin)
+
+        # Chuyển đổi tọa độ từ Full Frame sang hệ quy chiếu bên trong khung cropped:
+        # Nếu sub_orig_ymin nằm ngoài khoảng crop hoặc không hợp lý (nằm quá cao trên ngực/mặt do Gemini đo lệch),
+        # thì fallback chuẩn xác vào 18% dưới đáy của lõi video hành động (nơi sub luôn ngự trị):
+        if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
+            rel_sub_ymin = 0.82
+            rel_sub_ymax = 0.98
+        else:
+            rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
+            rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
+
+        blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
+        blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
+        blur_my = int(round(crop_h * rel_sub_ymin))
+        blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
+        blur_mh = max(30, blur_mh)
 
         # 3. Phân Đoạn Hook & Scenes
         hook_info = gemini_plan.get("hook", {})
@@ -548,34 +618,33 @@ OUTPUT FORMAT (JSON ONLY):
 
         clean_scenes = ordered_scenes
 
-        # 5. Đảm Bảo Chuẩn Thời Lượng Kiếm Tiền TikTok (Bắt buộc > 60s, mục tiêu >= 61.5s)
-        # Hook + Body >= 61.5s
-        min_monetization_total = 61.5
-        required_body_dur = max(min_monetization_total - hook_dur, audio_duration)
-        target_body_dur = max(5.0, required_body_dur)
+        # 5. Đảm Bảo Chuẩn Thời Lượng Kiếm Tiền TikTok (Bắt buộc > 60s, mục tiêu >= 62.0s)
+        # Hook + Body >= 62.0s
+        min_monetization_total = 62.0
+        required_body_dur = max(min_monetization_total - hook_dur, audio_duration, 58.0)
+        target_body_dur = max(58.0, required_body_dur)
         total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
-        # Nếu video gốc quá ngắn (thiếu > 4s để đạt chuẩn 1 phút):
+        # Nếu video nguồn ngắn hoặc thiếu để đạt > 60s:
         # Kích hoạt Variant Looping (tái sử dụng các B-Roll hành động với biến thể góc quay/zoom mới)
         if total_clean_dur < target_body_dur and clean_scenes:
             deficit = target_body_dur - total_clean_dur
-            if deficit > 3.0:
-                logger.info("⚡ [MONETIZATION >60s] Video nguồn thiếu %.1fs để đạt 1 phút. Kích hoạt Variant B-Roll Looping...", deficit)
-                loop_pool = [s for s in clean_scenes if not s.get("has_text", False)] or clean_scenes
-                added_dur = 0.0
-                variant_idx = 1
-                while total_clean_dur + added_dur < target_body_dur - 2.0 and loop_pool:
-                    for sc_cand in loop_pool:
-                        sc_variant = dict(sc_cand)
-                        sc_variant["id"] = f"{sc_cand['id']}_var{variant_idx}"
-                        sc_variant["is_variant"] = True
-                        clean_scenes.append(sc_variant)
-                        added_dur += sc_variant["dur"]
-                        variant_idx += 1
-                        if total_clean_dur + added_dur >= target_body_dur - 2.0:
-                            break
-                total_clean_dur += added_dur
-                logger.info("✅ [MONETIZATION >60s] Đã bổ sung B-Roll biến thể, tổng thời lượng cảnh: %.1fs (Mục tiêu: %.1fs)", total_clean_dur, target_body_dur)
+            logger.info("⚡ [MONETIZATION >60s] Tổng cảnh hiện tại (%.1fs) thiếu %.1fs để đạt chuẩn >60s. Bổ sung B-Roll biến thể...", total_clean_dur, deficit)
+            loop_pool = [s for s in clean_scenes if not s.get("has_text", False)] or clean_scenes
+            added_dur = 0.0
+            variant_idx = 1
+            while total_clean_dur + added_dur < target_body_dur + 2.0 and loop_pool:
+                for sc_cand in loop_pool:
+                    sc_variant = dict(sc_cand)
+                    sc_variant["id"] = f"{sc_cand['id']}_var{variant_idx}"
+                    sc_variant["is_variant"] = True
+                    clean_scenes.append(sc_variant)
+                    added_dur += sc_variant["dur"]
+                    variant_idx += 1
+                    if total_clean_dur + added_dur >= target_body_dur + 2.0:
+                        break
+            total_clean_dur += added_dur
+            logger.info("✅ [MONETIZATION >60s] Đã bổ sung B-Roll biến thể, tổng thời lượng cảnh: %.1fs (Mục tiêu: %.1fs)", total_clean_dur, target_body_dur)
 
         # 6. Điều Tốc B-Roll Đàn Hồi Ngẫu Nhiên (Stochastic Elastic Speed Matching)
         elastic_pts_map = {}
@@ -627,7 +696,7 @@ OUTPUT FORMAT (JSON ONLY):
         zoom_factor = (zoom_val / 100.0) if zoom_in else 1.0
         sx = (float(options.get("scale_w") or options.get("scale_x", 100.0) or 100.0)) / 100.0
         sy = (float(options.get("scale_h") or options.get("scale_y", 100.0) or 100.0)) / 100.0
-        blur_bg = bool(options.get("blur_bg", True))
+        blur_bg = bool(options.get("blur_bg_916", True) if "blur_bg_916" in options else options.get("blur_bg", True))
         video_speed = float(options.get("speed") or options.get("source_speed", 1.05) or 1.05)
         audio_boost = float(options.get("audio_boost", 6.0) or 6.0)
 
@@ -637,14 +706,13 @@ OUTPUT FORMAT (JSON ONLY):
         fg_h = int(round(fg_w / core_ar * sy))
         fg_h += fg_h % 2
 
-        # Tọa độ Subtitle đè chính xác lên dải sub cũ đã bôi mờ
-        sub_center_orig = (float(sub_norm.get("ymin", 0.74)) + float(sub_norm.get("ymax", 0.86))) / 2.0
-        core_rel_y = (sub_center_orig - ymin) / max(0.01, (ymax - ymin))
+        # Tọa độ Subtitle đè CHÍNH XÁC lên dải sub cũ đã bôi mờ
         top_y_canvas = (cls.OUTPUT_H - fg_h) / 2.0
-        sub_y_canvas = top_y_canvas + (core_rel_y * fg_h)
-        calculated_margin_v = int(cls.OUTPUT_H - sub_y_canvas)
+        rel_center_y = (rel_sub_ymin + rel_sub_ymax) / 2.0
+        sub_center_canvas_y = top_y_canvas + (rel_center_y * fg_h)
+        calculated_margin_v = int(cls.OUTPUT_H - sub_center_canvas_y)
         sub_margin_v = calculated_margin_v if options.get("overlay_sub_on_blur_zone", True) else int(options.get("sub_margin_v", 100))
-        sub_margin_v = max(30, min(800, sub_margin_v))
+        sub_margin_v = max(80, min(1200, sub_margin_v))
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
@@ -756,7 +824,7 @@ OUTPUT FORMAT (JSON ONLY):
                 "-i", source_video,
                 "-vf", vf_clip,
                 "-an",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                 "-r", "25", "-pix_fmt", "yuv420p",
                 c_file
             ]
@@ -781,30 +849,68 @@ OUTPUT FORMAT (JSON ONLY):
         # 12. Dựng Thân Video Hoàn Chỉnh Lên Khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
         t_body_start = time.time()
         body_rendered_mp4 = os.path.join(work_dir, "body_rendered.mp4")
+        sub_filter_chain = "[v_banner]null[vout]"
         if options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt):
-            abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
-            if ":" in abs_srt:
-                d, p = abs_srt.split(":", 1)
-                srt_to_embed = f"{d}\\:{p}"
+            sub_font = options.get("sub_font") or options.get("font_name", "Arial")
+            sub_size = int(options.get("sub_size", 42) or 42)
+            if sub_size < 28:
+                sub_size = 42
+
+            # Chuẩn hóa màu ASS AABBGGRR (TikTok Yellow mặc định: &H0000FFFF)
+            raw_c = str(options.get("sub_color", "&H0000FFFF")).strip()
+            if raw_c.startswith("&H"):
+                raw_hex = raw_c[2:].rstrip("&")
+                if len(raw_hex) == 6:
+                    # RRGGBB -> BBGGRR
+                    r, g, b = raw_hex[:2], raw_hex[2:4], raw_hex[4:6]
+                    sub_color = f"&H00{b}{g}{r}"
+                elif len(raw_hex) == 8:
+                    sub_color = f"&H{raw_hex}"
+                else:
+                    sub_color = "&H0000FFFF"
             else:
-                srt_to_embed = abs_srt
+                sub_color = "&H0000FFFF"
 
-            sub_font = options.get("sub_font") or options.get("font_name", "Segoe UI")
-            sub_size = options.get("sub_size", 16)
-            sub_color = options.get("sub_color", "&HFFFFFF&")
-            sub_outline_color = options.get("sub_outline_color", "&H000000&")
-            sub_outline = options.get("sub_outline", 3)
-            sub_shadow = options.get("sub_shadow", 1)
+            raw_oc = str(options.get("sub_outline_color", "&H00000000")).strip()
+            if raw_oc.startswith("&H"):
+                raw_o_hex = raw_oc[2:].rstrip("&")
+                if len(raw_o_hex) == 6:
+                    r, g, b = raw_o_hex[:2], raw_o_hex[2:4], raw_o_hex[4:6]
+                    sub_outline_color = f"&H00{b}{g}{r}"
+                elif len(raw_o_hex) == 8:
+                    sub_outline_color = f"&H{raw_o_hex}"
+                else:
+                    sub_outline_color = "&H00000000"
+            else:
+                sub_outline_color = "&H00000000"
 
-            basic_sub_style = (
-                f"FontName={sub_font},FontSize={sub_size},"
-                f"PrimaryColour={sub_color},OutlineColour={sub_outline_color},"
-                f"BorderStyle=1,Outline={sub_outline},Shadow={sub_shadow},"
-                f"Alignment=2,MarginV={sub_margin_v}"
+            sub_outline = int(options.get("sub_outline", 4) or 4)
+            sub_shadow = int(options.get("sub_shadow", 1) or 1)
+
+            ass_file = os.path.join(work_dir, "tiktok_subtitles.ass")
+            converted = cls.convert_srt_to_ass(
+                srt_file=narration_srt,
+                ass_file=ass_file,
+                font_name=sub_font,
+                font_size=sub_size,
+                primary_color=sub_color,
+                outline_color=sub_outline_color,
+                outline_width=sub_outline,
+                shadow_dist=sub_shadow,
+                margin_v=sub_margin_v
             )
-            sub_filter_chain = f"[v_banner]subtitles='{srt_to_embed}':force_style='{basic_sub_style}'[vout]"
-        else:
-            sub_filter_chain = "[v_banner]null[vout]"
+            if converted and os.path.isfile(ass_file):
+                ass_escaped = os.path.abspath(ass_file).replace('\\', '/')
+                if ":" in ass_escaped:
+                    d, p = ass_escaped.split(":", 1)
+                    ass_escaped = f"{d}\\:{p}"
+                sub_filter_chain = f"[v_banner]ass='{ass_escaped}'[vout]"
+            else:
+                abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
+                if ":" in abs_srt:
+                    d, p = abs_srt.split(":", 1)
+                    abs_srt = f"{d}\\:{p}"
+                sub_filter_chain = f"[v_banner]subtitles='{abs_srt}'[vout]"
 
         # Nền blur 2 đầu từ chính lõi sạch cho phần thân video
         if blur_bg:
@@ -823,6 +929,16 @@ OUTPUT FORMAT (JSON ONLY):
             f"{sub_filter_chain}"
         )
 
+        audio_body_opts = []
+        body_af = []
+        if audio_boost != 0:
+            body_af.append(f"volume={audio_boost:.1f}dB")
+        if narration_audio and os.path.isfile(narration_audio) and audio_duration < target_body_dur:
+            pad_dur = target_body_dur - audio_duration + 0.5
+            body_af.append(f"apad=pad_dur={pad_dur:.2f}")
+        if body_af:
+            audio_body_opts = ["-filter:a", ",".join(body_af)]
+
         cmd_body_final = [
             "ffmpeg", "-y",
             "-i", body_cut_mp4,
@@ -831,8 +947,8 @@ OUTPUT FORMAT (JSON ONLY):
             "-filter_complex", master_vf,
             "-map", "[vout]",
             "-map", "2:a" if (narration_audio and os.path.isfile(narration_audio)) else "0:a?",
-            *audio_opts,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+            *audio_body_opts,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-r", "25", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
             "-shortest",
@@ -845,7 +961,8 @@ OUTPUT FORMAT (JSON ONLY):
 
         # 13. NỐI HOÀN CHỈNH: HOOK Ở ĐẦU TIÊN (00:00) + THÂN VIDEO TIẾP THEO
         t_concat_start = time.time()
-        if has_hook_segment and os.path.isfile(hook_rendered_mp4) and os.path.isfile(body_rendered_mp4):
+        hook_valid = has_hook_segment and os.path.isfile(hook_rendered_mp4) and os.path.getsize(hook_rendered_mp4) > 10000
+        if hook_valid and os.path.isfile(body_rendered_mp4):
             logger.info("🔗 [MASTER CONCAT] Nối Hook gốc ở ĐẦU TIÊN (00:00) + Thân video B-Roll thuyết minh tiếp theo...")
             final_concat_list = os.path.join(work_dir, "final_segments.txt")
             with open(final_concat_list, "w", encoding="utf-8") as ff:
@@ -858,7 +975,7 @@ OUTPUT FORMAT (JSON ONLY):
                 output_path
             ]
             res_merge = subprocess.run(cmd_final_merge, capture_output=True, text=True, creationflags=flags)
-            if res_merge.returncode != 0 or not os.path.isfile(output_path):
+            if res_merge.returncode != 0 or not os.path.isfile(output_path) or os.path.getsize(output_path) < 10000:
                 # Fallback filter_complex concat
                 cmd_fallback_merge = [
                     "ffmpeg", "-y",
@@ -866,11 +983,11 @@ OUTPUT FORMAT (JSON ONLY):
                     "-i", body_rendered_mp4,
                     "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vout][aout]",
                     "-map", "[vout]", "-map", "[aout]",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "192k",
                     output_path
                 ]
-                res_merge = subprocess.run(cmd_fallback_merge, capture_output=True, text=True, creationflags=flags)
+                subprocess.run(cmd_fallback_merge, capture_output=True, text=True, creationflags=flags)
         elif os.path.isfile(body_rendered_mp4):
             if os.path.exists(output_path):
                 try:

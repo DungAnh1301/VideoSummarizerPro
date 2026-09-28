@@ -1066,6 +1066,7 @@ class TikTokRemixerTab(ttk.Frame):
                 self.config["audio_boost"] = 6.0
         if hasattr(self, "blur_var"):
             self.config["blur_bg"] = bool(self.blur_var.get())
+            self.config["blur_bg_916"] = bool(self.blur_var.get())
         if hasattr(self, "zoom_var"):
             self.config["zoom_in"] = bool(self.zoom_var.get())
         if hasattr(self, "zoom_spin"):

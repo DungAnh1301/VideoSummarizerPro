@@ -81,11 +81,11 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     
     "enable_sub": True,
     "sub_style_type": "tiktok_slim",
-    "sub_size": 16,
-    "sub_outline": 3,
+    "sub_size": 38,
+    "sub_outline": 4,
     "sub_shadow": 1,
     "sub_margin_v": 100,
-    "sub_color": "&HFFFFFF&",
+    "sub_color": "&H00FFFF&",
     "sub_outline_color": "&H000000&",
     
     # 8. Quản lý lưu config mẫu
