@@ -28,7 +28,9 @@ $files = @(
   "youtube_heatmap.py", "update_manager.py", "updater.py", "version.json", "requirements.txt",
   "config.example.json", "Chay_App.bat", "README_CAI_DAT.md",
   "font_manager.py", "part_splitter_config.py", "part_pruner_ai.py",
-  "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.json", "PLAN_CHIA_PART.md"
+  "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.json", "PLAN_CHIA_PART.md",
+  "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.json", "config_tiktok_remixer.example.json",
+  "capcut_color_studio.py", "crop_blur_studio.py", "title_sub_studio.py", "studio_helpers.py"
 )
 foreach ($name in $files) {
   $source = Join-Path $root $name
