@@ -679,14 +679,30 @@ OUTPUT FORMAT (JSON ONLY):
         subprocess.run(cmd_concat_body, capture_output=True, creationflags=flags)
 
         # 9. Tổng hợp hoàn chỉnh lên khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
-        sub_style_str = (
-            f"subtitles='{os.path.abspath(narration_srt).replace(chr(92), '/')}:force_style="
-            f"Fontname=Segoe UI,FontSize={options.get('sub_size', 16)},"
-            f"PrimaryColour={options.get('sub_color', '&HFFFFFF&')},"
-            f"OutlineColour={options.get('sub_outline_color', '&H000000&')},"
-            f"Outline={options.get('sub_outline', 3)},Shadow={options.get('sub_shadow', 1)},"
-            f"MarginV={sub_margin_v}'"
-        ) if (options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt)) else "null"
+        if options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt):
+            abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
+            if ":" in abs_srt:
+                d, p = abs_srt.split(":", 1)
+                srt_to_embed = f"{d}\\:{p}"
+            else:
+                srt_to_embed = abs_srt
+
+            sub_font = options.get("sub_font") or options.get("font_name", "Segoe UI")
+            sub_size = options.get("sub_size", 16)
+            sub_color = options.get("sub_color", "&HFFFFFF&")
+            sub_outline_color = options.get("sub_outline_color", "&H000000&")
+            sub_outline = options.get("sub_outline", 3)
+            sub_shadow = options.get("sub_shadow", 1)
+
+            basic_sub_style = (
+                f"FontName={sub_font},FontSize={sub_size},"
+                f"PrimaryColour={sub_color},OutlineColour={sub_outline_color},"
+                f"BorderStyle=1,Outline={sub_outline},Shadow={sub_shadow},"
+                f"Alignment=2,MarginV={sub_margin_v}"
+            )
+            sub_filter_chain = f"[v_banner]subtitles='{srt_to_embed}':force_style='{basic_sub_style}'[vout]"
+        else:
+            sub_filter_chain = "[v_banner]null[vout]"
 
         # Thông số Zoom, Scale, Speed, Blur nền từ GUI bên ngoài (options)
         zoom_val = float(options.get("zoom_percent", 105.0) or 105.0)
@@ -719,7 +735,7 @@ OUTPUT FORMAT (JSON ONLY):
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v_base];"
             f"[v_base]{color_filter_str}{speed_filter}[v_color];"
             f"[v_color][1:v]overlay={banner_x}:{banner_y}[v_banner];"
-            f"[v_banner]{sub_style_str}[vout]"
+            f"{sub_filter_chain}"
         )
 
         # Xử lý âm thanh (Audio Boost)

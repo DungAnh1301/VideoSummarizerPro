@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.56"
+VERSION = "1.3.57"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.56: Khắc phục lỗi timeout khi gửi video TikTok qua Antigravity CLI. Tối ưu hóa profile Gemini 3.8 Flash (Low) xuất trực tiếp kết quả JSON trong 1 turn (chỉ 10-15s), tăng trần timeout lên 600s chống nghẽn."
+NOTES = "Bản phát hành v1.3.57: Sửa lỗi đóng gói FFmpeg Master Render ở Chế Độ 3. Escape dấu hai chấm ổ đĩa Windows (E\\:/) trong đường dẫn file phụ đề SRT và chuẩn hóa chuỗi force_style tránh lỗi original_size option."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
