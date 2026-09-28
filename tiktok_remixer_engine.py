@@ -501,6 +501,12 @@ OUTPUT FORMAT (JSON ONLY):
         for sc in raw_scenes:
             c_range = sc.get("clean_range", sc.get("raw_range", [0, 0]))
             st, en = float(c_range[0]), float(c_range[1])
+            # Tránh trùng lặp cảnh Hook trong thân video: Hook đã đặt riêng ở 00:00
+            if options.get("keep_original_hook", True) and hook_dur >= 0.5:
+                if en <= hook_end + 0.2:
+                    continue
+                if st < hook_end:
+                    st = hook_end
             if en > st + 0.4:
                 sc_dict = {
                     "id": sc.get("id"),
@@ -651,8 +657,10 @@ OUTPUT FORMAT (JSON ONLY):
         if audio_boost != 0:
             audio_opts.extend(["-filter:a", f"volume={audio_boost:.1f}dB"])
 
-        if options.get("keep_original_hook", True) and hook_dur >= 0.8:
-            logger.info("🎬 [HOOK RENDER] Dựng đoạn Hook mở đầu (%.2fs - %.2fs) giữ nguyên âm thanh gốc...", hook_start, hook_end)
+        has_src_audio = EditorProcessor._has_audio(source_video)
+
+        if options.get("keep_original_hook", True) and hook_dur >= 0.5:
+            logger.info("🎬 [HOOK RENDER] Dựng đoạn Hook mở đầu (%.2fs - %.2fs) giữ nguyên 100%% âm thanh gốc...", hook_start, hook_end)
             if blur_bg:
                 bg_hook_chain = (
                     f"[core_clean]split=2[c_fg][c_bg];"
@@ -677,24 +685,41 @@ OUTPUT FORMAT (JSON ONLY):
                 f"[v_color][1:v]overlay={banner_x}:{banner_y}[vout]"
             )
 
-            cmd_hook_render = [
-                "ffmpeg", "-y",
-                "-ss", f"{hook_start:.3f}", "-to", f"{hook_end:.3f}",
-                "-i", source_video,
-                "-i", banner_path,
-                "-filter_complex", hook_vf,
-                "-map", "[vout]",
-                "-map", "0:a?",
-                *audio_opts,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-                "-r", "25", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-                hook_rendered_mp4
-            ]
+            if has_src_audio:
+                cmd_hook_render = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
+                    "-i", source_video,
+                    "-i", banner_path,
+                    "-filter_complex", hook_vf,
+                    "-map", "[vout]",
+                    "-map", "0:a:0",
+                    *audio_opts,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                    "-r", "25", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                    "-avoid_negative_ts", "make_zero",
+                    hook_rendered_mp4
+                ]
+            else:
+                cmd_hook_render = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
+                    "-i", source_video,
+                    "-i", banner_path,
+                    "-f", "lavfi", "-t", f"{hook_dur:.3f}", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-filter_complex", hook_vf,
+                    "-map", "[vout]",
+                    "-map", "2:a",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                    "-r", "25", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                    hook_rendered_mp4
+                ]
             res_hook = subprocess.run(cmd_hook_render, capture_output=True, text=True, creationflags=flags)
             if res_hook.returncode == 0 and os.path.isfile(hook_rendered_mp4):
                 has_hook_segment = True
-                logger.info("✅ [HOOK RENDER] Đã dựng thành công đoạn Hook đầu tiên: %s", hook_rendered_mp4)
+                logger.info("✅ [HOOK RENDER] Đã dựng thành công đoạn Hook đầu tiên kèm âm thanh gốc: %s", hook_rendered_mp4)
             else:
                 logger.warning("⚠️ [HOOK RENDER] Lỗi dựng Hook: %s", res_hook.stderr)
 
