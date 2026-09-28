@@ -14,8 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 PROTECTED_ROOTS = {
-    "config.json", "config_part_splitter.json", "hardware_profile.json", "output", "temp", "runtime",
-    "bin", "vendor", "data", "update_backup", "update_download", "queue.json",
+    "config.json", "config_part_splitter.json", "config_tiktok_remixer.json", "hardware_profile.json",
+    "output", "temp", "runtime", "bin", "vendor", "data", "update_backup", "update_download", "queue.json",
 }
 
 
