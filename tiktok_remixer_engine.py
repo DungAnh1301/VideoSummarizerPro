@@ -15,6 +15,7 @@ from typing import Callable, Optional, Dict, Any, List, Tuple
 from capcut_filters import apply_look, build_adjust_filters, extra_ffmpeg_tail
 from font_manager import FontManager
 from market_profiles import get_market_profile, MARKET_PROFILES
+from editor_processor import EditorProcessor
 
 logger = logging.getLogger("TikTokRemixerEngine")
 logger.setLevel(logging.INFO)
@@ -497,6 +498,77 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return False
 
     @classmethod
+    def auto_detect_core_boundaries(
+        cls,
+        source_video: str,
+        gemini_ymin: float = 0.20,
+        gemini_ymax: float = 0.80
+    ) -> Tuple[float, float]:
+        """
+        Tự động dò tìm đường biên phân cách (seam border line) của video lõi sạch 16:9
+        giữa dải mờ trên và dải mờ dưới bằng OpenCV Gradient/Diff.
+        Cắt bỏ chính xác 100% 2 vệt viền/đường ngang phân cách mỏng mà mắt người thấy.
+        """
+        try:
+            import cv2
+            import numpy as np
+
+            cap = cv2.VideoCapture(source_video)
+            if not cap.isOpened():
+                return (max(0.0, gemini_ymin + 0.025), min(1.0, gemini_ymax - 0.025))
+
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 100)
+            sample_indices = [int(total_frames * 0.15), int(total_frames * 0.30), int(total_frames * 0.50)]
+            
+            top_seams = []
+            bot_seams = []
+            frame_h = 0
+
+            for f_idx in sample_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
+                h, w, _ = frame.shape
+                frame_h = h
+
+                y_top_start, y_top_end = int(0.18 * h), int(0.38 * h)
+                y_bot_start, y_bot_end = int(0.62 * h), int(0.82 * h)
+
+                try:
+                    top_cands = [(y, float(np.mean(np.abs(frame[y].astype(float) - frame[y-1].astype(float))))) for y in range(y_top_start, y_top_end)]
+                    best_top = max(top_cands, key=lambda x: x[1])
+                    if best_top[1] > 20.0:
+                        top_seams.append(best_top[0])
+
+                    bot_cands = [(y, float(np.mean(np.abs(frame[y].astype(float) - frame[y-1].astype(float))))) for y in range(y_bot_start, y_bot_end)]
+                    best_bot = max(bot_cands, key=lambda x: x[1])
+                    if best_bot[1] > 20.0:
+                        bot_seams.append(best_bot[0])
+                except Exception:
+                    pass
+
+            cap.release()
+
+            if frame_h > 0 and top_seams:
+                avg_top = float(np.median(top_seams))
+                clean_ymin = round((avg_top + 6.0) / frame_h, 4)
+            else:
+                clean_ymin = round(max(0.0, gemini_ymin + 0.025), 4)
+
+            if frame_h > 0 and bot_seams:
+                avg_bot = float(np.median(bot_seams))
+                clean_ymax = round((avg_bot - 6.0) / frame_h, 4)
+            else:
+                clean_ymax = round(min(1.0, gemini_ymax - 0.025), 4)
+
+            logger.info(f"✂️ [CORE SEAM DETECT] Tọa độ cắt lõi triệt tiêu đường viền: ymin={clean_ymin:.4f}, ymax={clean_ymax:.4f}")
+            return clean_ymin, clean_ymax
+        except Exception as e:
+            logger.warning(f"⚠️ [CORE SEAM DETECT] Lỗi dò đường viền: {e}")
+            return (round(max(0.0, gemini_ymin + 0.025), 4), round(min(1.0, gemini_ymax - 0.025), 4))
+
+    @classmethod
     def render_tiktok_remix(
         cls,
         source_video: str,
@@ -529,8 +601,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # 1. Tính toán Tọa độ Cắt Lõi Sạch (Clean Core Crop)
         geom = gemini_plan.get("layout_geometry", {})
         crop_norm = geom.get("core_crop_normalized", {"ymin": 0.0, "ymax": 1.0})
-        ymin = max(0.0, min(0.4, float(crop_norm.get("ymin", 0.0))))
-        ymax = max(0.6, min(1.0, float(crop_norm.get("ymax", 1.0))))
+        g_ymin = max(0.0, min(0.4, float(crop_norm.get("ymin", 0.0))))
+        g_ymax = max(0.6, min(1.0, float(crop_norm.get("ymax", 1.0))))
+
+        # Tự động dò và triệt tiêu 2 đường viền/mép ngang mỏng của video đối thủ bằng OpenCV
+        if options.get("auto_clean_core_crop", True):
+            ymin, ymax = cls.auto_detect_core_boundaries(source_video, g_ymin, g_ymax)
+        else:
+            ymin, ymax = g_ymin, g_ymax
         
         crop_y = int(orig_h * ymin)
         crop_h = int(orig_h * (ymax - ymin))
@@ -725,16 +803,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         audio_opts = []
         if audio_boost != 0:
-            audio_opts.extend(["-filter:a", f"volume={audio_boost:.1f}dB"])
+            audio_opts.extend(["-filter:a", EditorProcessor.capcut_audio_filter(audio_boost)])
 
         has_src_audio = EditorProcessor._has_audio(source_video)
 
         if options.get("keep_original_hook", True) and hook_dur >= 0.5:
-            logger.info("🎬 [HOOK RENDER] Dựng đoạn Hook mở đầu (%.2fs - %.2fs) giữ nguyên 100%% âm thanh gốc...", hook_start, hook_end)
+            logger.info("🎬 [HOOK RENDER] Dựng đoạn Hook mở đầu (%.2fs - %.2fs) giữ nguyên 100%% âm thanh gốc (CapCut Limiter)...", hook_start, hook_end)
             if blur_bg:
                 bg_hook_chain = (
                     f"[core_clean]split=2[c_fg][c_bg];"
-                    f"[c_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
+                    f"[c_bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=25:5,scale=1080:1920:flags=bicubic[bg];"
                     f"[c_fg]scale={fg_w}:{fg_h}[fg];"
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
                 )
@@ -748,7 +826,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             hook_vf = (
                 f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                 f"split=2[c_orig][c_mask];"
-                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=12:3[c_blur];"
+                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
                 f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
                 f"{bg_hook_chain}"
                 f"[v_base]{color_filter_str}[v_color];"
@@ -815,7 +893,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             vf_clip = (
                 f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                 f"split=2[c_orig][c_mask];"
-                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=12:3[c_blur];"
+                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
                 f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
                 f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
             )
@@ -912,9 +990,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     abs_srt = f"{d}\\:{p}"
                 sub_filter_chain = f"[v_banner]subtitles='{abs_srt}'[vout]"
 
-        # Nền blur 2 đầu từ chính lõi sạch cho phần thân video
+        # Nền blur 2 đầu từ chính lõi sạch cho phần thân video (Boxblur 25:5 mờ sâu chuẩn điện ảnh)
         if blur_bg:
-            bg_stream = f"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,avgblur=10[bg];"
+            bg_stream = f"[0:v]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=25:5,scale=1080:1920:flags=bicubic[bg];"
         else:
             bg_stream = f"color=c=black:s=1080x1920:r=25[bg];"
 
@@ -932,7 +1010,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         audio_body_opts = []
         body_af = []
         if audio_boost != 0:
-            body_af.append(f"volume={audio_boost:.1f}dB")
+            body_af.append(EditorProcessor.capcut_audio_filter(audio_boost))
         if narration_audio and os.path.isfile(narration_audio) and audio_duration < target_body_dur:
             pad_dur = target_body_dur - audio_duration + 0.5
             body_af.append(f"apad=pad_dur={pad_dur:.2f}")
