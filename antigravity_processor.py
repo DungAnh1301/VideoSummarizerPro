@@ -724,3 +724,97 @@ class AntigravityProcessor:
                     continue
                 raise
 
+    @classmethod
+    def inspect_video_prompt(cls, video_path: str, prompt: str, job_dir: str = "") -> str:
+        """Phân tích video chi tiết từng giây 1 (Second-by-second inspection) bằng Antigravity CLI."""
+        exe = cls.executable()
+        if not exe:
+            raise RuntimeError("Antigravity CLI chưa sẵn sàng.")
+        
+        video_path = os.path.abspath(video_path)
+        if not os.path.isfile(video_path):
+            raise RuntimeError(f"Không tìm thấy file video: {video_path}")
+        
+        work_dir = job_dir if (job_dir and os.path.isdir(job_dir)) else os.path.dirname(video_path)
+        analysis_dir = os.path.join(work_dir, "ai_tiktok_storyboard")
+        os.makedirs(analysis_dir, exist_ok=True)
+
+        # 1. Trích xuất Contact Sheet 1s / frame với burned timestamp
+        storyboard_files = []
+        try:
+            from scene_mapper import ensure_visual_storyboards
+            storyboard_files = ensure_visual_storyboards(video_path, analysis_dir, fps=1.0)
+            logger.info("📸 [ANTIGRAVITY TIKTOK] Đã tạo %d contact sheet visual storyboards (1 frame/s).", len(storyboard_files))
+        except Exception as e:
+            logger.warning("⚠️ [ANTIGRAVITY TIKTOK] Lỗi tạo visual storyboard: %s", e)
+
+        storyboard_names = [os.path.basename(f) for f in storyboard_files]
+        storyboard_info = ""
+        if storyboard_names:
+            storyboard_info = (
+                f"\nVISUAL STORYBOARDS ({len(storyboard_files)} sheets, 1 frame per second):\n"
+                f"Files: {', '.join(storyboard_names)}\n"
+                "Each frame has burned timestamp [mm:ss]. Inspect every single second thoroughly.\n"
+            )
+
+        # 2. Ghi prompt request vào file UTF-8
+        request_file = os.path.join(analysis_dir, "antigravity_request.txt")
+        full_request_content = (
+            "You are an elite video editor and narrative director conducting a dense, second-by-second inspection.\n"
+            f"VIDEO FILE: {os.path.basename(video_path)}\n"
+            f"{storyboard_info}\n"
+            f"{prompt}\n"
+        )
+        Path(request_file).write_text(full_request_content, encoding="utf-8")
+
+        short_request = (
+            "Read antigravity_request.txt in this folder. Perform deep second-by-second analysis on the storyboard sheets "
+            "and video. Follow every task carefully and output ONLY valid JSON immediately."
+        )
+
+        candidate_profiles = cls.get_candidate_profiles()
+        max_retries = max(2, len(candidate_profiles))
+        for attempt in range(1, max_retries + 1):
+            prof = candidate_profiles[(attempt - 1) % len(candidate_profiles)]
+            command = [
+                exe, "--print", short_request,
+                "--model", prof["model"],
+                "--output-format", "json",
+                "--effort", prof["effort"],
+                "--add-dir", analysis_dir,
+                "--dangerously-skip-permissions",
+            ]
+            try:
+                logger.info("🤖 [ANTIGRAVITY TIKTOK] Đang gửi yêu cầu soi chi tiết từng giây qua %s...", prof["label"])
+                completed = subprocess.run(
+                    command, cwd=analysis_dir, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=300,
+                    creationflags=0x08000000 if os.name == "nt" else 0,
+                )
+                if completed.returncode != 0:
+                    detail = (completed.stderr or completed.stdout or "unknown error").strip()
+                    raise RuntimeError(f"Antigravity TikTok inspection error: {detail[-600:]}")
+                raw = (completed.stdout or "").strip()
+                try:
+                    envelope = json.loads(raw)
+                    if isinstance(envelope, dict):
+                        if envelope.get("status") and envelope.get("status") != "SUCCESS":
+                            err_msg = envelope.get("error") or envelope.get("message") or envelope.get("status")
+                            raise RuntimeError(f"Antigravity CLI báo lỗi: {err_msg}")
+                        for key in ("result", "response", "content", "text", "output"):
+                            value = envelope.get(key)
+                            if isinstance(value, str) and value.strip():
+                                return value.strip()
+                            elif isinstance(value, dict):
+                                return json.dumps(value, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    pass
+                return raw
+            except Exception as exc:
+                logger.warning("⚠️ [ANTIGRAVITY TIKTOK] Lần thử %d thất bại: %s", attempt, exc)
+                if attempt < max_retries:
+                    time.sleep(1.0)
+                    continue
+                raise
+
+

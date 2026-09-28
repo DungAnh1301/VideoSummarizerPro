@@ -125,33 +125,41 @@ class TikTokRemixerEngine:
         locale_code = market.get("locale", "de-DE")
         dur = cls.get_video_duration(video_path)
 
-        prompt = f"""You are an elite short-form video editor and scriptwriter for TikTok and YouTube Shorts.
-Analyze this {dur:.1f}s short video comprehensively and return ONLY a valid JSON object.
+        prompt = f"""You are an elite master short-form director, video editor, and viral scriptwriter for TikTok and YouTube Shorts.
+Perform a DENSE, SECOND-BY-SECOND visual inspection of this {dur:.1f}s short video.
+Take as much time and attention as needed to inspect every single second thoroughly. Return ONLY valid JSON.
 
 TASKS:
 1. GEOMETRY CLEANING:
-   - Identify if the video has top/bottom blurred borders, textures, or a burned-in Title Banner at the top (like typical competitor reposts).
-   - Provide "core_crop_normalized": {{"ymin": float, "ymax": float}} to crop out the top title and bottom TikTok UI/border, keeping only the clean middle core actor/action footage (0.0 to 1.0).
-   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} marking the burned-in source subtitle text and "Part 2" badge at the bottom to blur.
+   - Identify top/bottom blurred bars, textures, or burned-in competitor Title banners.
+   - Provide "core_crop_normalized": {{"ymin": float, "ymax": float}} to slice off competitor titles and UI, isolating only the clean core action footage.
+   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} precisely bounding burned-in source subtitles and "Part" badges at the bottom to blur.
 
-2. INTRO/OUTRO INSPECTION:
-   - Check if the first 0.5s or last 1.0s has bouncing TikTok logo transitions.
-   - If clean dialogue/action is present from 0.0s, set "trim_start_sec": 0.0. Only trim if actual watermark animation exists.
+2. INTRO/OUTRO WATERMARK INSPECTION:
+   - Inspect the first 0.5s and last 1.0s frame-by-frame for bouncing TikTok logos or transition wipes.
+   - Only set trim if actual animated watermarks appear. If real action/speech starts at 0.0s, keep "trim_start_sec": 0.0.
 
 3. HOOK DETECTION:
-   - Identify the opening hook climax segment (usually 0.0s to 3.5s - 5.0s) with suspenseful facial reaction or action.
+   - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move.
+   - Set "keep_original_audio": true.
 
-4. SMART SCENE SEGMENTATION & TRANSITIONS:
-   - Split the remaining footage into clean scenes.
-   - For each cut, determine "transition_type":
-     * "none" (hard cut): set "cutout_sec": 0.0. DO NOT trim hard cuts!
-     * "white_flash", "zoom_glitch", "fade_black": specify exact micro cutout duration (0.15 to 0.25s).
-   - Provide "clean_range": [start, end] for each scene.
+4. DENSE SECOND-BY-SECOND SCENE SEGMENTATION & VISUAL TAGGING:
+   - Segment the remaining footage into clean B-Roll scenes (identifying every available cut in the source video).
+   - For EACH scene, provide:
+     * "id": "S1", "S2", "S3"...
+     * "clean_range": [start, end]
+     * "visual_summary": exact action, subject, facial expression, mood, objects shown
+     * "has_text": boolean (true if burned-in on-screen text, street signs, or badges exist in this scene - to avoid mirroring)
+     * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
 
-5. SCRIPT REWRITING:
-   - Write an engaging, viral, climax-first short narration in {lang_name} ({locale_code}).
-   - Target word count: 80 to 140 words (paced to match ~35s-50s of clean footage).
-   - Provide a catchy 2-line title in {lang_name}.
+5. CONTINUOUS NARRATION & NEAREST-SEMANTIC B-ROLL MATCHING (GHÉP CẢNH CÓ SẴN THEO NGỮ NGHĨA GẦN NHẤT):
+   - CRITICAL MONETIZATION CONSTRAINT: The final video MUST be strictly LONGER THAN 60 SECONDS (Target: 61.5s to 68.0s) to qualify for TikTok Creator Rewards.
+   - Word budget: Write approx 140 to 175 spoken words in {lang_name} ({locale_code}). NEVER write fewer than 135 words!
+   - You only have these existing raw B-Roll scenes extracted from the source video (no external replacement footage). DO NOT chop them into awkward micro fragments; keep their natural camera motion and emotion intact.
+   - Write a smooth, continuous viral narration story that reads seamlessly from beginning to end without artificial pauses or waiting for cuts.
+   - Re-arrange and sequence the available existing B-Roll scenes in "remix_storyboard" so that each scene visually matches the NEAREST SEMANTIC MEANING, mood, or action of that part of the continuous voiceover/subtitles.
+   - Ensure the re-ordered scene sequence breaks the competitor's original hash while fitting the new narrative progression as coherently as possible.
+   - Provide "title_line1" and "title_line2" in {lang_name}.
 
 OUTPUT FORMAT (JSON ONLY):
 {{
@@ -170,29 +178,60 @@ OUTPUT FORMAT (JSON ONLY):
     "has_hook": true,
     "start_sec": 0.0,
     "end_sec": 3.8,
-    "keep_original_audio": true
+    "keep_original_audio": true,
+    "visual_summary": "Shocked facial expression of the protagonist"
   }},
   "scenes": [
     {{
       "id": "S1",
-      "raw_range": [3.8, 8.5],
+      "clean_range": [3.8, 8.5],
+      "visual_summary": "Red sports car accelerating fast on highway",
+      "has_text": false,
       "transition_type": "none",
-      "cutout_sec": 0.0,
-      "clean_range": [3.8, 8.5]
+      "cutout_sec": 0.0
     }},
     {{
       "id": "S2",
-      "raw_range": [8.5, 14.0],
+      "clean_range": [8.5, 13.8],
+      "visual_summary": "Close-up of speedometer revving to redline",
+      "has_text": false,
       "transition_type": "white_flash",
-      "cutout_sec": 0.18,
-      "clean_range": [8.68, 14.0]
+      "cutout_sec": 0.18
+    }},
+    {{
+      "id": "S3",
+      "clean_range": [13.8, 19.2],
+      "visual_summary": "Driver smiling confidently holding the steering wheel",
+      "has_text": false,
+      "transition_type": "none",
+      "cutout_sec": 0.0
+    }}
+  ],
+  "remix_storyboard": [
+    {{
+      "segment_index": 1,
+      "scene_id": "S2",
+      "semantic_matching_reason": "Matches the tension and urgency described in the narration",
+      "target_duration_sec": 5.1
+    }},
+    {{
+      "segment_index": 2,
+      "scene_id": "S1",
+      "semantic_matching_reason": "Matches the high-speed motion described in the narration",
+      "target_duration_sec": 4.7
+    }},
+    {{
+      "segment_index": 3,
+      "scene_id": "S3",
+      "semantic_matching_reason": "Matches the confidence and unexpected twist in the story",
+      "target_duration_sec": 5.4
     }}
   ],
   "rewritten_narration": {{
     "language": "{locale_code}",
-    "title_line1": "TITEL ZEILE 1",
-    "title_line2": "TITEL ZEILE 2",
-    "script_text": "Spoken narration in {lang_name}..."
+    "title_line1": "DER UNGLAUBLICHE",
+    "title_line2": "MOMENT DER ENTSCHEIDUNG",
+    "script_text": "Der Zeiger erreichte die absolute Höchstgrenze. Mit atemberaubender Geschwindigkeit raste der Wagen durch die finstere Nacht. Doch was er vorhatte, ahnte zu diesem Zeitpunkt noch absolut niemand."
   }}
 }}
 """
@@ -200,12 +239,12 @@ OUTPUT FORMAT (JSON ONLY):
         try:
             from antigravity_processor import AntigravityProcessor
             if AntigravityProcessor.executable():
-                logger.info("🤖 [GEMINI CLI] Gửi video TikTok sang Antigravity CLI...")
+                logger.info("🤖 [GEMINI CLI] Gửi video TikTok sang Antigravity CLI để soi chi tiết từng giây...")
                 raw_out = AntigravityProcessor.inspect_video_prompt(video_path, prompt)
                 if raw_out:
                     parsed = cls._parse_json_from_text(raw_out)
                     if parsed:
-                        logger.info("✅ [GEMINI CLI] Đã nhận phân tích phân cảnh và kịch bản thành công!")
+                        logger.info("✅ [GEMINI CLI] Đã nhận phân tích phân cảnh, storyboard logic và kịch bản thành công!")
                         return parsed
         except Exception as e:
             logger.warning(f"⚠️ [GEMINI CLI] Lỗi Antigravity CLI: {e}")
@@ -249,6 +288,9 @@ OUTPUT FORMAT (JSON ONLY):
     def _create_default_fallback_plan(cls, dur: float, target_market: str) -> Dict[str, Any]:
         """Tạo plan mặc định khi không có kết nối AI."""
         market = get_market_profile(target_market)
+        h_end = min(4.0, dur * 0.15)
+        rem_dur = max(2.0, dur - h_end)
+        half_dur = rem_dur / 2.0
         return {
             "layout_geometry": {
                 "has_top_title_or_blur": True,
@@ -264,25 +306,82 @@ OUTPUT FORMAT (JSON ONLY):
             "hook": {
                 "has_hook": True,
                 "start_sec": 0.0,
-                "end_sec": min(4.0, dur * 0.15),
-                "keep_original_audio": True
+                "end_sec": h_end,
+                "keep_original_audio": True,
+                "visual_summary": "Opening highlight"
             },
             "scenes": [
                 {
                     "id": "S1",
-                    "raw_range": [min(4.0, dur * 0.15), dur],
+                    "clean_range": [h_end, h_end + half_dur],
+                    "visual_summary": "Action progression scene 1",
+                    "has_text": False,
                     "transition_type": "none",
-                    "cutout_sec": 0.0,
-                    "clean_range": [min(4.0, dur * 0.15), dur]
+                    "cutout_sec": 0.0
+                },
+                {
+                    "id": "S2",
+                    "clean_range": [h_end + half_dur, dur],
+                    "visual_summary": "Climax resolution scene 2",
+                    "has_text": False,
+                    "transition_type": "none",
+                    "cutout_sec": 0.0
+                }
+            ],
+            "remix_storyboard": [
+                {
+                    "segment_index": 1,
+                    "scene_id": "S2",
+                    "narration_sentence": "Unglaubliche Momente, die man einfach gesehen haben muss.",
+                    "target_duration_sec": half_dur
+                },
+                {
+                    "segment_index": 2,
+                    "scene_id": "S1",
+                    "narration_sentence": "Niemand hatte mit dieser unerwarteten Wendung gerechnet.",
+                    "target_duration_sec": half_dur
                 }
             ],
             "rewritten_narration": {
                 "language": market.get("locale", "de-DE"),
                 "title_line1": "REMIX HIGHLIGHT",
                 "title_line2": "TIKTOK SPECIAL",
-                "script_text": "Unglaubliche Momente, die man einfach gesehen haben muss."
+                "script_text": "Unglaubliche Momente, die man einfach gesehen haben muss. Niemand hatte mit dieser unerwarteten Wendung gerechnet."
             }
         }
+
+    @classmethod
+    def format_srt_time(cls, seconds: float) -> str:
+        """Định dạng số giây sang chuẩn SRT hh:mm:ss,mmm."""
+        millis = int(round((seconds - int(seconds)) * 1000))
+        secs_int = int(seconds)
+        mins, secs = divmod(secs_int, 60)
+        hours, mins = divmod(mins, 60)
+        return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+
+    @classmethod
+    def create_storyboard_srt(
+        cls,
+        sentences: List[str],
+        total_duration: float,
+        output_srt_path: str
+    ):
+        """Tạo file SRT từ danh sách câu phân đoạn kịch bản khớp với tổng thời lượng audio."""
+        if not sentences:
+            sentences = ["..."]
+        
+        # Đếm số từ của từng câu để phân bổ thời gian tương ứng
+        word_counts = [max(1, len(s.strip().split())) for s in sentences]
+        total_words = max(1, sum(word_counts))
+        
+        cur_time = 0.0
+        with open(output_srt_path, "w", encoding="utf-8") as f:
+            for idx, (sent, w_cnt) in enumerate(zip(sentences, word_counts), 1):
+                dur_sent = (w_cnt / total_words) * total_duration
+                start_str = cls.format_srt_time(cur_time)
+                end_str = cls.format_srt_time(min(total_duration, cur_time + dur_sent))
+                f.write(f"{idx}\n{start_str} --> {end_str}\n{sent.strip()}\n\n")
+                cur_time += dur_sent
 
     @classmethod
     def generate_narration_audio_and_sub(
@@ -292,12 +391,24 @@ OUTPUT FORMAT (JSON ONLY):
         voice_name: str = "Jessie (DiT_en_female_jessie)",
         locale: str = "en-US",
         speed_str: str = "+0%",
+        storyboard: Optional[List[Dict[str, Any]]] = None,
         output_dir: str = "temp"
     ) -> Tuple[Optional[str], Optional[str], float]:
-        """Tạo giọng đọc AI thuyết minh và file phụ đề .srt tương ứng."""
+        """Tạo giọng đọc AI thuyết minh và file phụ đề .srt tương ứng khớp từng phân đoạn câu."""
         os.makedirs(output_dir, exist_ok=True)
         audio_out = os.path.join(output_dir, "tiktok_narration.mp3")
         srt_out = os.path.join(output_dir, "tiktok_subtitles.srt")
+
+        # Lấy danh sách câu từ storyboard nếu có
+        sentences = []
+        if storyboard and isinstance(storyboard, list):
+            for seg in storyboard:
+                sent = seg.get("narration_sentence", "").strip()
+                if sent:
+                    sentences.append(sent)
+        
+        if not script_text and sentences:
+            script_text = " ".join(sentences)
 
         from ai_processor import AIProcessor
         try:
@@ -311,8 +422,24 @@ OUTPUT FORMAT (JSON ONLY):
 
             if audio_ok and os.path.isfile(audio_out):
                 dur = cls.get_video_duration(audio_out)
-                # Tạo file sub srt khớp âm thanh
-                AIProcessor.generate_srt_from_text(script_text, srt_out, total_duration=dur)
+                srt_created = False
+                
+                # Thử tạo SRT chuẩn bằng Faster-Whisper nếu có sẵn trong hệ thống
+                try:
+                    if hasattr(AIProcessor, "write_exact_script_srt"):
+                        exact_srt = AIProcessor.write_exact_script_srt(script_text, audio_out, output_dir)
+                        if exact_srt and os.path.isfile(exact_srt):
+                            shutil.copy2(exact_srt, srt_out)
+                            srt_created = True
+                except Exception as w_err:
+                    logger.warning("⚠️ [TTS SRT] Whisper fallback: %s", w_err)
+
+                if not srt_created:
+                    # Tạo SRT từ storyboard sentences hoặc tách câu từ script_text
+                    if not sentences:
+                        sentences = [s.strip() for s in re.split(r'[.!?]+', script_text) if s.strip()]
+                    cls.create_storyboard_srt(sentences, dur, srt_out)
+
                 return audio_out, srt_out, dur
         except Exception as e:
             logger.error(f"❌ [TTS ERROR] Lỗi tạo giọng đọc: {e}")
@@ -372,26 +499,113 @@ OUTPUT FORMAT (JSON ONLY):
         hook_dur = max(0.0, hook_end - hook_start)
 
         raw_scenes = gemini_plan.get("scenes", [])
+        scenes_by_id = {}
         clean_scenes = []
         for sc in raw_scenes:
             c_range = sc.get("clean_range", sc.get("raw_range", [0, 0]))
             st, en = float(c_range[0]), float(c_range[1])
             if en > st + 0.4:
-                clean_scenes.append({"id": sc.get("id"), "start": st, "end": en, "dur": en - st})
+                sc_dict = {
+                    "id": sc.get("id"),
+                    "start": st,
+                    "end": en,
+                    "dur": en - st,
+                    "has_text": bool(sc.get("has_text", False)),
+                    "visual_summary": sc.get("visual_summary", "")
+                }
+                clean_scenes.append(sc_dict)
+                if sc.get("id"):
+                    scenes_by_id[sc.get("id")] = sc_dict
 
-        # 4. Điều Tốc B-Roll Đàn Hồi (Elastic B-Roll Speed Matching)
-        target_body_dur = max(5.0, audio_duration)
+        # 4. Sắp xếp lại thứ tự cảnh: Ưu tiên Storyboard của AI (khớp nội dung mới) hoặc Shuffle
+        remix_storyboard = gemini_plan.get("remix_storyboard", [])
+        ordered_scenes = []
+        if remix_storyboard and isinstance(remix_storyboard, list):
+            for seg in remix_storyboard:
+                sc_id = seg.get("scene_id")
+                if sc_id and sc_id in scenes_by_id:
+                    ordered_scenes.append(dict(scenes_by_id[sc_id]))
+            logger.info("🎬 [STORYBOARD AI] Đã sắp xếp %d cảnh theo kịch bản logic của AI.", len(ordered_scenes))
+
+        # Nếu không có storyboard hoặc còn cảnh thừa, sắp xếp fallback
+        if not ordered_scenes:
+            ordered_scenes = list(clean_scenes)
+            if options.get("shuffle_broll", True) and len(ordered_scenes) > 2:
+                first = ordered_scenes[0]
+                rest = ordered_scenes[1:]
+                random.shuffle(rest)
+                ordered_scenes = [first] + rest
+        else:
+            # Bổ sung các cảnh chưa dùng vào cuối
+            used_ids = {s["id"] for s in ordered_scenes}
+            remaining = [s for s in clean_scenes if s["id"] not in used_ids]
+            if remaining:
+                ordered_scenes.extend(remaining)
+
+        clean_scenes = ordered_scenes
+
+        # 5. Đảm Bảo Chuẩn Thời Lượng Kiếm Tiền TikTok (Bắt buộc > 60s, mục tiêu >= 61.5s)
+        # Hook + Body >= 61.5s
+        min_monetization_total = 61.5
+        required_body_dur = max(min_monetization_total - hook_dur, audio_duration)
+        target_body_dur = max(5.0, required_body_dur)
         total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
-        # Nếu xáo trộn cảnh được bật
-        if options.get("shuffle_broll", True) and len(clean_scenes) > 2:
-            # Giữ cảnh đầu của thân, đảo ngẫu nhiên các cảnh sau
-            first = clean_scenes[0]
-            rest = clean_scenes[1:]
-            random.shuffle(rest)
-            clean_scenes = [first] + rest
+        # Nếu video gốc quá ngắn (thiếu > 4s để đạt chuẩn 1 phút):
+        # Kích hoạt Variant Looping (tái sử dụng các B-Roll hành động với biến thể góc quay/zoom mới)
+        if total_clean_dur < target_body_dur and clean_scenes:
+            deficit = target_body_dur - total_clean_dur
+            if deficit > 3.0:
+                logger.info("⚡ [MONETIZATION >60s] Video nguồn thiếu %.1fs để đạt 1 phút. Kích hoạt Variant B-Roll Looping...", deficit)
+                loop_pool = [s for s in clean_scenes if not s.get("has_text", False)] or clean_scenes
+                added_dur = 0.0
+                variant_idx = 1
+                while total_clean_dur + added_dur < target_body_dur - 2.0 and loop_pool:
+                    for sc_cand in loop_pool:
+                        sc_variant = dict(sc_cand)
+                        sc_variant["id"] = f"{sc_cand['id']}_var{variant_idx}"
+                        sc_variant["is_variant"] = True
+                        clean_scenes.append(sc_variant)
+                        added_dur += sc_variant["dur"]
+                        variant_idx += 1
+                        if total_clean_dur + added_dur >= target_body_dur - 2.0:
+                            break
+                total_clean_dur += added_dur
+                logger.info("✅ [MONETIZATION >60s] Đã bổ sung B-Roll biến thể, tổng thời lượng cảnh: %.1fs (Mục tiêu: %.1fs)", total_clean_dur, target_body_dur)
 
-        # 5. Xây dựng Title Banner Mới Bằng PIL
+        # 6. Điều Tốc B-Roll Đàn Hồi Ngẫu Nhiên (Stochastic Elastic Speed Matching)
+        elastic_pts_map = {}
+        if total_clean_dur < target_body_dur and options.get("elastic_broll_speed", True) and clean_scenes:
+            # Chọn ngẫu nhiên 50% đến 80% số cảnh để giãn thời lượng
+            sample_size = max(1, int(len(clean_scenes) * random.uniform(0.5, 0.8)))
+            stretched_indices = set(random.sample(range(len(clean_scenes)), min(sample_size, len(clean_scenes))))
+            for idx in range(len(clean_scenes)):
+                if idx in stretched_indices:
+                    # Random dao động nhẹ tốc độ an toàn: 1.025 đến 1.075 (chậm lại 0.93x - 0.975x)
+                    elastic_pts_map[idx] = round(random.uniform(1.025, 1.075), 4)
+                else:
+                    elastic_pts_map[idx] = 1.0
+            logger.info("⏱️ [ELASTIC SPEED] Đã chọn ngẫu nhiên %d/%d cảnh để giãn nhẹ tốc độ.", len(stretched_indices), len(clean_scenes))
+        else:
+            for idx in range(len(clean_scenes)):
+                elastic_pts_map[idx] = 1.0
+
+        # 7. Lật Gương Phản Chiếu Ngẫu Nhiên (Randomized Asymmetric Mirroring)
+        # Cảnh có chữ in/biển hiệu (has_text=True): KHÔNG LẬT để tránh ngược chữ.
+        # Cảnh biến thể (is_variant=True): Bắt buộc lật gương để đổi góc quay.
+        # Các cảnh còn lại: Random xác suất 50% độc lập
+        mirror_map = {}
+        for idx, sc in enumerate(clean_scenes):
+            if sc.get("has_text", False):
+                mirror_map[idx] = False
+            elif sc.get("is_variant", False):
+                mirror_map[idx] = True
+            elif options.get("mirror_broll", True):
+                mirror_map[idx] = (random.random() < 0.5)
+            else:
+                mirror_map[idx] = False
+
+        # 7. Xây dựng Title Banner Mới Bằng PIL
         from editor_processor import EditorProcessor
         script_info = gemini_plan.get("rewritten_narration", {})
         t_line1 = script_info.get("title_line1", options.get("title_line1", "REMIX SPECIAL"))
@@ -403,16 +617,16 @@ OUTPUT FORMAT (JSON ONLY):
         banner_x = int((cls.OUTPUT_W - banner_w) / 2)
         banner_y = int(options.get("title_y_pos", 260))
 
-        # 6. Tính Tọa Độ Subtitle Mới Đè Lên Vùng Sub Cũ Đã Blur
+        # 8. Tính Tọa Độ Subtitle Mới Đè Lên Vùng Sub Cũ Đã Blur
         # Gán MarginV tự động từ sub_norm
         sub_center_rel = (float(sub_norm.get("ymin", 0.74)) + float(sub_norm.get("ymax", 0.86))) / 2.0
         calculated_margin_v = int(cls.OUTPUT_H * (1.0 - sub_center_rel))
         sub_margin_v = calculated_margin_v if options.get("overlay_sub_on_blur_zone", True) else int(options.get("sub_margin_v", 100))
 
-        # 7. Bộ Lọc Màu CapCut 15 Thông Số
+        # 9. Bộ Lọc Màu CapCut 15 Thông Số
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
 
-        # 8. Xây Dựng Lệnh FFmpeg Filter Complex Hoàn Chỉnh
+        # 10. Xây Dựng Lệnh FFmpeg Filter Complex Hoàn Chỉnh
         # Nhánh 1: Cắt Hook (Giữ âm thanh gốc)
         hook_cut_mp4 = os.path.join(work_dir, "cut_hook.mp4")
         flags = 0x08000000 if os.name == "nt" else 0
@@ -434,19 +648,16 @@ OUTPUT FORMAT (JSON ONLY):
         clip_files = []
         for idx, sc in enumerate(clean_scenes):
             c_file = os.path.join(work_dir, f"broll_{idx:03d}.mp4")
-            # Nếu thiếu hình, cảnh lẻ áp dụng 0.95x
-            pts_speed = 1.0
-            if total_clean_dur < target_body_dur and (idx % 2 == 1) and options.get("elastic_broll_speed", True):
-                pts_speed = 1.0526 # 0.95x chậm hơn để kéo dài thời lượng
-            
-            mirror_filter = ",hflip" if (options.get("mirror_broll", True) and idx % 2 == 0) else ""
+            pts_speed = elastic_pts_map.get(idx, 1.0)
+            mirror_filter = ",hflip" if mirror_map.get(idx, False) else ""
+            zoom_var_filter = ",crop=iw*0.90:ih*0.90,scale=iw:ih" if sc.get("is_variant", False) else ""
 
             vf_clip = (
                 f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                 f"split=2[c_orig][c_mask];"
                 f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=12:3[c_blur];"
                 f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
-                f"setpts={pts_speed:.4f}*PTS{mirror_filter}"
+                f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
             )
             cmd_c = [
                 "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",

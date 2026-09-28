@@ -102,36 +102,59 @@ Gửi trực tiếp video gốc (1–2 phút) vào Gemini CLI để AI "vừa l�
     "start_sec": 0.0,
     "end_sec": 3.6,
     "keep_original_audio": true,
-    "reason": "Biểu cảm bất ngờ của nhân vật nữ rất kịch tính"
+    "visual_summary": "Biểu cảm bất ngờ của nhân vật nữ rất kịch tính"
   },
   "scenes": [
     {
       "id": "S1",
-      "raw_range": [3.6, 8.2],
+      "clean_range": [3.6, 8.2],
+      "visual_summary": "Chiếc xe thể thao màu đỏ tăng tốc trên cao tốc",
+      "has_text": false,
       "transition_type": "none",
-      "cutout_sec": 0.0,
-      "clean_range": [3.6, 8.2]
+      "cutout_sec": 0.0
     },
     {
       "id": "S2",
-      "raw_range": [8.2, 13.5],
+      "clean_range": [8.2, 13.5],
+      "visual_summary": "Cận cảnh đồng hồ tốc độ chạm vạch đỏ",
+      "has_text": false,
       "transition_type": "white_flash",
-      "cutout_sec": 0.18,
-      "clean_range": [8.38, 13.5]
+      "cutout_sec": 0.18
     },
     {
       "id": "S3",
-      "raw_range": [13.5, 19.0],
-      "transition_type": "zoom_glitch",
-      "cutout_sec": 0.22,
-      "clean_range": [13.5, 18.78]
+      "clean_range": [13.5, 18.78],
+      "visual_summary": "Người lái xe mỉm cười tự tin nhìn gương chiếu hậu",
+      "has_text": false,
+      "transition_type": "none",
+      "cutout_sec": 0.0
+    }
+  ],
+  "remix_storyboard": [
+    {
+      "segment_index": 1,
+      "scene_id": "S2",
+      "narration_sentence": "Der Zeiger erreichte die absolute Höchstgrenze...",
+      "target_duration_sec": 5.3
+    },
+    {
+      "segment_index": 2,
+      "scene_id": "S1",
+      "narration_sentence": "Mit atemberaubender Geschwindigkeit raste der Wagen durch die finstere Nacht...",
+      "target_duration_sec": 4.6
+    },
+    {
+      "segment_index": 3,
+      "scene_id": "S3",
+      "narration_sentence": "Doch was er vorhatte, ahnte zu diesem Zeitpunkt noch absolut niemand.",
+      "target_duration_sec": 5.3
     }
   ],
   "rewritten_narration": {
     "language": "de-DE",
     "title_line1": "DIE REAKTION WAR",
     "title_line2": "VÖLLIG UNERWARTET",
-    "script_text": "Niemand hatte mit diesem Moment gerechnet, doch als der Druck plötzlich nachließ..."
+    "script_text": "Der Zeiger erreichte die absolute Höchstgrenze. Mit atemberaubender Geschwindigkeit raste der Wagen durch die finstere Nacht. Doch was er vorhatte, ahnte zu diesem Zeitpunkt noch absolut niemand."
   }
 }
 ```
@@ -151,40 +174,43 @@ Không cắt cứng cố định $0.5s$ để tránh làm cụt các cảnh ng�
 
 ---
 
-## 5. GIẢI THUẬT ĐIỀU TỐC B-ROLL ĐÀN HỒI (ELASTIC B-ROLL SPEED MATCHING)
-
-* **Bỏ tăng tốc toàn cục:** Giữ nguyên tốc độ chuẩn $1.0x$ của video.
+## 5. GIẢI THUẬT ĐIỀU TỐC B-ROLL ĐÀN HỒI NGẪU NHIÊN (STOCHASTIC ELASTIC SPEED)
 
 ```mermaid
 flowchart TD
     A["So Sánh: Tổng Cảnh Sạch (T_video) vs Giọng Đọc AI (T_audio)"] --> B{"T_video vs T_audio"}
     
-    B -->|T_video < T_audio: THIẾU HÌNH| C["1. Giảm tốc nhẹ 0.95x trên các B-Roll lẻ: 1, 3, 5, 7, 9..."]
-    C --> C1{"Đã đủ thời lượng?"}
-    C1 -->|Đã vừa khít| C2["Hoàn thành khớp khít 100%"]
-    C1 -->|Vẫn còn thiếu nhẹ| C3["Fade out âm thanh an toàn 0.8s ở cuối"]
+    B -->|T_video < T_audio: THIẾU HÌNH| C["1. Random chọn 50%-80% số cảnh sạch"]
+    C --> C1["2. Random dao động tốc độ nhẹ 0.93x ~ 0.98x (pts_speed = 1.025 ~ 1.075)"]
+    C1 --> C2["Hoàn thành khớp khít 100% (Phá vỡ quy luật chẵn/lẻ)"]
 
-    B -->|T_video > T_audio: THỪA HÌNH| D["2. Lọc bỏ 1-2 B-Roll phụ hoặc co ngắn cảnh cuối"]
-    D --> D1["Khớp chuẩn mili-giây với câu nói cuối"]
+    B -->|T_video > T_audio: THỪA HÌNH| D["3. Tự động co ngắn cảnh cuối khớp chuẩn mili-giây với câu nói cuối"]
 ```
 
 1. **Khi THIẾU HÌNH ($T_{\text{video}} < T_{\text{audio}}$):**
-   - Giảm tốc độ nhẹ $0.95x$ (`setpts=1.0526*PTS`) trên các cảnh B-Roll lẻ ($1, 3, 5, 7, 9...$), cảnh chẵn giữ nguyên $1.0x$.
-   - Mức $0.95x$ là ngưỡng an toàn tuyệt đối, mắt người không nhận ra sự thay đổi.
-   - Nếu vẫn còn thiếu nhẹ $\to$ Áp dụng `afade=t=out:st=T_video-0.8:d=0.8` kết thúc êm ái, **tuyệt đối không bao giờ để đen màn hình**.
+   - **Xóa bỏ quy luật chẵn/lẻ cố định**: Hệ thống sử dụng `random.sample` chọn ngẫu nhiên một tập hợp $50\% - 80\%$ số cảnh.
+   - **Random dao động tốc độ**: Tốc độ kéo dài trên mỗi cảnh được random vi mô trong dải an toàn tự nhiên $0.93x \sim 0.98x$ (`pts_speed = random.uniform(1.025, 1.075)`).
+   - Mức giãn tốc độ này hoàn toàn nằm dưới ngưỡng cảm nhận của mắt người, nhưng tổng thể video nở ra khớp khít với âm thanh của giọng đọc AI.
 2. **Khi THỪA HÌNH ($T_{\text{video}} > T_{\text{audio}}$):**
-   - Tự động bỏ 1-2 cảnh phụ hoặc co ngắn đuôi cảnh cuối khớp khít câu kết thúc của giọng AI.
+   - Tự động co ngắn đuôi cảnh cuối khớp khít câu kết thúc của giọng AI.
 
 ---
 
-## 6. KỸ THUẬT ĐÈ SUBTITLE MỚI LÊN ĐÚNG VÙNG SUB CŨ ĐÃ BLUR
+## 6. KỸ THUẬT ĐÈ SUBTITLE MỚI & LẬT GƯƠNG NGẪU NHIÊN BẢO VỆ CHỮ
 
-1. Gemini CLI trả về tọa độ dải Sub cũ: $Y_{\text{sub}} = [0.74, 0.86]$.
-2. FFmpeg bôi mờ (`boxblur`) dải chữ cũ này.
-3. Hệ thống tính toán lề đáy cho Sub mới:
-   $$\text{MarginV} = H_{\text{output}} \times (1.0 - Y_{\text{sub\_center}})$$
-4. Đè Subtitle mới (kiểu TikTok Slim, viền đen dày $3\text{px}$, đổ bóng 3D) vào đúng tọa độ này.
-5. **Kết quả:** Phụ đề mới sắc nét đè kín lên trên mảng mờ $\to$ Người xem thấy video đẹp tự nhiên $100\%$, xóa sạch mọi dấu vết cũ.
+1. **Lật Gương Phản Chiếu Ngẫu Nhiên (Randomized Asymmetric Mirroring)**:
+   - Dựa trên cờ `has_text` do AI soi từng giây: Cảnh nào có chữ in/biển hiệu sẽ **tuyệt đối không lật gương** (tránh ngược chữ).
+   - Các cảnh còn lại được chọn lật ngẫu nhiên độc lập $50\%$ (`random.random() < 0.5`), giúp mỗi video render ra có mẫu lật hoàn toàn khác nhau.
+2. **Kỹ Thuật Đè Subtitle Lên Đúng Vùng Sub Cũ Đã Blur**:
+   - Gemini CLI trả về tọa độ dải Sub cũ: $Y_{\text{sub}} = [0.74, 0.86]$.
+   - FFmpeg bôi mờ (`boxblur=12:3`) dải chữ cũ này.
+   - Tính toán lề đáy cho Sub mới: $\text{MarginV} = H_{\text{output}} \times (1.0 - Y_{\text{sub\_center}})$.
+   - Đè Subtitle mới (kiểu TikTok Slim, viền đen dày $3\text{px}$, đổ bóng 3D) vào đúng tọa độ này, che kín $100\%$ vết mờ.
+3. **Ghép Nối Các B-Roll Có Sẵn Theo Ngữ Nghĩa Gần Nhất (Nearest-Semantic Matching) & Sub Đọc Liên Tục**:
+   - **Bản chất thực tế**: Video đối thủ chỉ có sẵn $N$ cảnh B-Roll tự nhiên (không có cảnh ngoại vi thay thế). Hệ thống giữ nguyên vẹn trọn vẹn từng cảnh, không cắt xén vụn vặt làm hỏng chuyển động gốc.
+   - **Sub đọc liên tục (Continuous Narration)**: Giọng đọc AI đọc kịch bản một mạch liên tục, mượt mà từ đầu đến cuối như một người kể chuyện thực thụ, không bị ngắt gượng ép chờ chuyển cảnh. Subtitle xuất hiện đều đặn theo nhịp đọc.
+   - **Cảnh chạy theo Sub**: Các cảnh B-Roll có sẵn được xếp lại trật tự theo nguyên tắc **ngữ nghĩa gần nhất** (cảnh nào thể hiện tâm trạng, hành động hoặc chi tiết sát nhất với đoạn sub tại thời điểm đó sẽ được ưu tiên xuất hiện).
+   - Nhờ đó, người xem thấy câu chuyện kể trôi chảy liền mạch và hình ảnh bên dưới minh họa hợp lý, tự nhiên nhất có thể!
 
 ---
 

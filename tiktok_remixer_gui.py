@@ -842,7 +842,9 @@ class TikTokRemixerTab(ttk.Frame):
 
                 update_cb("tts", f"Tạo giọng đọc AI ({eng} • {voc})...")
                 audio_f, srt_f, audio_dur = TikTokRemixerEngine.generate_narration_audio_and_sub(
-                    script_txt, engine_name=eng, voice_name=voc, locale=loc, speed_str=spd, output_dir=work_dir
+                    script_txt, engine_name=eng, voice_name=voc, locale=loc, speed_str=spd,
+                    storyboard=gemini_plan.get("remix_storyboard", []),
+                    output_dir=work_dir
                 )
 
                 # 4. Render Thành Phẩm
