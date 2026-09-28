@@ -196,11 +196,11 @@ flowchart TD
 
 ---
 
-## 6. KỸ THUẬT ĐÈ SUBTITLE MỚI & LẬT GƯƠNG NGẪU NHIÊN BẢO VỆ CHỮ
+## 6. KỸ THUẬT ĐÈ SUBTITLE MỚI & LẬT GƯƠNG NGẪU NHIÊN CHUẨN CHẾ ĐỘ 1
 
-1. **Lật Gương Phản Chiếu Ngẫu Nhiên (Randomized Asymmetric Mirroring)**:
-   - Dựa trên cờ `has_text` do AI soi từng giây: Cảnh nào có chữ in/biển hiệu sẽ **tuyệt đối không lật gương** (tránh ngược chữ).
-   - Các cảnh còn lại được chọn lật ngẫu nhiên độc lập $50\%$ (`random.random() < 0.5`), giúp mỗi video render ra có mẫu lật hoàn toàn khác nhau.
+1. **Lật Gương Phản Chiếu Ngẫu Nhiên (Chuẩn Cơ Chế Chế Độ 1 Tóm Tắt)**:
+   - Hệ thống random lật gương trực tiếp $40\% - 50\%$ số cảnh B-Roll sạch (và các cảnh biến thể) mà **không cần chạy dò chữ hay quét OCR tốn thời gian**.
+   - **Lật trước - Sub đè sau**: Video nền B-Roll được lật gương trước, sau đó toàn bộ Title Banner mới và Subtitle mới được render đè lên trên cùng của canvas, nên phụ đề và tiêu đề mới luôn luôn hiển thị xuôi chiều chuẩn $100\%$, tuyệt đối không bao giờ bị ngược chữ!
 2. **Kỹ Thuật Đè Subtitle Lên Đúng Vùng Sub Cũ Đã Blur**:
    - Gemini CLI trả về tọa độ dải Sub cũ: $Y_{\text{sub}} = [0.74, 0.86]$.
    - FFmpeg bôi mờ (`boxblur=12:3`) dải chữ cũ này.

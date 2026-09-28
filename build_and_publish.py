@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.51"
+VERSION = "1.3.52"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.51: Nâng cấp toàn diện Chế độ 3 (TikTok Remixer): AI soi chi tiết từng giây (second-by-second inspection), kịch bản đọc liên tục ghép B-Roll có sẵn theo ngữ nghĩa gần nhất (Nearest-Semantic Matching), chuẩn hóa mốc thời lượng tối thiểu >60s kiếm tiền TikTok với Variant Looping khi nguồn ngắn, điều tốc đàn hồi ngẫu nhiên (Stochastic Elastic Speed) và lật gương ngẫu nhiên có bảo vệ text."
+NOTES = "Bản phát hành v1.3.52: Chuẩn hóa cơ chế lật gương cho Chế độ 3 (TikTok Remixer) đồng bộ hoàn toàn với Chế độ 1 (Tóm tắt): Lật ngẫu nhiên 40%-50% số cảnh sạch B-Roll trực tiếp không chạy dò chữ/OCR, lật trước rồi overlay Subtitle mới và Title mới lên trên cùng đảm bảo sub luôn xuôi chiều 100%. Tinh giản prompt AI, xử lý che dọn sạch logo và sub cũ 100% ngay từ khâu geometry ban đầu."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

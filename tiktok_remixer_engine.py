@@ -149,7 +149,6 @@ TASKS:
      * "id": "S1", "S2", "S3"...
      * "clean_range": [start, end]
      * "visual_summary": exact action, subject, facial expression, mood, objects shown
-     * "has_text": boolean (true if burned-in on-screen text, street signs, or badges exist in this scene - to avoid mirroring)
      * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
 
 5. CONTINUOUS NARRATION & NEAREST-SEMANTIC B-ROLL MATCHING (GHÉP CẢNH CÓ SẴN THEO NGỮ NGHĨA GẦN NHẤT):
@@ -186,7 +185,6 @@ OUTPUT FORMAT (JSON ONLY):
       "id": "S1",
       "clean_range": [3.8, 8.5],
       "visual_summary": "Red sports car accelerating fast on highway",
-      "has_text": false,
       "transition_type": "none",
       "cutout_sec": 0.0
     }},
@@ -194,7 +192,6 @@ OUTPUT FORMAT (JSON ONLY):
       "id": "S2",
       "clean_range": [8.5, 13.8],
       "visual_summary": "Close-up of speedometer revving to redline",
-      "has_text": false,
       "transition_type": "white_flash",
       "cutout_sec": 0.18
     }},
@@ -202,7 +199,6 @@ OUTPUT FORMAT (JSON ONLY):
       "id": "S3",
       "clean_range": [13.8, 19.2],
       "visual_summary": "Driver smiling confidently holding the steering wheel",
-      "has_text": false,
       "transition_type": "none",
       "cutout_sec": 0.0
     }}
@@ -590,20 +586,18 @@ OUTPUT FORMAT (JSON ONLY):
             for idx in range(len(clean_scenes)):
                 elastic_pts_map[idx] = 1.0
 
-        # 7. Lật Gương Phản Chiếu Ngẫu Nhiên (Randomized Asymmetric Mirroring)
-        # Cảnh có chữ in/biển hiệu (has_text=True): KHÔNG LẬT để tránh ngược chữ.
-        # Cảnh biến thể (is_variant=True): Bắt buộc lật gương để đổi góc quay.
-        # Các cảnh còn lại: Random xác suất 50% độc lập
-        mirror_map = {}
-        for idx, sc in enumerate(clean_scenes):
-            if sc.get("has_text", False):
-                mirror_map[idx] = False
-            elif sc.get("is_variant", False):
-                mirror_map[idx] = True
-            elif options.get("mirror_broll", True):
-                mirror_map[idx] = (random.random() < 0.5)
-            else:
-                mirror_map[idx] = False
+        # 7. Lật Gương Phản Chiếu Ngẫu Nhiên (Chuẩn theo Chế độ 1 Tóm tắt):
+        # Lật ngẫu nhiên 40% - 50% số cảnh trực tiếp, không dò chữ, sau đó Sub mới và Title mới overlay lên trên cùng.
+        mirror_map = {idx: False for idx in range(len(clean_scenes))}
+        if options.get("mirror_broll", True) and clean_scenes:
+            mirror_count = min(len(clean_scenes), max(1, int(round(len(clean_scenes) * 0.45))))
+            for m_idx in random.sample(range(len(clean_scenes)), mirror_count):
+                mirror_map[m_idx] = True
+            # Cảnh biến thể luôn lật gương để đổi góc quay
+            for idx, sc in enumerate(clean_scenes):
+                if sc.get("is_variant", False):
+                    mirror_map[idx] = True
+            logger.info("🪞 [MIRROR] Lật ngẫu nhiên %d/%d cảnh chuẩn như Chế độ 1 (Sub mới và Title overlay lên trên cùng).", mirror_count, len(clean_scenes))
 
         # 7. Xây dựng Title Banner Mới Bằng PIL
         from editor_processor import EditorProcessor
