@@ -73,6 +73,7 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     
     # 7. Title & Subtitle Studio
     "enable_title": True,
+    "title_text": "",
     "title_y_pos": 260,
     "title_color1": "#000000",
     "title_color2": "#FF0000",
@@ -87,6 +88,22 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     "sub_margin_v": 100,
     "sub_color": "&H00FFFF&",
     "sub_outline_color": "&H000000&",
+    
+    # 7.1 Crop & Blur Mask Studio (Hệ quy chiếu chuẩn xác như Chế độ 1)
+    "use_crop": False,
+    "crop_ratio": "Tự do",
+    "base_w": 1080,
+    "base_h": 1920,
+    "crop_w": 0,
+    "crop_h": 0,
+    "crop_x": 0,
+    "crop_y": 0,
+    "use_blur_mask": False,
+    "blur_shape": "Chữ nhật",
+    "blur_mask_x": 0,
+    "blur_mask_y": 0,
+    "blur_mask_w": 0,
+    "blur_mask_h": 0,
     
     # 8. Quản lý lưu config mẫu
     "selected_config": "default",

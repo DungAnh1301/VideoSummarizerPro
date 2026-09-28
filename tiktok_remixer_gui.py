@@ -96,6 +96,18 @@ class TikTokRemixerTab(ttk.Frame):
         # 4. DANH SÁCH HÀNG ĐỢI & NHẬT KÝ TIẾN TRÌNH
         self._build_queue_and_logs()
 
+        # 5. TỰ ĐỘNG NẠP PRESET CONFIG ĐÃ LƯU TRƯỚC ĐÓ VÀO GIAO DIỆN
+        sel_preset = self.config.get("selected_config", "default")
+        saved = self.config.get("saved_configs", {})
+        if sel_preset in saved and isinstance(saved[sel_preset], dict):
+            self.config.update(copy.deepcopy(saved[sel_preset]))
+            self.config["selected_config"] = sel_preset
+        self.config_cb.set(sel_preset)
+        self.config_name_entry.delete(0, tk.END)
+        self.config_name_entry.insert(0, sel_preset)
+        self._sync_ui_from_config()
+        self.log(f"✅ [CONFIG TIKTOK] Đã tự động nạp cấu hình '{sel_preset}' lên giao diện.")
+
     def _build_tab1_source_clean(self):
         # Nguồn Video / Link TikTok
         src_group = ttk.LabelFrame(self.tab1, text=" 📥 Nguồn Video TikTok / Reels / Shorts ", padding=8)
@@ -735,21 +747,46 @@ class TikTokRemixerTab(ttk.Frame):
             messagebox.showwarning("Thiếu nguồn", "Vui lòng nhập Link TikTok hoặc chọn File video nguồn!", parent=self)
             return
 
-        cfg_snapshot = self._collect_config_from_ui()
+        cfg_name = self.config_name_entry.get().strip() or self.config_cb.get() or "default"
+        # 1. Khởi tạo options cơ sở từ preset đang chọn nếu có
+        job_options = {}
+        saved = self.config.get("saved_configs", {})
+        if cfg_name in saved and isinstance(saved[cfg_name], dict):
+            job_options.update(copy.deepcopy(saved[cfg_name]))
+        
+        # 2. Hợp nhất cấu hình hiện tại của self.config (bao gồm cả các studio vừa lưu)
+        for k, v in self.config.items():
+            if k != "saved_configs":
+                job_options[k] = copy.deepcopy(v)
+
+        # 3. Thu thập các giá trị mới nhất từ giao diện (Entry, Spinbox, Checkbox)
+        ui_snapshot = self._collect_config_from_ui()
+        for k, v in ui_snapshot.items():
+            if k != "saved_configs":
+                job_options[k] = copy.deepcopy(v)
+
+        job_options["selected_config"] = cfg_name
         job_id = f"job_{len(self.queue_items)+1:03d}_{int(time.time())}"
-        job_options = {k: copy.deepcopy(v) for k, v in cfg_snapshot.items() if k != "saved_configs"}
         job_data = {
             "id": job_id,
             "source": src,
-            "market": cfg_snapshot.get("target_market", "DE"),
-            "config_name": self.config_name_entry.get().strip() or "default",
+            "market": job_options.get("target_market", "US"),
+            "config_name": cfg_name,
             "options": job_options,
             "status": "pending",
             "output": ""
         }
         self.queue_items.append(job_data)
         self._refresh_queue_tree()
+
+        # Hiển thị thông báo chi tiết ngay tại log để người dùng an tâm mọi thông số đã nạp vào video
+        look_name = job_options.get("color_look", "8K")
+        sub_sz = job_options.get("sub_size", 38)
+        c_mode = "Thủ công (Crop Studio)" if job_options.get("use_crop") else "AI Auto"
+        t_mode = "Bật" if job_options.get("enable_title", True) else "Tắt"
+        s_mode = "Bật" if job_options.get("enable_sub", True) else "Tắt"
         self.log(f"➕ Đã thêm vào hàng đợi: {src}")
+        self.log(f"   ⚙️ [ÁP DỤNG CONFIG '{cfg_name}']: Màu: {look_name} | Crop: {c_mode} | Title: {t_mode} | Sub: {s_mode} ({sub_sz}px)")
 
     def _delete_queue_item(self):
         sel = self.queue_tree.selection()

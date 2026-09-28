@@ -444,6 +444,24 @@ OUTPUT FORMAT (JSON ONLY):
             logger.error(f"❌ [TTS ERROR] Lỗi tạo giọng đọc: {e}")
         return None, None, 0.0
 
+    @staticmethod
+    def _to_ass_color(raw_val: Any, default_ass: str = "&H0000FFFF") -> str:
+        """Chuẩn hóa màu ASS AABBGGRR an toàn từ cả định dạng Web RGB (#RRGGBB) lẫn ASS Hex (&HBBGGRR&)."""
+        if not raw_val:
+            return default_ass
+        s = str(raw_val).strip()
+        if s.startswith("#") and len(s) == 7:
+            # Web RGB #RRGGBB -> ASS AABBGGRR: &H00BBGGRR (00 = opaque)
+            r, g, b = s[1:3], s[3:5], s[5:7]
+            return f"&H00{b}{g}{r}".upper()
+        if s.startswith("&H") or s.startswith("&h"):
+            clean = s[2:].rstrip("&")
+            if len(clean) == 6:
+                return f"&H00{clean}".upper()
+            elif len(clean) == 8:
+                return f"&H{clean}".upper()
+        return default_ass
+
     @classmethod
     def convert_srt_to_ass(
         cls,
@@ -599,44 +617,103 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         orig_w, orig_h = cls.get_video_dimensions(source_video)
 
         # 1. Tính toán Tọa độ Cắt Lõi Sạch (Clean Core Crop)
-        geom = gemini_plan.get("layout_geometry", {})
-        crop_norm = geom.get("core_crop_normalized", {"ymin": 0.0, "ymax": 1.0})
-        g_ymin = max(0.0, min(0.4, float(crop_norm.get("ymin", 0.0))))
-        g_ymax = max(0.6, min(1.0, float(crop_norm.get("ymax", 1.0))))
+        use_manual_crop = bool(options.get("use_crop", False))
+        if use_manual_crop and int(options.get("crop_w", 0)) > 0 and int(options.get("crop_h", 0)) > 0:
+            base_w = float(options.get("base_w", orig_w) or orig_w)
+            base_h = float(options.get("base_h", orig_h) or orig_h)
+            scale_x_ratio = orig_w / base_w if base_w > 0 else 1.0
+            scale_y_ratio = orig_h / base_h if base_h > 0 else 1.0
 
-        # Tự động dò và triệt tiêu 2 đường viền/mép ngang mỏng của video đối thủ bằng OpenCV
-        if options.get("auto_clean_core_crop", True):
-            ymin, ymax = cls.auto_detect_core_boundaries(source_video, g_ymin, g_ymax)
+            crop_x = int(round(float(options.get("crop_x", 0)) * scale_x_ratio))
+            crop_y = int(round(float(options.get("crop_y", 0)) * scale_y_ratio))
+            crop_w = int(round(float(options.get("crop_w", orig_w)) * scale_x_ratio))
+            crop_h = int(round(float(options.get("crop_h", orig_h)) * scale_y_ratio))
+
+            crop_x = max(0, min(orig_w - 2, crop_x))
+            crop_y = max(0, min(orig_h - 2, crop_y))
+            crop_w = max(32, min(orig_w - crop_x, crop_w))
+            crop_h = max(32, min(orig_h - crop_y, crop_h))
+            crop_w -= crop_w % 2
+            crop_h -= crop_h % 2
+            ymin = crop_y / max(1.0, float(orig_h))
+            ymax = (crop_y + crop_h) / max(1.0, float(orig_h))
+            logger.info("✂️ [CROP STUDIO] Áp dụng thông số Crop thủ công từ Studio: x=%d, y=%d, w=%d, h=%d (ymin=%.3f, ymax=%.3f)", crop_x, crop_y, crop_w, crop_h, ymin, ymax)
         else:
-            ymin, ymax = g_ymin, g_ymax
-        
-        crop_y = int(orig_h * ymin)
-        crop_h = int(orig_h * (ymax - ymin))
-        crop_w = orig_w
-        crop_x = 0
+            geom = gemini_plan.get("layout_geometry", {})
+            crop_norm = geom.get("core_crop_normalized", {"ymin": 0.0, "ymax": 1.0})
+            g_ymin = max(0.0, min(0.4, float(crop_norm.get("ymin", 0.0))))
+            g_ymax = max(0.6, min(1.0, float(crop_norm.get("ymax", 1.0))))
+
+            # Tự động dò và triệt tiêu 2 đường viền/mép ngang mỏng của video đối thủ bằng OpenCV
+            if options.get("auto_clean_core_crop", True):
+                ymin, ymax = cls.auto_detect_core_boundaries(source_video, g_ymin, g_ymax)
+            else:
+                ymin, ymax = g_ymin, g_ymax
+
+            crop_y = int(orig_h * ymin)
+            crop_h = int(orig_h * (ymax - ymin))
+            crop_w = orig_w
+            crop_x = 0
+            logger.info("✂️ [CROP AUTO] Áp dụng AI + Seam Detector tự động: ymin=%.3f, ymax=%.3f (h=%d, y=%d)", ymin, ymax, crop_h, crop_y)
 
         # 2. Tính toán Tọa độ Bôi Mờ Sub Cũ (Sub Blur Zone)
-        # sub_norm từ Gemini là tọa độ tương đối trên FULL FRAME gốc (0.0 đến 1.0 của orig_h)
-        sub_norm = geom.get("sub_blur_normalized", {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95})
-        sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
-        sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
-        crop_span = max(0.01, ymax - ymin)
+        use_manual_blur = bool(options.get("use_blur_mask", False))
+        auto_blur = bool(options.get("auto_blur_sub_part", True))
+        has_blur_mask = False
 
-        # Chuyển đổi tọa độ từ Full Frame sang hệ quy chiếu bên trong khung cropped:
-        # Nếu sub_orig_ymin nằm ngoài khoảng crop hoặc không hợp lý (nằm quá cao trên ngực/mặt do Gemini đo lệch),
-        # thì fallback chuẩn xác vào 18% dưới đáy của lõi video hành động (nơi sub luôn ngự trị):
-        if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
+        if use_manual_blur and int(options.get("blur_mask_w", 0)) > 0 and int(options.get("blur_mask_h", 0)) > 0:
+            base_w = float(options.get("base_w", orig_w) or orig_w)
+            base_h = float(options.get("base_h", orig_h) or orig_h)
+            scale_x_ratio = orig_w / base_w if base_w > 0 else 1.0
+            scale_y_ratio = orig_h / base_h if base_h > 0 else 1.0
+
+            raw_bmx = float(options.get("blur_mask_x", 0)) * scale_x_ratio
+            raw_bmy = float(options.get("blur_mask_y", 0)) * scale_y_ratio
+            raw_bmw = float(options.get("blur_mask_w", crop_w)) * scale_x_ratio
+            raw_bmh = float(options.get("blur_mask_h", 60)) * scale_y_ratio
+
+            blur_mx = int(round(max(0, raw_bmx - crop_x)))
+            blur_my = int(round(max(0, raw_bmy - crop_y)))
+            blur_mw = int(round(min(crop_w - blur_mx, raw_bmw)))
+            blur_mh = int(round(min(crop_h - blur_my, raw_bmh)))
+            blur_mw -= blur_mw % 2
+            blur_mh -= blur_mh % 2
+            blur_mw = max(16, blur_mw)
+            blur_mh = max(16, blur_mh)
+            rel_sub_ymin = blur_my / max(1.0, float(crop_h))
+            rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
+            has_blur_mask = True
+            logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
+        elif auto_blur:
+            geom = gemini_plan.get("layout_geometry", {})
+            sub_norm = geom.get("sub_blur_normalized", {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95})
+            sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
+            sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
+            crop_span = max(0.01, ymax - ymin)
+
+            if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
+                rel_sub_ymin = 0.82
+                rel_sub_ymax = 0.98
+            else:
+                rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
+                rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
+
+            blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
+            blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
+            blur_my = int(round(crop_h * rel_sub_ymin))
+            blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
+            blur_mh = max(30, blur_mh)
+            blur_mw -= blur_mw % 2
+            blur_mh -= blur_mh % 2
+            has_blur_mask = True
+            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+        else:
             rel_sub_ymin = 0.82
             rel_sub_ymax = 0.98
-        else:
-            rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
-            rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
-
-        blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
-        blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
-        blur_my = int(round(crop_h * rel_sub_ymin))
-        blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-        blur_mh = max(30, blur_mh)
+            blur_mx = blur_my = 0
+            blur_mw = blur_mh = 0
+            has_blur_mask = False
+            logger.info("🌫️ [BLUR MASK] Tắt tính năng che mờ.")
 
         # 3. Phân Đoạn Hook & Scenes
         hook_info = gemini_plan.get("hook", {})
@@ -756,15 +833,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         # 7. Xây dựng Title Banner Mới Bằng PIL
         from editor_processor import EditorProcessor
-        script_info = gemini_plan.get("rewritten_narration", {})
-        t_line1 = script_info.get("title_line1", options.get("title_line1", "REMIX SPECIAL"))
-        t_line2 = script_info.get("title_line2", options.get("title_line2", ""))
-        
-        banner_path, banner_w, banner_h = EditorProcessor._create_dynamic_title_banner_custom(
-            work_dir, t_line1, t_line2, options
-        )
-        banner_x = int((cls.OUTPUT_W - banner_w) / 2)
+        enable_title = bool(options.get("enable_title", True) and options.get("show_title", True))
+        has_banner = False
+        banner_path = ""
+        banner_x = 0
         banner_y = int(options.get("title_y_pos", 260))
+
+        if enable_title:
+            custom_title = str(options.get("title_text") or "").strip()
+            if custom_title:
+                t_line1, t_line2 = EditorProcessor.split_banner_title(custom_title)
+                logger.info("🏷️ [TITLE STUDIO] Áp dụng tiêu đề tùy chỉnh từ Title Studio: '%s' / '%s'", t_line1, t_line2)
+            else:
+                script_info = gemini_plan.get("rewritten_narration", {})
+                t_line1 = script_info.get("title_line1", options.get("title_line1", "REMIX SPECIAL"))
+                t_line2 = script_info.get("title_line2", options.get("title_line2", ""))
+                logger.info("🏷️ [TITLE AI] Áp dụng tiêu đề từ kịch bản AI: '%s' / '%s'", t_line1, t_line2)
+
+            b_path, banner_w, banner_h = EditorProcessor._create_dynamic_title_banner_custom(
+                work_dir, t_line1, t_line2, options
+            )
+            if b_path and os.path.isfile(b_path):
+                banner_path = b_path
+                banner_x = int((cls.OUTPUT_W - banner_w) / 2)
+                has_banner = True
+                logger.info("✅ [TITLE BANNER] Đã vẽ banner: %s (x=%d, y=%d)", banner_path, banner_x, banner_y)
+        else:
+            logger.info("🚫 [TITLE BANNER] Tiêu đề bị tắt theo cấu hình (enable_title=False).")
 
         # 8. Tính Kích Thước Tiền Cảnh (Foreground) & Tọa Độ Subtitle Mới
         # Đảm bảo giữ nguyên tỷ lệ khung hình gốc của lõi video sạch (không bị kéo giãn dọc thành sợi bún)
@@ -792,8 +887,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         sub_margin_v = calculated_margin_v if options.get("overlay_sub_on_blur_zone", True) else int(options.get("sub_margin_v", 100))
         sub_margin_v = max(80, min(1200, sub_margin_v))
 
-        # 9. Bộ Lọc Màu CapCut 15 Thông Số
+        # 9. Bộ Lọc Màu CapCut 15 Thông Số + Look Stack
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
+        if not color_filter_str or color_filter_str.strip() == "":
+            color_filter_str = "null"
+        logger.info("🎨 [CAPCUT COLOR] Áp dụng chuỗi filter màu CapCut: %s", color_filter_str)
 
         # 10. Xử Lý Phân Đoạn Hook Đầu Video (Vị trí 00:00.000, giữ nguyên âm thanh gốc)
         t_hook_start = time.time()
@@ -823,22 +921,38 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
                 )
 
-            hook_vf = (
-                f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                f"split=2[c_orig][c_mask];"
-                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
-                f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
-                f"{bg_hook_chain}"
-                f"[v_base]{color_filter_str}[v_color];"
-                f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[vout]"
-            )
+            if has_blur_mask:
+                core_crop_hook = (
+                    f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+                    f"split=2[c_orig][c_mask];"
+                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
+                    f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
+                )
+            else:
+                core_crop_hook = f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y}[core_clean];"
+
+            if has_banner:
+                hook_vf = (
+                    f"{core_crop_hook}"
+                    f"{bg_hook_chain}"
+                    f"[v_base]{color_filter_str}[v_color];"
+                    f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[vout]"
+                )
+                banner_inputs = ["-loop", "1", "-i", banner_path]
+            else:
+                hook_vf = (
+                    f"{core_crop_hook}"
+                    f"{bg_hook_chain}"
+                    f"[v_base]{color_filter_str}[vout]"
+                )
+                banner_inputs = []
 
             if has_src_audio:
                 cmd_hook_render = [
                     "ffmpeg", "-y",
                     "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
                     "-i", source_video,
-                    "-loop", "1", "-i", banner_path,
+                    *banner_inputs,
                     "-filter_complex", hook_vf,
                     "-map", "[vout]",
                     "-map", "0:a:0",
@@ -852,15 +966,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     hook_rendered_mp4
                 ]
             else:
+                dummy_idx = 1 if not has_banner else 2
                 cmd_hook_render = [
                     "ffmpeg", "-y",
                     "-ss", f"{hook_start:.3f}", "-t", f"{hook_dur:.3f}",
                     "-i", source_video,
-                    "-loop", "1", "-i", banner_path,
+                    *banner_inputs,
                     "-f", "lavfi", "-t", f"{hook_dur:.3f}", "-i", "anullsrc=r=44100:cl=stereo",
                     "-filter_complex", hook_vf,
                     "-map", "[vout]",
-                    "-map", "2:a",
+                    "-map", f"{dummy_idx}:a",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
                     "-r", "25", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
@@ -890,13 +1005,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             mirror_filter = ",hflip" if mirror_map.get(idx, False) else ""
             zoom_var_filter = ",crop=iw*0.90:ih*0.90,scale=iw:ih" if sc.get("is_variant", False) else ""
 
-            vf_clip = (
-                f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                f"split=2[c_orig][c_mask];"
-                f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
-                f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
-                f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
-            )
+            if has_blur_mask:
+                vf_clip = (
+                    f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+                    f"split=2[c_orig][c_mask];"
+                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
+                    f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
+                    f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
+                )
+            else:
+                vf_clip = (
+                    f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+                    f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
+                )
+
             cmd_c = [
                 "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
                 "-i", source_video,
@@ -927,40 +1049,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # 12. Dựng Thân Video Hoàn Chỉnh Lên Khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
         t_body_start = time.time()
         body_rendered_mp4 = os.path.join(work_dir, "body_rendered.mp4")
-        sub_filter_chain = "[v_banner]null[vout]"
-        if options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt):
+
+        # Nền blur 2 đầu từ chính lõi sạch cho phần thân video (Boxblur 25:5 mờ sâu chuẩn điện ảnh)
+        if blur_bg:
+            bg_stream = f"[0:v]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=25:5,scale=1080:1920:flags=bicubic[bg];"
+        else:
+            bg_stream = f"color=c=black:s=1080x1920:r=25[bg];"
+
+        speed_filter = f",setpts={1.0 / video_speed:.4f}*PTS" if abs(video_speed - 1.0) >= 0.01 else ""
+
+        if has_banner:
+            banner_overlay_step = f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[v_banner];"
+            prev_sub_layer = "[v_banner]"
+        else:
+            banner_overlay_step = ""
+            prev_sub_layer = "[v_color]"
+
+        enable_sub = bool(options.get("enable_sub", True) and options.get("auto_sub", True))
+        sub_filter_chain = f"{prev_sub_layer}null[vout]"
+
+        if enable_sub and narration_srt and os.path.isfile(narration_srt):
             sub_font = options.get("sub_font") or options.get("font_name", "Arial")
-            sub_size = int(options.get("sub_size", 42) or 42)
-            if sub_size < 28:
-                sub_size = 42
+            sub_size = int(options.get("sub_size", 38) or 38)
+            sub_size = max(18, min(120, sub_size))
 
-            # Chuẩn hóa màu ASS AABBGGRR (TikTok Yellow mặc định: &H0000FFFF)
-            raw_c = str(options.get("sub_color", "&H0000FFFF")).strip()
-            if raw_c.startswith("&H"):
-                raw_hex = raw_c[2:].rstrip("&")
-                if len(raw_hex) == 6:
-                    # RRGGBB -> BBGGRR
-                    r, g, b = raw_hex[:2], raw_hex[2:4], raw_hex[4:6]
-                    sub_color = f"&H00{b}{g}{r}"
-                elif len(raw_hex) == 8:
-                    sub_color = f"&H{raw_hex}"
-                else:
-                    sub_color = "&H0000FFFF"
-            else:
-                sub_color = "&H0000FFFF"
+            # Chuyển đổi màu sắc an toàn (hỗ trợ cả ASS & Hex)
+            raw_c = options.get("sub_color", "&H00FFFF&")
+            sub_color = cls._to_ass_color(raw_c, default_ass="&H0000FFFF")
 
-            raw_oc = str(options.get("sub_outline_color", "&H00000000")).strip()
-            if raw_oc.startswith("&H"):
-                raw_o_hex = raw_oc[2:].rstrip("&")
-                if len(raw_o_hex) == 6:
-                    r, g, b = raw_o_hex[:2], raw_o_hex[2:4], raw_o_hex[4:6]
-                    sub_outline_color = f"&H00{b}{g}{r}"
-                elif len(raw_o_hex) == 8:
-                    sub_outline_color = f"&H{raw_o_hex}"
-                else:
-                    sub_outline_color = "&H00000000"
-            else:
-                sub_outline_color = "&H00000000"
+            raw_oc = options.get("sub_outline_color", "&H000000&")
+            sub_outline_color = cls._to_ass_color(raw_oc, default_ass="&H00000000")
 
             sub_outline = int(options.get("sub_outline", 4) or 4)
             sub_shadow = int(options.get("sub_shadow", 1) or 1)
@@ -982,28 +1100,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if ":" in ass_escaped:
                     d, p = ass_escaped.split(":", 1)
                     ass_escaped = f"{d}\\:{p}"
-                sub_filter_chain = f"[v_banner]ass='{ass_escaped}'[vout]"
+                sub_filter_chain = f"{prev_sub_layer}ass='{ass_escaped}'[vout]"
             else:
                 abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
                 if ":" in abs_srt:
                     d, p = abs_srt.split(":", 1)
                     abs_srt = f"{d}\\:{p}"
-                sub_filter_chain = f"[v_banner]subtitles='{abs_srt}'[vout]"
-
-        # Nền blur 2 đầu từ chính lõi sạch cho phần thân video (Boxblur 25:5 mờ sâu chuẩn điện ảnh)
-        if blur_bg:
-            bg_stream = f"[0:v]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=25:5,scale=1080:1920:flags=bicubic[bg];"
+                sub_filter_chain = f"{prev_sub_layer}subtitles='{abs_srt}'[vout]"
+            logger.info("💬 [SUBTITLE RENDER] Đã cấu hình phụ đề: Size=%d, Màu=%s, Viền=%d, MarginV=%d", sub_size, sub_color, sub_outline, sub_margin_v)
         else:
-            bg_stream = f"color=c=black:s=1080x1920:r=25[bg];"
-
-        speed_filter = f",setpts={1.0 / video_speed:.4f}*PTS" if abs(video_speed - 1.0) >= 0.01 else ""
+            logger.info("🚫 [SUBTITLE RENDER] Phụ đề bị tắt hoặc không có file SRT.")
 
         master_vf = (
             f"{bg_stream}"
             f"[0:v]scale={fg_w}:{fg_h}[fg];"
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1[v_base];"
             f"[v_base]{color_filter_str}{speed_filter}[v_color];"
-            f"[v_color][1:v]overlay={banner_x}:{banner_y}:shortest=1[v_banner];"
+            f"{banner_overlay_step}"
             f"{sub_filter_chain}"
         )
 
@@ -1017,14 +1130,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if body_af:
             audio_body_opts = ["-filter:a", ",".join(body_af)]
 
+        has_voice = bool(narration_audio and os.path.isfile(narration_audio))
+        if has_banner:
+            body_inputs = [
+                "-i", body_cut_mp4,
+                "-loop", "1", "-i", banner_path
+            ]
+            if has_voice:
+                body_inputs += ["-i", narration_audio]
+                audio_map_idx = "2:a"
+            else:
+                audio_map_idx = "0:a?"
+        else:
+            body_inputs = [
+                "-i", body_cut_mp4
+            ]
+            if has_voice:
+                body_inputs += ["-i", narration_audio]
+                audio_map_idx = "1:a"
+            else:
+                audio_map_idx = "0:a?"
+
         cmd_body_final = [
             "ffmpeg", "-y",
-            "-i", body_cut_mp4,
-            "-loop", "1", "-i", banner_path,
-            "-i", narration_audio if (narration_audio and os.path.isfile(narration_audio)) else body_cut_mp4,
+            *body_inputs,
             "-filter_complex", master_vf,
             "-map", "[vout]",
-            "-map", "2:a" if (narration_audio and os.path.isfile(narration_audio)) else "0:a?",
+            "-map", audio_map_idx,
             *audio_body_opts,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-r", "25", "-pix_fmt", "yuv420p",
