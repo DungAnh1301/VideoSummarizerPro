@@ -1385,45 +1385,46 @@ Return JSON only:
         # Gắn timing đo từ TTS trở lại từng cụm narration. Editor dùng các mốc
         # này để cấp hình theo cụm/event thay vì ước lượng bằng số từ.
         plan_path = os.path.join(specific_dir, "narration_plan.json")
-        try:
-            with open(plan_path, "r", encoding="utf-8") as stream:
-                plan = json.load(stream)
-            plan_segments = plan.get("segments") if isinstance(plan, dict) else []
-            if isinstance(plan_segments, list) and plan_segments:
-                word_cursor = 0
-                for segment in plan_segments:
-                    segment_words = str(segment.get("narration") or "").strip().split()
-                    count = len(segment_words)
-                    if count <= 0 or word_cursor >= len(word_times):
-                        segment["voice_start_raw"] = round(
-                            word_times[min(word_cursor, len(word_times) - 1)][0], 4
-                        )
-                        segment["voice_end_raw"] = segment["voice_start_raw"]
-                        segment["voice_duration_raw"] = 0.0
-                        continue
-                    first = word_cursor
-                    last = min(len(word_times) - 1, word_cursor + count - 1)
-                    start_raw = float(word_times[first][0])
-                    end_raw = float(word_times[last][1])
-                    segment["voice_start_raw"] = round(start_raw, 4)
-                    segment["voice_end_raw"] = round(end_raw, 4)
-                    segment["voice_duration_raw"] = round(max(0.05, end_raw - start_raw), 4)
-                    word_cursor += count
-                plan["voice_duration_raw"] = round(duration, 4)
-                plan["timing_source"] = "measured_tts_words" if measured_times else "weighted_tts_duration"
-                tmp_plan = plan_path + ".tmp"
-                with open(tmp_plan, "w", encoding="utf-8") as stream:
-                    json.dump(plan, stream, ensure_ascii=False, indent=2)
-                os.replace(tmp_plan, plan_path)
-                logger.info(
-                    "✅ [VOICE GROUP TIMING] Đã đo %d cụm narration từ TTS thật.",
-                    len(plan_segments),
+        if os.path.isfile(plan_path):
+            try:
+                with open(plan_path, "r", encoding="utf-8") as stream:
+                    plan = json.load(stream)
+                plan_segments = plan.get("segments") if isinstance(plan, dict) else []
+                if isinstance(plan_segments, list) and plan_segments:
+                    word_cursor = 0
+                    for segment in plan_segments:
+                        segment_words = str(segment.get("narration") or "").strip().split()
+                        count = len(segment_words)
+                        if count <= 0 or word_cursor >= len(word_times):
+                            segment["voice_start_raw"] = round(
+                                word_times[min(word_cursor, len(word_times) - 1)][0], 4
+                            )
+                            segment["voice_end_raw"] = segment["voice_start_raw"]
+                            segment["voice_duration_raw"] = 0.0
+                            continue
+                        first = word_cursor
+                        last = min(len(word_times) - 1, word_cursor + count - 1)
+                        start_raw = float(word_times[first][0])
+                        end_raw = float(word_times[last][1])
+                        segment["voice_start_raw"] = round(start_raw, 4)
+                        segment["voice_end_raw"] = round(end_raw, 4)
+                        segment["voice_duration_raw"] = round(max(0.05, end_raw - start_raw), 4)
+                        word_cursor += count
+                    plan["voice_duration_raw"] = round(duration, 4)
+                    plan["timing_source"] = "measured_tts_words" if measured_times else "weighted_tts_duration"
+                    tmp_plan = plan_path + ".tmp"
+                    with open(tmp_plan, "w", encoding="utf-8") as stream:
+                        json.dump(plan, stream, ensure_ascii=False, indent=2)
+                    os.replace(tmp_plan, plan_path)
+                    logger.info(
+                        "✅ [VOICE GROUP TIMING] Đã đo %d cụm narration từ TTS thật.",
+                        len(plan_segments),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "⚠️ [VOICE GROUP TIMING] Chưa ghi được timing từng cụm (%s); "
+                    "editor sẽ dùng tỷ lệ số từ dự phòng.", exc,
                 )
-        except Exception as exc:
-            logger.warning(
-                "⚠️ [VOICE GROUP TIMING] Chưa ghi được timing từng cụm (%s); "
-                "editor sẽ dùng tỷ lệ số từ dự phòng.", exc,
-            )
         timing_mode = "mốc từng từ đo từ voice" if measured_times else "ước lượng dự phòng"
         logger.info("✅ [SUB EXACT] Đúng script TTS, timing theo %s.", timing_mode)
         return out_path
