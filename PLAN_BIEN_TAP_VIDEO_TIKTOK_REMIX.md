@@ -69,9 +69,11 @@ flowchart LR
 
 ---
 
-## 3. BỘ NÃO GEMINI CLI ĐA PHƯƠNG THỨC (1 LẦN GỌI DUY NHẤT)
+## 3. BỘ NÃO GEMINI ĐA PHƯƠNG THỨC: NẠP TRỰC TIẾP FULL NATIVE VIDEO (KHÔNG DÙNG LƯỚI ẢNH)
 
-Gửi trực tiếp video gốc (1–2 phút) vào Gemini CLI để AI "vừa làm đạo diễn hình ảnh vừa làm biên kịch" trong **1 lệnh gọi duy nhất (~15 giây)**:
+- **Không dùng lưới ảnh/Contact Sheet:** Không trích xuất ảnh rời rạc 1 giây/frame để tránh mất dữ liệu chuyển động và nhịp âm thanh.
+- **Nạp trực tiếp Full Native Video:** Gửi trọn vẹn file video `.mp4` vào Gemini (qua Antigravity CLI hoặc Gemini Files API) để AI soi trực tiếp diễn biến video theo từng **micro-frame và mili-giây** (floating-point timestamps `[3.25, 8.42]`).
+- **Phân tích toàn diện 1 lần gọi duy nhất:** Đoán định chính xác biểu cảm, nhịp nói, điểm cắt cảnh tự nhiên, lọc bỏ watermark đầu/cuối, và biên soạn kịch bản remix liên tục:
 
 ```json
 {

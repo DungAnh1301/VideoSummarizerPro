@@ -126,8 +126,8 @@ class TikTokRemixerEngine:
         dur = cls.get_video_duration(video_path)
 
         prompt = f"""You are an elite master short-form director, video editor, and viral scriptwriter for TikTok and YouTube Shorts.
-Perform a DENSE, SECOND-BY-SECOND visual inspection of this {dur:.1f}s short video.
-Take as much time and attention as needed to inspect every single second thoroughly. Return ONLY valid JSON.
+Perform a DENSE, FRAME-ACCURATE visual and audio inspection of this {dur:.1f}s full native video.
+You are given the full native video file directly. Take as much time and attention as needed to inspect every micro-frame, subtle motion, facial expression, and audio beat thoroughly. Return ONLY valid JSON.
 
 TASKS:
 1. GEOMETRY CLEANING:
@@ -140,14 +140,14 @@ TASKS:
    - Only set trim if actual animated watermarks appear. If real action/speech starts at 0.0s, keep "trim_start_sec": 0.0.
 
 3. HOOK DETECTION:
-   - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move.
+   - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move down to the exact frame.
    - Set "keep_original_audio": true.
 
-4. DENSE SECOND-BY-SECOND SCENE SEGMENTATION & VISUAL TAGGING:
-   - Segment the remaining footage into clean B-Roll scenes (identifying every available cut in the source video).
+4. FRAME-ACCURATE SCENE SEGMENTATION & VISUAL TAGGING:
+   - Segment the remaining footage into clean B-Roll scenes down to frame-accurate floating-point timestamps (e.g. [3.25, 8.42] rather than coarse seconds).
    - For EACH scene, provide:
      * "id": "S1", "S2", "S3"...
-     * "clean_range": [start, end]
+     * "clean_range": [start_sec, end_sec] (frame-accurate floating-point seconds)
      * "visual_summary": exact action, subject, facial expression, mood, objects shown
      * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
 
@@ -235,12 +235,12 @@ OUTPUT FORMAT (JSON ONLY):
         try:
             from antigravity_processor import AntigravityProcessor
             if AntigravityProcessor.executable():
-                logger.info("🤖 [GEMINI CLI] Gửi video TikTok sang Antigravity CLI để soi chi tiết từng giây...")
+                logger.info("🤖 [GEMINI CLI] Gửi FULL NATIVE VIDEO sang Antigravity CLI để soi chi tiết từng frame nhỏ...")
                 raw_out = AntigravityProcessor.inspect_video_prompt(video_path, prompt)
                 if raw_out:
                     parsed = cls._parse_json_from_text(raw_out)
                     if parsed:
-                        logger.info("✅ [GEMINI CLI] Đã nhận phân tích phân cảnh, storyboard logic và kịch bản thành công!")
+                        logger.info("✅ [GEMINI CLI] Đã nhận phân tích phân cảnh frame-accurate, storyboard logic và kịch bản thành công!")
                         return parsed
         except Exception as e:
             logger.warning(f"⚠️ [GEMINI CLI] Lỗi Antigravity CLI: {e}")
@@ -250,10 +250,11 @@ OUTPUT FORMAT (JSON ONLY):
         if api_key:
             try:
                 from ai_processor import AIProcessor
-                raw_out = AIProcessor.call_gemini_vision_file(video_path, prompt, api_key=api_key)
+                raw_out = AIProcessor.call_gemini_native_video(video_path, prompt, api_key=api_key)
                 if raw_out:
                     parsed = cls._parse_json_from_text(raw_out)
                     if parsed:
+                        logger.info("✅ [GEMINI API] Đã nhận kết quả phân tích full native video từ Gemini API thành công!")
                         return parsed
             except Exception as e:
                 logger.error(f"❌ [GEMINI API] Lỗi gọi trực tiếp API: {e}")

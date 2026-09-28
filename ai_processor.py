@@ -2930,3 +2930,78 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
             if clean_line not in text_lines:
                 text_lines.append(clean_line)
         return " ".join(text_lines)
+
+    @classmethod
+    def call_gemini_native_video(cls, video_path: str, prompt: str, api_key: str = "") -> str:
+        """Gửi FULL NATIVE VIDEO trực tiếp lên Gemini API (Files API) để phân tích chi tiết từng frame nhỏ."""
+        api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+        if not api_key:
+            raise ValueError("Không có Google Gemini API Key.")
+
+        video_path = os.path.abspath(video_path)
+        if not os.path.isfile(video_path):
+            raise FileNotFoundError(f"Không tìm thấy video: {video_path}")
+
+        # 1. Thử dùng google.genai (SDK Google GenAI v2+)
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            logger.info("📤 [GEMINI NATIVE VIDEO] Đang upload full video '%s' lên Google Gemini Files API...", os.path.basename(video_path))
+            uploaded = client.files.upload(file=video_path)
+
+            # Chờ video xử lý nếu cần
+            max_wait = 120
+            start_wait = time.time()
+            while uploaded.state and uploaded.state.name == "PROCESSING":
+                if time.time() - start_wait > max_wait:
+                    break
+                time.sleep(2)
+                uploaded = client.files.get(name=uploaded.name)
+
+            logger.info("🧠 [GEMINI NATIVE VIDEO] Đang phân tích chi tiết full video theo từng micro-frame...")
+            for model_id in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+                try:
+                    response = client.models.generate_content(
+                        model=model_id,
+                        contents=[uploaded, prompt]
+                    )
+                    if response and response.text:
+                        try:
+                            client.files.delete(name=uploaded.name)
+                        except Exception:
+                            pass
+                        return response.text
+                except Exception as me:
+                    logger.warning("⚠️ Model %s lỗi: %s, thử model kế tiếp...", model_id, me)
+
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("⚠️ Lỗi gọi google.genai: %s, thử fallback google.generativeai...", e)
+
+        # 2. Fallback google.generativeai (Legacy SDK)
+        try:
+            import google.generativeai as genai_legacy
+            genai_legacy.configure(api_key=api_key)
+            video_file = genai_legacy.upload_file(path=video_path)
+            while video_file.state.name == "PROCESSING":
+                time.sleep(2)
+                video_file = genai_legacy.get_file(video_file.name)
+            for m_name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+                try:
+                    model = genai_legacy.GenerativeModel(model_name=m_name)
+                    response = model.generate_content([video_file, prompt])
+                    if response and response.text:
+                        try:
+                            video_file.delete()
+                        except Exception:
+                            pass
+                        return response.text
+                except Exception:
+                    continue
+        except Exception as legacy_err:
+            logger.error("❌ [GEMINI LEGACY SDK] Lỗi: %s", legacy_err)
+        return ""
+

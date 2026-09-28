@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.53"
+VERSION = "1.3.54"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.53: Fix triệt để lỗi Circular reference detected khi lưu config và thêm job vào hàng đợi Chế Độ 3 (TikTok Remixer). Làm sạch payload loại bỏ self-reference và bọc lớp bảo vệ copy.deepcopy trong save_tiktok_remixer_config."
+NOTES = "Bản phát hành v1.3.54: Chế độ 3 (TikTok Remixer) nạp trực tiếp FULL NATIVE VIDEO vào Gemini / Antigravity CLI, xóa bỏ hoàn toàn cơ chế lưới ảnh/contact sheet. AI soi trực tiếp chuyển động, biểu cảm, âm thanh và cắt cảnh chính xác đến từng micro-frame và mili-giây (floating-point timestamps)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

@@ -726,7 +726,7 @@ class AntigravityProcessor:
 
     @classmethod
     def inspect_video_prompt(cls, video_path: str, prompt: str, job_dir: str = "") -> str:
-        """Phân tích video chi tiết từng giây 1 (Second-by-second inspection) bằng Antigravity CLI."""
+        """Phân tích toàn bộ video trực tiếp (Full Native Video Inspection) bằng Antigravity CLI đến từng frame nhỏ."""
         exe = cls.executable()
         if not exe:
             raise RuntimeError("Antigravity CLI chưa sẵn sàng.")
@@ -736,40 +736,44 @@ class AntigravityProcessor:
             raise RuntimeError(f"Không tìm thấy file video: {video_path}")
         
         work_dir = job_dir if (job_dir and os.path.isdir(job_dir)) else os.path.dirname(video_path)
-        analysis_dir = os.path.join(work_dir, "ai_tiktok_storyboard")
+        analysis_dir = os.path.join(work_dir, "ai_tiktok_native_video")
         os.makedirs(analysis_dir, exist_ok=True)
 
-        # 1. Trích xuất Contact Sheet 1s / frame với burned timestamp
-        storyboard_files = []
-        try:
-            from scene_mapper import ensure_visual_storyboards
-            storyboard_files = ensure_visual_storyboards(video_path, analysis_dir, fps=1.0)
-            logger.info("📸 [ANTIGRAVITY TIKTOK] Đã tạo %d contact sheet visual storyboards (1 frame/s).", len(storyboard_files))
-        except Exception as e:
-            logger.warning("⚠️ [ANTIGRAVITY TIKTOK] Lỗi tạo visual storyboard: %s", e)
+        video_filename = os.path.basename(video_path)
+        dest_video = os.path.join(analysis_dir, video_filename)
+        
+        # Đưa full video trực tiếp vào analysis_dir (dùng hardlink siêu tốc hoặc copy)
+        if not os.path.exists(dest_video) or os.path.getsize(dest_video) != os.path.getsize(video_path):
+            try:
+                if os.name == "nt":
+                    import ctypes
+                    res = ctypes.windll.kernel32.CreateHardLinkW(dest_video, video_path, 0)
+                    if not res:
+                        shutil.copy2(video_path, dest_video)
+                else:
+                    shutil.copy2(video_path, dest_video)
+            except Exception:
+                shutil.copy2(video_path, dest_video)
 
-        storyboard_names = [os.path.basename(f) for f in storyboard_files]
-        storyboard_info = ""
-        if storyboard_names:
-            storyboard_info = (
-                f"\nVISUAL STORYBOARDS ({len(storyboard_files)} sheets, 1 frame per second):\n"
-                f"Files: {', '.join(storyboard_names)}\n"
-                "Each frame has burned timestamp [mm:ss]. Inspect every single second thoroughly.\n"
-            )
+        logger.info("🎥 [ANTIGRAVITY TIKTOK] Nạp trực tiếp FULL VIDEO '%s' để Gemini soi chi tiết từng frame nhỏ...", video_filename)
 
-        # 2. Ghi prompt request vào file UTF-8
         request_file = os.path.join(analysis_dir, "antigravity_request.txt")
         full_request_content = (
-            "You are an elite video editor and narrative director conducting a dense, second-by-second inspection.\n"
-            f"VIDEO FILE: {os.path.basename(video_path)}\n"
-            f"{storyboard_info}\n"
+            "You are an elite short-form video director, editor, and visual narrative expert.\n"
+            f"FULL VIDEO FILE: {video_filename}\n\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Inspect the FULL NATIVE VIDEO FILE directly located in this directory.\n"
+            "2. DO NOT rely on static sampled images or coarse 1-second approximations. Examine the video at high temporal resolution down to fine micro-frames and milliseconds.\n"
+            "3. Observe all continuous motions, camera movements, facial expressions, sound/speech cues, and exact scene cut points.\n"
+            "4. Output timestamp ranges with floating-point second precision (e.g., [3.25, 8.42]).\n\n"
             f"{prompt}\n"
         )
         Path(request_file).write_text(full_request_content, encoding="utf-8")
 
         short_request = (
-            "Read antigravity_request.txt in this folder. Perform deep second-by-second analysis on the storyboard sheets "
-            "and video. Follow every task carefully and output ONLY valid JSON immediately."
+            f"Open and inspect the full video file '{video_filename}' directly in this directory. "
+            "Read antigravity_request.txt. Perform deep, frame-accurate inspection of every scene, motion, and dialogue. "
+            "Follow all instructions and output ONLY valid JSON immediately."
         )
 
         candidate_profiles = cls.get_candidate_profiles()
