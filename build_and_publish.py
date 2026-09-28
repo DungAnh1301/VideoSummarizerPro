@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.61"
+VERSION = "1.3.62"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.61: Tối ưu bộ tạo phụ đề Whisper, loại bỏ cảnh báo VOICE GROUP TIMING vô hại khi không tìm thấy narration_plan.json ở Chế độ 3."
+NOTES = "Bản phát hành v1.3.62: Bổ sung bảng báo cáo phân tích thời gian từng công đoạn chi tiết sau khi render xong (Tải video, Soi AI, TTS/Sub, Render Hook, Cắt B-roll, Render Thân video, Ghép Master)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

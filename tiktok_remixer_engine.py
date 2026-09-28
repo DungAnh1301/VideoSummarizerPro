@@ -452,7 +452,8 @@ OUTPUT FORMAT (JSON ONLY):
         audio_duration: float,
         options: Dict[str, Any],
         output_path: str,
-        progress_cb: Optional[Callable] = None
+        progress_cb: Optional[Callable] = None,
+        timing_stats: Optional[Dict[str, float]] = None
     ) -> bool:
         """
         Động cơ Dựng Hoàn Chỉnh (Master Renderer):
@@ -649,6 +650,7 @@ OUTPUT FORMAT (JSON ONLY):
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
 
         # 10. Xử Lý Phân Đoạn Hook Đầu Video (Vị trí 00:00.000, giữ nguyên âm thanh gốc)
+        t_hook_start = time.time()
         hook_rendered_mp4 = os.path.join(work_dir, "hook_rendered.mp4")
         has_hook_segment = False
         flags = 0x08000000 if os.name == "nt" else 0
@@ -722,8 +724,11 @@ OUTPUT FORMAT (JSON ONLY):
                 logger.info("✅ [HOOK RENDER] Đã dựng thành công đoạn Hook đầu tiên kèm âm thanh gốc: %s", hook_rendered_mp4)
             else:
                 logger.warning("⚠️ [HOOK RENDER] Lỗi dựng Hook: %s", res_hook.stderr)
+        if timing_stats is not None:
+            timing_stats["t_hook"] = round(time.time() - t_hook_start, 2)
 
         # 11. Cắt và Ghép Các Đoạn B-Roll Thân Video
+        t_broll_start = time.time()
         body_cut_mp4 = os.path.join(work_dir, "cut_body.mp4")
         body_concat_list = os.path.join(work_dir, "body_clips.txt")
 
@@ -765,8 +770,11 @@ OUTPUT FORMAT (JSON ONLY):
             "-c", "copy", body_cut_mp4
         ]
         subprocess.run(cmd_concat_body, capture_output=True, creationflags=flags)
+        if timing_stats is not None:
+            timing_stats["t_broll"] = round(time.time() - t_broll_start, 2)
 
         # 12. Dựng Thân Video Hoàn Chỉnh Lên Khung 9:16 + Nền Blur + Voice AI + Title Banner + Subtitle Mới
+        t_body_start = time.time()
         body_rendered_mp4 = os.path.join(work_dir, "body_rendered.mp4")
         if options.get("enable_sub", True) and narration_srt and os.path.isfile(narration_srt):
             abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
@@ -827,8 +835,11 @@ OUTPUT FORMAT (JSON ONLY):
         ]
         logger.info(f"🚀 [BODY RENDER] Thực thi đóng gói thân video 9:16: {' '.join(cmd_body_final)}")
         subprocess.run(cmd_body_final, capture_output=True, text=True, creationflags=flags)
+        if timing_stats is not None:
+            timing_stats["t_body"] = round(time.time() - t_body_start, 2)
 
         # 13. NỐI HOÀN CHỈNH: HOOK Ở ĐẦU TIÊN (00:00) + THÂN VIDEO TIẾP THEO
+        t_concat_start = time.time()
         if has_hook_segment and os.path.isfile(hook_rendered_mp4) and os.path.isfile(body_rendered_mp4):
             logger.info("🔗 [MASTER CONCAT] Nối Hook gốc ở ĐẦU TIÊN (00:00) + Thân video B-Roll thuyết minh tiếp theo...")
             final_concat_list = os.path.join(work_dir, "final_segments.txt")
@@ -862,6 +873,9 @@ OUTPUT FORMAT (JSON ONLY):
                 except Exception:
                     pass
             shutil.copy2(body_rendered_mp4, output_path)
+
+        if timing_stats is not None:
+            timing_stats["t_concat"] = round(time.time() - t_concat_start, 2)
 
         if os.path.isfile(output_path):
             logger.info(f"🎉 [MASTER RENDER] XUẤT VIDEO THÀNH CÔNG: {output_path}")

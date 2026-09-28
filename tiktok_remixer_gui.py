@@ -680,6 +680,49 @@ class TikTokRemixerTab(ttk.Frame):
         except Exception:
             pass
 
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        s = max(0.0, float(seconds or 0))
+        if s < 60:
+            return f"{s:.1f}s"
+        m = int(s // 60)
+        rem = s % 60
+        return f"{m}m {rem:04.1f}s"
+
+    @classmethod
+    def _build_timing_report(
+        cls,
+        t_dl: float,
+        t_ai: float,
+        t_tts: float,
+        t_render: float,
+        t_total: float,
+        render_stats: Optional[Dict[str, float]] = None
+    ) -> str:
+        pct = lambda x: f"({(x / max(0.01, t_total) * 100):.1f}%)"
+        lines = [
+            "══════════════════════════════════════════════════════════════",
+            "⏱️ [BÁO CÁO THỜI GIAN CÁC MỐC - TIKTOK REMIX]",
+            "──────────────────────────────────────────────────────────────",
+            f"📥 1. Tải / chuẩn bị video nguồn   : {cls._format_elapsed(t_dl):>12}  {pct(t_dl):>7}",
+            f"🤖 2. Phân tích Gemini (Soi frame) : {cls._format_elapsed(t_ai):>12}  {pct(t_ai):>7}",
+            f"🎙️ 3. Tạo giọng đọc AI & Subtitle  : {cls._format_elapsed(t_tts):>12}  {pct(t_tts):>7}",
+            f"🎬 4. Đóng gói & Render FFmpeg 9:16: {cls._format_elapsed(t_render):>12}  {pct(t_render):>7}",
+        ]
+        if render_stats:
+            t_hook = render_stats.get("t_hook", 0.0)
+            t_broll = render_stats.get("t_broll", 0.0)
+            t_body = render_stats.get("t_body", 0.0)
+            t_concat = render_stats.get("t_concat", 0.0)
+            lines.append(f"   ├─ 🎬 Dựng Hook mở đầu (00:00)  : {cls._format_elapsed(t_hook):>12}")
+            lines.append(f"   ├─ ✂️ Cắt B-Roll, Lật & Bôi mờ  : {cls._format_elapsed(t_broll):>12}")
+            lines.append(f"   ├─ 🎞️ Dựng Thân video + Voice AI: {cls._format_elapsed(t_body):>12}")
+            lines.append(f"   └─ 🔗 Ghép Master hoàn chỉnh    : {cls._format_elapsed(t_concat):>12}")
+        lines.append("──────────────────────────────────────────────────────────────")
+        lines.append(f"🏁 TỔNG THỜI GIAN THỰC HIỆN        : {cls._format_elapsed(t_total):>12}  (100.0%)")
+        lines.append("══════════════════════════════════════════════════════════════")
+        return "\n".join(lines)
+
     # --- SỰ KIỆN HÀNG ĐỢI (QUEUE) ---
     def _add_to_queue(self):
         src = self.url_entry.get().strip()
@@ -811,6 +854,7 @@ class TikTokRemixerTab(ttk.Frame):
             self.after(0, self._refresh_queue_tree)
             src = item.get("source", "")
             opts = item.get("options", {})
+            t_job_start = time.time()
             self.log(f"🚀 [BẮT ĐẦU JOB] Nguồn: {src}")
 
             work_dir = os.path.join("temp", f"remix_{item['id']}")
@@ -824,21 +868,26 @@ class TikTokRemixerTab(ttk.Frame):
 
             try:
                 # 1. Tải Video
+                t_dl_start = time.time()
                 if src.startswith("http://") or src.startswith("https://"):
                     local_vid = TikTokRemixerEngine.download_tiktok_no_watermark(src, work_dir, progress_cb=update_cb)
                 else:
                     local_vid = src
+                t_dl = time.time() - t_dl_start
 
                 if not local_vid or not os.path.isfile(local_vid):
                     raise Exception("Không thể lấy file video nguồn.")
 
                 # 2. Phân Tích Gemini CLI
+                t_ai_start = time.time()
                 target_mkt = opts.get("target_market", "DE")
                 gemini_plan = TikTokRemixerEngine.inspect_and_remix_with_gemini(
                     local_vid, target_market=target_mkt, progress_cb=update_cb
                 )
+                t_ai = time.time() - t_ai_start
 
                 # 3. Tạo Giọng Đọc AI & Subtitles
+                t_tts_start = time.time()
                 narration_info = gemini_plan.get("rewritten_narration", {})
                 script_txt = narration_info.get("script_text", "")
                 eng = opts.get("engine_tts", "CapCut TTS")
@@ -852,6 +901,7 @@ class TikTokRemixerTab(ttk.Frame):
                     storyboard=gemini_plan.get("remix_storyboard", []),
                     output_dir=work_dir
                 )
+                t_tts = time.time() - t_tts_start
 
                 # 4. Xác Định Thư Mục Title Video Trong Output
                 def _sanitize_folder_name(name: str, max_len: int = 120) -> str:
@@ -883,6 +933,8 @@ class TikTokRemixerTab(ttk.Frame):
 
                 self.log(f"📁 [THƯ MỤC XUẤT] Thư mục Title: {video_out_dir}")
 
+                t_render_start = time.time()
+                render_stats = {}
                 ok = TikTokRemixerEngine.render_tiktok_remix(
                     source_video=local_vid,
                     gemini_plan=gemini_plan,
@@ -891,8 +943,11 @@ class TikTokRemixerTab(ttk.Frame):
                     audio_duration=audio_dur,
                     options=opts,
                     output_path=final_out_path,
-                    progress_cb=update_cb
+                    progress_cb=update_cb,
+                    timing_stats=render_stats
                 )
+                t_render = time.time() - t_render_start
+                t_total = time.time() - t_job_start
 
                 if ok and os.path.isfile(final_out_path):
                     item["status"] = "completed"
@@ -900,6 +955,12 @@ class TikTokRemixerTab(ttk.Frame):
                     item["output_dir"] = video_out_dir
                     self.log(f"🎉 [JOB XONG] Đã lưu vào thư mục: {video_out_dir}")
                     self.log(f"   ➔ Thành phẩm: {final_out_path}")
+
+                    # In và hiển thị bảng phân tích thời gian từng mốc
+                    report = self._build_timing_report(t_dl, t_ai, t_tts, t_render, t_total, render_stats)
+                    for r_line in report.splitlines():
+                        self.log(r_line)
+                    print(f"\n{report}\n")
                 else:
                     item["status"] = "failed"
                     self.log(f"❌ [JOB THẤT BẠI] Lỗi render.")
