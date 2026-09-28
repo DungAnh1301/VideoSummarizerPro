@@ -96,7 +96,7 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
 }
 
 def load_tiktok_remixer_config() -> dict:
-    """Tải cấu hình riêng biệt cho Chế Độ 3."""
+    """Tải cấu hình riêng biệt cho Chế Độ 3 với cơ chế tự phục hồi nếu file bị ngắt quãng."""
     config = copy.deepcopy(DEFAULT_TIKTOK_REMIXER_CONFIG)
     if os.path.exists(CONFIG_TIKTOK_FILE):
         try:
@@ -107,12 +107,26 @@ def load_tiktok_remixer_config() -> dict:
                 # Đảm bảo saved_configs luôn có cấu trúc đúng
                 if "saved_configs" not in config or not isinstance(config["saved_configs"], dict):
                     config["saved_configs"] = {"default": {}}
+        except (json.JSONDecodeError, ValueError) as err:
+            # Tự động phục hồi nếu file bị ngắt quãng do crash trước đây
+            try:
+                corrupt_backup = CONFIG_TIKTOK_FILE + ".bak"
+                if os.path.exists(corrupt_backup):
+                    os.remove(corrupt_backup)
+                os.rename(CONFIG_TIKTOK_FILE, corrupt_backup)
+            except Exception:
+                pass
+            save_tiktok_remixer_config(config)
+            print("[TikTok Config] Da tu dong phuc hoi cau hinh mac dinh cho Che Do 3.")
         except Exception as e:
-            print(f"⚠️ [TikTok Config] Lỗi đọc config: {e}")
+            print(f"[TikTok Config] Loi doc config: {e}")
+    else:
+        # Nếu chưa có file, tự động khởi tạo file chuẩn
+        save_tiktok_remixer_config(config)
     return config
 
 def save_tiktok_remixer_config(config: dict) -> bool:
-    """Lưu cấu hình riêng biệt cho Chế Độ 3."""
+    """Lưu cấu hình riêng biệt cho Chế Độ 3 an toàn bằng Atomic Write (chống ngắt file)."""
     try:
         # Làm sạch config để triệt tiêu mọi tham chiếu lặp (circular reference)
         clean_config = {}
@@ -128,9 +142,15 @@ def save_tiktok_remixer_config(config: dict) -> bool:
             elif k != "saved_configs":
                 clean_config[k] = copy.deepcopy(v)
 
-        with open(CONFIG_TIKTOK_FILE, "w", encoding="utf-8") as f:
-            json.dump(clean_config, f, ensure_ascii=False, indent=2)
+        # 1. Chuyển đổi thành chuỗi JSON trước trong RAM để kiểm tra toàn vẹn
+        json_str = json.dumps(clean_config, ensure_ascii=False, indent=2)
+
+        # 2. Ghi ra file tạm rồi đổi tên nguyên tử (Atomic Write) tránh bị file dở dang
+        temp_file = CONFIG_TIKTOK_FILE + ".tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(json_str)
+        os.replace(temp_file, CONFIG_TIKTOK_FILE)
         return True
     except Exception as e:
-        print(f"⚠️ [TikTok Config] Lỗi lưu config: {e}")
+        print(f"[TikTok Config] Loi luu config: {e}")
         return False
