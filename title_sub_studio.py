@@ -651,9 +651,21 @@ class PreviewCanvas9x16(QWidget):
         if not text:
             return
 
-        # Cỡ chữ chuẩn theo FFmpeg libass (PlayResY=288) trên khung 1080x1920:
-        # 1920 / 288 = 6.6667 px per libass unit. Dùng pixelSize để tránh phóng to DPI.
-        canvas_font_size = max(6, int(round(sub_size * (1920.0 / 288.0) * scale)))
+        # Cỡ chữ và khoảng cách chuẩn theo độ phân giải:
+        # Nếu là TikTok Remixer hoặc sub_size >= 25: Đơn vị đã là pixel thực tế trên khung 1080x1920 (ASS PlayResY=1920).
+        # Nếu là Chế độ tóm tắt cũ (sub_size <= 20, ví dụ 7, 8): Quy đổi theo hệ số PlayResY=288 cũ (1920 / 288 = 6.6667).
+        is_tiktok = (_detect_mode(cfg) == "tiktok_remixer")
+        if is_tiktok or sub_size >= 25:
+            canvas_font_size = max(6, int(round(sub_size * scale)))
+            dist_from_bottom = float(sub_margin_v) * scale
+            shadow_off = max(1, int(round(sub_shadow * scale)))
+            step = max(1, int(round(sub_outline * scale)))
+        else:
+            canvas_font_size = max(6, int(round(sub_size * (1920.0 / 288.0) * scale)))
+            dist_from_bottom = float(sub_margin_v) * (1920.0 / 288.0) * scale
+            shadow_off = max(1, int(round(sub_shadow * (1920.0 / 288.0) * 0.35 * scale)))
+            step = max(1, int(round(sub_outline * (1920.0 / 288.0) * 0.3 * scale)))
+
         style_key = cfg.get("sub_style_type", "tiktok_slim")
         font_family = "Segoe UI Black" if style_key == "classic" else ("Arial" if style_key == "tiktok_slim" else "Segoe UI")
 
@@ -687,9 +699,6 @@ class PreviewCanvas9x16(QWidget):
         line_h = fm.height()
         total_text_h = len(lines) * line_h
 
-        # Tọa độ Y: Khoảng cách từ đáy video theo MarginV chuẩn libass (PlayResY=288)
-        # dist_from_bottom = sub_margin_v * (1920 / 288) * scale
-        dist_from_bottom = float(sub_margin_v) * (1920.0 / 288.0) * scale
         base_bottom_y = oy + disp_h - dist_from_bottom
         top_y = base_bottom_y - total_text_h
 
@@ -700,7 +709,6 @@ class PreviewCanvas9x16(QWidget):
 
             # 1. Vẽ bóng đổ 3D
             if sub_shadow > 0:
-                shadow_off = max(1, int(round(sub_shadow * (1920.0 / 288.0) * 0.35 * scale)))
                 p.setPen(QColor(0, 0, 0, 220))
                 p.drawText(QPointF(lx + shadow_off, ly + shadow_off), line_str)
 
@@ -708,7 +716,6 @@ class PreviewCanvas9x16(QWidget):
             if sub_outline > 0:
                 ol_col = QColor(ol_hex)
                 p.setPen(ol_col)
-                step = max(1, int(round(sub_outline * (1920.0 / 288.0) * 0.3 * scale)))
                 for dx in range(-step, step + 1, step):
                     for dy in range(-step, step + 1, step):
                         if dx == 0 and dy == 0:

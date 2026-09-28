@@ -639,8 +639,13 @@ class TikTokRemixerTab(ttk.Frame):
         OUTER_KEYS = {"speed", "audio_boost", "blur_bg", "zoom_in", "zoom_percent", "scale_w", "scale_h", "scale_x", "scale_y", "saved_configs"}
         cleaned_saved = {k: v for k, v in saved_dict.items() if k not in OUTER_KEYS}
         self.config.update(cleaned_saved)
+        # Đồng bộ trực tiếp vào preset đang chọn trong saved_configs
+        sel = self.config.get("selected_config", "default")
+        saved = self.config.setdefault("saved_configs", {})
+        if sel in saved and isinstance(saved[sel], dict):
+            saved[sel].update(cleaned_saved)
         save_tiktok_remixer_config(self.config)
-        self.log("💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Crop) vào config_tiktok_remixer.json!")
+        self.log(f"💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Crop) vào config '{sel}'!")
 
     def _open_color_studio(self):
         self._collect_config_from_ui()

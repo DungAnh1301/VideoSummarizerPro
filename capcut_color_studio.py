@@ -1137,13 +1137,15 @@ class CapCutColorStudioDialog(QDialog):
         for key, s in self.sliders.items():
             result[key] = s.value()
 
-        # Giữ tương thích ngược với hệ thống cũ
+        # Giữ tương thích ngược với hệ thống cũ và lưu toàn bộ stack
         if self.look_stack:
             result["color_look"] = self.look_stack[0]["name"]
             result["color_look_intensity"] = self.look_stack[0]["intensity"]
+            result["color_look_stack"] = list(self.look_stack)
         else:
             result["color_look"] = "Không lọc"
             result["color_look_intensity"] = 0
+            result["color_look_stack"] = []
 
         return result
 
