@@ -1741,10 +1741,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.error("❌ [B-ROLL CONCAT] Danh sách clip B-Roll rỗng!")
             raise RuntimeError("Không có clip B-Roll hợp lệ để ghép thân video.")
 
-        # Ghi danh sách ghép B-Roll
+        # Ghi danh sách ghép B-Roll (Dùng basename tương đối để miễn nhiễm 100% với dấu nháy đơn ' hay ký tự lạ trong đường dẫn thư mục)
         with open(body_concat_list, "w", encoding="utf-8") as bf:
             for cf in clip_files:
-                bf.write(f"file '{os.path.abspath(cf).replace(chr(92), '/')}'\n")
+                bf.write(f"file '{os.path.basename(cf)}'\n")
 
         # Ghép thân video thô (dạng lõi sạch)
         cmd_concat_body = [
@@ -1923,8 +1923,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.info("🔗 [MASTER CONCAT] Nối Hook gốc ở ĐẦU TIÊN (00:00) + Thân video B-Roll thuyết minh tiếp theo...")
             final_concat_list = os.path.join(work_dir, "final_segments.txt")
             with open(final_concat_list, "w", encoding="utf-8") as ff:
-                ff.write(f"file '{os.path.abspath(hook_rendered_mp4).replace(chr(92), '/')}'\n")
-                ff.write(f"file '{os.path.abspath(body_rendered_mp4).replace(chr(92), '/')}'\n")
+                ff.write(f"file '{os.path.basename(hook_rendered_mp4)}'\n")
+                ff.write(f"file '{os.path.basename(body_rendered_mp4)}'\n")
 
             cmd_final_merge = [
                 "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", final_concat_list,

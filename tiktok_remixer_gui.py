@@ -952,7 +952,7 @@ class TikTokRemixerTab(ttk.Frame):
 
                 # 4. Xác Định Thư Mục Title Video Trong Output
                 def _sanitize_folder_name(name: str, max_len: int = 120) -> str:
-                    s = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', str(name or "")).strip()
+                    s = re.sub(r'[\\/:*?"<>|\r\n\t\']', '', str(name or "")).strip()
                     s = re.sub(r'\s+', ' ', s)
                     return s[:max_len].strip(". _-")
 
