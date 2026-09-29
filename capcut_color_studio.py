@@ -1165,11 +1165,22 @@ class CapCutColorStudioDialog(QDialog):
     # --------------------------------------------------------------------------
     def _initial_load(self):
         vp = self.txt_video_path.text().strip() or self.sample_video_path
+        # Không bao giờ nạp video đã render trong thư mục output (tránh bị đổ màu 2 lần)
+        if vp and ("output" in vp.replace('\\', '/').lower() and "rendered" in vp.replace('\\', '/').lower()):
+            vp = ""
+            self.txt_video_path.setText("")
+
         if not vp or not os.path.exists(vp):
             if getattr(self, "is_tiktok_mode", False):
-                for t_dir in [APP_DIR / "output", APP_DIR / "output_tiktok_remix", APP_DIR / "temp" / "tiktok_cache"]:
+                for t_dir in [APP_DIR / "temp" / "tiktok_cache", APP_DIR / "temp"]:
                     if t_dir.exists():
-                        mp4s = sorted([f for f in t_dir.rglob("*.mp4") if not ".tmp." in f.name and f.stat().st_size > 100000], key=lambda f: f.stat().st_mtime, reverse=True)
+                        mp4s = sorted(
+                            [f for f in t_dir.rglob("*.mp4")
+                             if not ".tmp." in f.name
+                             and not any(x in f.name.lower() for x in ["rendered", "output", "cut_", "broll_", "preview_6s"])
+                             and f.stat().st_size > 100000],
+                            key=lambda f: f.stat().st_mtime, reverse=True
+                        )
                         if mp4s:
                             self.sample_video_path = str(mp4s[0])
                             self.txt_video_path.setText(str(mp4s[0]))
