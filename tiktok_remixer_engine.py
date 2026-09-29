@@ -42,30 +42,66 @@ class TikTokRemixerEngine:
             return url
         
         if progress_cb:
-            progress_cb("download", "Đang tải video TikTok sạch qua yt-dlp (No-Watermark)...")
+            progress_cb("download", "Đang tải video TikTok sạch (Direct No-Watermark)...")
 
+        # 1. CHIẾN LƯỢC 1: Tải trực tiếp siêu tốc qua Direct CDN API (1-3s, sạch 100% không Watermark)
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+            api_endpoint = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
+            req = urllib.request.Request(
+                api_endpoint,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    api_data = json.loads(response.read().decode("utf-8"))
+                    if api_data.get("code") == 0 and api_data.get("data", {}).get("play"):
+                        direct_url = api_data["data"]["play"]
+                        vid_id = api_data["data"].get("id", "direct")
+                        target_file = os.path.join(output_dir, f"tiktok_source_{vid_id}.mp4")
+                        
+                        logger.info("⚡ [TIKTOK DIRECT CDN] Đã lấy link trực tiếp TikTok No-Watermark. Bắt đầu tải siêu tốc...")
+                        dl_req = urllib.request.Request(
+                            direct_url,
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                        )
+                        with urllib.request.urlopen(dl_req, timeout=35) as dl_resp, open(target_file, "wb") as out_f:
+                            while chunk := dl_resp.read(1024 * 512):
+                                out_f.write(chunk)
+                                
+                        if os.path.isfile(target_file) and os.path.getsize(target_file) > 1024 * 500:
+                            logger.info(f"✅ [TIKTOK DOWNLOAD] Tải siêu tốc thành công qua Direct CDN: {target_file} ({os.path.getsize(target_file) / 1024 / 1024:.2f} MB)")
+                            return target_file
+        except Exception as e_api:
+            logger.warning(f"⚠️ [TIKTOK DIRECT] Không lấy được link direct CDN ({e_api}), tự động chuyển sang yt-dlp fallback...")
+
+        # 2. CHIẾN LƯỢC 2: Fallback qua yt-dlp (Tối ưu hóa tham số chống bóp băng thông & chống treo)
         out_template = os.path.join(output_dir, "tiktok_source_%(id)s.%(ext)s")
         cmd = [
             "yt-dlp",
-            "-f", "bestvideo+bestaudio/best",
+            "--socket-timeout", "15",
+            "--retries", "3",
+            "-f", "b/best",
             "--no-playlist",
-            "--add-header", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "-o", out_template,
             url
         ]
 
         flags = 0x08000000 if os.name == "nt" else 0
         try:
-            logger.info(f"📥 [TIKTOK DOWNLOAD] Thực thi: {' '.join(cmd)}")
-            res = subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
+            logger.info(f"📥 [TIKTOK DOWNLOAD] Thực thi yt-dlp fallback: {' '.join(cmd)}")
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90, creationflags=flags)
             if res.returncode == 0:
-                # Tìm file video vừa tải trong output_dir
                 for f in os.listdir(output_dir):
                     if f.startswith("tiktok_source_") and f.endswith((".mp4", ".mov", ".mkv", ".webm")):
                         f_path = os.path.join(output_dir, f)
-                        logger.info(f"✅ [TIKTOK DOWNLOAD] Tải thành công: {f_path}")
+                        logger.info(f"✅ [TIKTOK DOWNLOAD] Tải thành công qua yt-dlp: {f_path}")
                         return f_path
-            logger.error(f"❌ [TIKTOK DOWNLOAD] Lỗi tải: {res.stderr}")
+            logger.error(f"❌ [TIKTOK DOWNLOAD] Lỗi tải yt-dlp: {res.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error("❌ [TIKTOK DOWNLOAD] yt-dlp bị timeout sau 90 giây do mạng nghẽn!")
         except Exception as e:
             logger.error(f"❌ [TIKTOK DOWNLOAD] Ngoại lệ: {e}")
         return None
@@ -1446,10 +1482,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 logger.info("🏷️ [TITLE BANNER 2 MÀU] Đã chia 2 dòng để hiển thị cả 2 màu chữ: '%s' (Màu 1) / '%s' (Màu 2)", t_line1, t_line2)
 
             # Xử lý số Part đồng bộ với Title Studio
-            if options.get("show_part", False):
+            # QUY TẮC BẮT BUỘC: Video đơn lẻ (chỉ có 1 video / không chia part) thì KỂ CẢ CÓ TÍCH TRONG CONFIG
+            # CŨNG TUYỆT ĐỐI KHÔNG HIỆN "PART 1". Nhãn Part CHỈ ĐƯỢC PHÉP XUẤT HIỆN KHI CHIA THÀNH 2, 3, 4, 5, 6... PART!
+            total_parts = int(options.get("total_parts", 1) or 1)
+            part_num = int(options.get("part_number", 0) or 0)
+            show_part_cfg = bool(options.get("show_part", False))
+            should_show_part = show_part_cfg and (total_parts > 1 or part_num >= 2)
+
+            if should_show_part:
                 part_fmt = str(options.get("part_format", "Part") or "Part").strip()
-                part_num = options.get("part_number") or 1
-                part_str = f"{part_fmt} {part_num}".strip()
+                active_part_num = part_num if part_num >= 1 else 1
+                part_str = f"{part_fmt} {active_part_num}".strip()
                 if part_str:
                     if t_line2:
                         if not t_line2.lower().endswith(part_str.lower()):
@@ -1459,7 +1502,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                             t_line2 = part_str
                     else:
                         t_line1 = part_str
-                    logger.info("🏷️ [PART BADGE] Đã ghép Part vào Title Banner: '%s' / '%s'", t_line1, t_line2)
+                    logger.info("🏷️ [PART BADGE] Đã ghép Part vào Title Banner: '%s' / '%s' (Part %d/%d)", t_line1, t_line2, active_part_num, total_parts)
+            else:
+                logger.info("ℹ️ [PART BADGE] Bỏ qua nhãn Part (Video đơn lẻ / chỉ có 1 part, không hiển thị 'Part 1').")
 
             b_path, banner_w, banner_h = EditorProcessor._create_dynamic_title_banner_custom(
                 work_dir, t_line1, t_line2, options
