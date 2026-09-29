@@ -619,7 +619,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         st = f"{int(g[0])}:{g[1]}:{g[2]}.{g[3][:2]}"
                         en = f"{int(g[4])}:{g[5]}:{g[6]}.{g[7][:2]}"
                         txt = " ".join(lines[2:])
-                        events.append(f"Dialogue: 0,{st},{en},Default,,0,0,0,,{txt}")
+                        events.append(f"Dialogue: 0,{st},{en},Default,,0,0,{margin_v},,{txt}")
 
             with open(ass_file, "w", encoding="utf-8") as f:
                 f.write(header + "\n".join(events) + "\n")
@@ -1151,37 +1151,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         fg_h = int(round(fg_w / core_ar * sy))
         fg_h += fg_h % 2
 
-        # Lề Đáy (MarginV) cho Subtitle:
-        # Nếu bật overlay_sub_on_blur_zone (mặc định True) và có vùng sub cũ cần che:
-        # Tự động tính MarginV để Sub mới đè CHÍNH XÁC lên vết che sub cũ!
-        overlay_sub_on_blur = bool(options.get("overlay_sub_on_blur_zone", True))
-        if overlay_sub_on_blur and (has_blur_mask or (rel_sub_ymin is not None and rel_sub_ymax is not None)):
-            scale_v = fg_h / max(1.0, float(crop_h))
-            if has_blur_mask and blur_mh > 0:
-                blur_center_in_crop = blur_my + (blur_mh / 2.0)
-            else:
-                blur_center_in_crop = crop_h * ((rel_sub_ymin + rel_sub_ymax) / 2.0)
-
-            # Tọa độ Y tâm của vùng che sub cũ trên canvas 1080x1920 (khung hình dọc)
-            fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
-            blur_y_center_canvas = fg_top_y + (blur_center_in_crop * scale_v)
-
-            # Trong ASS Subtitle với Alignment=2 (Bottom-Center), MarginV là khoảng cách từ đáy (Y=1920) lên đáy dòng chữ.
-            # Với cỡ chữ sub_size (mặc định ~ 38-42px):
-            sub_sz = int(options.get("sub_size", 38) or 38)
-            dist_from_bottom = cls.OUTPUT_H - blur_y_center_canvas
-            calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.55)))
-
-            # Tinh chỉnh nếu người dùng có chủ động nâng hạ vị trí trong Studio (mức chuẩn = 100):
-            user_margin_val = int(options.get("sub_margin_v", 100) or 100)
-            margin_offset = (user_margin_val - 100) if user_margin_val != 100 else 0
-
-            sub_margin_v = max(60, min(1600, calc_margin_v + margin_offset))
-            logger.info("🎯 [SUB OVERLAY] Tự động tính toán MarginV=%d px đè CHÍNH XÁC lên dải che Sub cũ (Y_center=%.1f canvas), xóa sạch 100%% dấu vết đối thủ!", sub_margin_v, blur_y_center_canvas)
+        # Lề Đáy (MarginV) cho Subtitle (RIÊNG CHẾ ĐỘ 3: TIKTOK REMIXER):
+        # Bỏ qua cài đặt vị trí thủ công từ Title & Sub Studio.
+        # Luôn luôn khóa cứng vị trí Sub mới đè CHÍNH XÁC 100% lên dải Blur che sub cũ của đối thủ!
+        scale_v = fg_h / max(1.0, float(crop_h))
+        if has_blur_mask and blur_mh > 0:
+            blur_center_in_crop = blur_my + (blur_mh / 2.0)
+        elif rel_sub_ymin is not None and rel_sub_ymax is not None:
+            blur_center_in_crop = crop_h * ((rel_sub_ymin + rel_sub_ymax) / 2.0)
         else:
-            sub_margin_v = int(options.get("sub_margin_v", 100) or 100)
-            sub_margin_v = max(30, min(800, sub_margin_v))
-            logger.info("💬 [SUBTITLE POSITION] Lề đáy phụ đề thủ công: MarginV=%d px", sub_margin_v)
+            # Fallback vị trí sub cũ đối thủ 16:9 luôn nằm ở ~87% chiều cao video
+            blur_center_in_crop = crop_h * 0.87
+
+        # Tọa độ Y tâm của vùng che sub cũ trên canvas 1080x1920 (khung hình dọc)
+        fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
+        blur_y_center_canvas = fg_top_y + (blur_center_in_crop * scale_v)
+
+        # Trong ASS Subtitle với Alignment=2 (Bottom-Center), MarginV là khoảng cách từ đáy (Y=1920) lên tâm dòng chữ.
+        raw_sz = int(options.get("sub_size", 38) or 38)
+        sub_sz = max(34, raw_sz * 5) if raw_sz <= 10 else max(30, min(80, raw_sz))
+        dist_from_bottom = cls.OUTPUT_H - blur_y_center_canvas
+        calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.5)))
+
+        sub_margin_v = max(200, min(1400, calc_margin_v))
+        logger.info(
+            "🎯 [CHẾ ĐỘ 3 - SUB OVERLAY BLUR] Khóa cứng vị trí Sub mới đè CHÍNH XÁC 100%% lên khu vực Blur che sub cũ: MarginV=%d px (Tâm blur Y=%.1f canvas, cách đáy %.1f px). Đã bỏ qua cài đặt vị trí thủ công!",
+            sub_margin_v, blur_y_center_canvas, dist_from_bottom
+        )
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số + Look Stack
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
@@ -1380,8 +1376,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
             sub_font = style_specs.get("font_name", "Arial")
-            sub_size = int(options.get("sub_size", 38) or 38)
-            sub_size = max(18, min(120, sub_size))
+            raw_sz = int(options.get("sub_size", 38) or 38)
+            sub_size = max(34, raw_sz * 5) if raw_sz <= 10 else max(30, min(80, raw_sz))
 
             # Chuyển đổi màu sắc an toàn (hỗ trợ cả ASS & Hex)
             raw_c = options.get("sub_color", "&H00FFFF&")
@@ -1425,18 +1421,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 margin_v=sub_margin_v
             )
             if converted and os.path.isfile(ass_file):
-                ass_escaped = os.path.abspath(ass_file).replace('\\', '/')
-                if ":" in ass_escaped:
-                    d, p = ass_escaped.split(":", 1)
-                    ass_escaped = f"{d}\\:{p}"
-                sub_filter_chain = f"{prev_sub_layer}ass='{ass_escaped}'[vout]"
+                sub_target = os.path.abspath(ass_file).replace('\\', '/')
+                if ":" in sub_target:
+                    d, p = sub_target.split(":", 1)
+                    sub_target = f"{d}\\:{p}"
+                sub_filter_chain = f"{prev_sub_layer}subtitles='{sub_target}':force_style='MarginV={sub_margin_v},Alignment=2'[vout]"
             else:
                 abs_srt = os.path.abspath(narration_srt).replace('\\', '/')
                 if ":" in abs_srt:
                     d, p = abs_srt.split(":", 1)
                     abs_srt = f"{d}\\:{p}"
-                sub_filter_chain = f"{prev_sub_layer}subtitles='{abs_srt}'[vout]"
-            logger.info("💬 [SUBTITLE RENDER] Đã cấu hình phụ đề: Size=%d, Màu=%s, Viền=%d, MarginV=%d", sub_size, sub_color, sub_outline, sub_margin_v)
+                sub_filter_chain = f"{prev_sub_layer}subtitles='{abs_srt}':force_style='MarginV={sub_margin_v},Alignment=2,FontSize={sub_size},FontName={sub_font},PrimaryColour={sub_color},OutlineColour={sub_outline_color},Outline={sub_outline},Shadow={sub_shadow}'[vout]"
+            logger.info("💬 [SUBTITLE RENDER] Đã cấu hình phụ đề đè dải Blur: Size=%d, Màu=%s, Viền=%d, MarginV=%d", sub_size, sub_color, sub_outline, sub_margin_v)
         else:
             logger.info("🚫 [SUBTITLE RENDER] Phụ đề bị tắt hoặc không có file SRT.")
 

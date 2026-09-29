@@ -655,7 +655,19 @@ class PreviewCanvas9x16(QWidget):
         # Nếu là TikTok Remixer hoặc sub_size >= 25: Đơn vị đã là pixel thực tế trên khung 1080x1920 (ASS PlayResY=1920).
         # Nếu là Chế độ tóm tắt cũ (sub_size <= 20, ví dụ 7, 8): Quy đổi theo hệ số PlayResY=288 cũ (1920 / 288 = 6.6667).
         is_tiktok = (_detect_mode(cfg) == "tiktok_remixer")
-        if is_tiktok or sub_size >= 25:
+        if is_tiktok:
+            # Chế độ TikTok Remixer: Tự động khóa vị trí Sub đè chính xác lên dải blur che sub cũ
+            canvas_font_size = max(10, int(round(max(34, sub_size if sub_size >= 25 else sub_size * 5) * scale)))
+            core_ar = 16.0 / 9.0
+            fg_w = disp_w
+            fg_h = fg_w / core_ar
+            fg_top_y = oy + (disp_h - fg_h) / 2.0
+            # Vùng sub cũ đối thủ thường ở 87% chiều cao video lõi
+            blur_center_canvas_y = fg_top_y + (fg_h * 0.87)
+            dist_from_bottom = (oy + disp_h) - blur_center_canvas_y
+            shadow_off = max(1, int(round(sub_shadow * scale)))
+            step = max(1, int(round(sub_outline * scale)))
+        elif sub_size >= 25:
             canvas_font_size = max(6, int(round(sub_size * scale)))
             dist_from_bottom = float(sub_margin_v) * scale
             shadow_off = max(1, int(round(sub_shadow * scale)))
@@ -1040,13 +1052,20 @@ class TitleSubStudioDialog(QDialog):
         self.sp_sub_shadow.valueChanged.connect(self._schedule_refresh)
         fl_sub.addRow("Bóng 3D (Shadow):", self.sp_sub_shadow)
 
-        self.sp_sub_margin_v = QSpinBox()
-        self.sp_sub_margin_v.setRange(10, 500)
-        self.sp_sub_margin_v.setValue(int(self.ts_data.get("sub_margin_v", 80)))
-        self.sp_sub_margin_v.setSuffix(" px")
-        self.sp_sub_margin_v.setToolTip("Khoảng cách từ mép đáy màn hình đến chữ phụ đề (MarginV)")
-        self.sp_sub_margin_v.valueChanged.connect(self._schedule_refresh)
-        fl_sub.addRow("Lề Đáy (MarginV):", self.sp_sub_margin_v)
+        if self.is_tiktok_mode:
+            self.sp_sub_margin_v = None
+            lbl_auto_pos = QLabel("🎯 <b>Vị Trí Phụ Đề:</b> Tự động đè chính xác 100% vào khu vực Blur của sub cũ đối thủ (Đã bỏ qua cài đặt vị trí thủ công).")
+            lbl_auto_pos.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 4px 0;")
+            lbl_auto_pos.setWordWrap(True)
+            fl_sub.addRow(lbl_auto_pos)
+        else:
+            self.sp_sub_margin_v = QSpinBox()
+            self.sp_sub_margin_v.setRange(10, 500)
+            self.sp_sub_margin_v.setValue(int(self.ts_data.get("sub_margin_v", 80)))
+            self.sp_sub_margin_v.setSuffix(" px")
+            self.sp_sub_margin_v.setToolTip("Khoảng cách từ mép đáy màn hình đến chữ phụ đề (MarginV)")
+            self.sp_sub_margin_v.valueChanged.connect(self._schedule_refresh)
+            fl_sub.addRow("Lề Đáy (MarginV):", self.sp_sub_margin_v)
 
         # 2 Ô Màu ASS
         self.btn_sub_color = _create_styled_color_btn(ass_to_hex(self._sub_color_ass))
@@ -1340,9 +1359,10 @@ class TitleSubStudioDialog(QDialog):
         sk = self.combo_sub_style.currentData() or "tiktok_slim"
         preset_info = SUBTITLE_PRESETS.get(sk, {})
         part_pos_desc = "Sau Title (Trên)" if cfg.get("part_position") == "after_title" else f"Dưới Y={cfg.get('part_y_pos')}px"
+        margin_text = f"Lề {self.sp_sub_margin_v.value()}px" if self.sp_sub_margin_v is not None else "Tự đè dải Blur"
         self.lbl_specs.setText(
             f"Phong cách: {preset_info.get('name', sk)}  |  "
-            f"Cỡ Sub: {self.sp_sub_size.value()}px (Lề {self.sp_sub_margin_v.value()}px)  |  "
+            f"Cỡ Sub: {self.sp_sub_size.value()}px ({margin_text})  |  "
             f"Title Y: {self.sp_title_y.value()}px  |  "
             f"Vị trí Part: {part_pos_desc}"
         )
@@ -1351,14 +1371,17 @@ class TitleSubStudioDialog(QDialog):
         sk = self.combo_sub_style.currentData() or "tiktok_slim"
         preset = SUBTITLE_PRESETS.get(sk, SUBTITLE_PRESETS["tiktok_slim"])
 
-        widgets = [self.sp_sub_size, self.sp_sub_outline, self.sp_sub_shadow, self.sp_sub_margin_v]
+        widgets = [self.sp_sub_size, self.sp_sub_outline, self.sp_sub_shadow]
+        if self.sp_sub_margin_v is not None:
+            widgets.append(self.sp_sub_margin_v)
         for w in widgets:
             w.blockSignals(True)
 
         self.sp_sub_size.setValue(preset["sub_size"])
         self.sp_sub_outline.setValue(preset["sub_outline"])
         self.sp_sub_shadow.setValue(preset["sub_shadow"])
-        self.sp_sub_margin_v.setValue(preset["sub_margin_v"])
+        if self.sp_sub_margin_v is not None:
+            self.sp_sub_margin_v.setValue(preset["sub_margin_v"])
 
         for w in widgets:
             w.blockSignals(False)
@@ -1493,7 +1516,8 @@ class TitleSubStudioDialog(QDialog):
             "sub_size": self.sp_sub_size.value(),
             "sub_outline": self.sp_sub_outline.value(),
             "sub_shadow": self.sp_sub_shadow.value(),
-            "sub_margin_v": self.sp_sub_margin_v.value(),
+            "sub_margin_v": self.sp_sub_margin_v.value() if self.sp_sub_margin_v is not None else 100,
+            "overlay_sub_on_blur_zone": True if self.is_tiktok_mode else self.ts_data.get("overlay_sub_on_blur_zone", True),
             "sub_color": self._sub_color_ass,
             "sub_outline_color": self._sub_ol_ass,
             "sub_uppercase": preset["uppercase"],
