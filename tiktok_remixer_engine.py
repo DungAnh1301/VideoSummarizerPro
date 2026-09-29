@@ -255,21 +255,23 @@ TASKS:
    - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move down to the exact frame.
    - Set "keep_original_audio": true.
 
-4. FRAME-ACCURATE DENSE SCENE SEGMENTATION & VISUAL TAGGING:
-   - Segment the remaining footage into clean B-Roll shots down to frame-accurate floating-point timestamps. Aim for AT LEAST 6 to 12 distinct individual scenes (S1, S2, S3... each 2.0s to 5.0s long) rather than a few giant chunks.
+4. FRAME-ACCURATE SCENE SEGMENTATION & VISUAL TAGGING (CHIA CẢNH TỰ NHIÊN THEO GÓC MÁY):
+   - Segment the footage after the hook into distinct, coherent story scenes (S1, S2, S3...) based on natural camera shot changes and storytelling moments.
+   - PACING REQUIREMENT: Keep scene lengths comfortable and cinematic (typically 4.0s to 8.0s per scene, matching real camera shot boundaries). DO NOT over-segment into rapid, jarring 1s - 2s micro-cuts that make viewers dizzy or nauseous.
    - For EACH scene, provide:
      * "id": "S1", "S2", "S3"...
      * "clean_range": [start_sec, end_sec] (frame-accurate floating-point seconds)
      * "visual_summary": exact action, subject, facial expression, mood, objects shown
-     * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
+     * "transition_type": "none" (hard cut, cutout_sec: 0.0), or "white_flash"/"fade_black" (micro cut 0.15s - 0.22s).
 
-5. CONTINUOUS NARRATION & MANDATORY ANTI-DUPLICATE B-ROLL RE-ORDERING:
+5. CONTINUOUS NARRATION SCRIPT & DIRECTORIAL STORYBOARD (GEMINI LÀ ĐẠO DIỄN SẮP XẾP GHÉP CẢNH):
    - CRITICAL MONETIZATION CONSTRAINT: The final video MUST be strictly LONGER THAN 60 SECONDS (Target: 62.0s to 70.0s) to qualify for TikTok Creator Rewards.
    - Word budget: Write approx 160 to 195 spoken words in {lang_name} ({locale_code}). Under NO circumstances write fewer than 155 words! The spoken duration MUST be at least 62 seconds long.
-   - CRITICAL ANTI-COPYRIGHT HASH RULE (BẮT BUỘC ĐẢO CẢNH CHỐNG QUÉT BẢN QUYỀN):
-     * UNDER NO CIRCUMSTANCES can you keep the original chronological scene order (e.g. S1 -> S2 -> S3 -> S4 is STRICTLY FORBIDDEN and will cause copyright strikes).
-     * You MUST heavily rearrange and remix the scene order in "remix_storyboard" (e.g. S3 -> S1 -> S5 -> S2 -> S6 -> S4) so that adjacent scenes are completely scrambled from the original video.
-     * Match each rewritten narration sentence to the NEAREST SEMANTIC MEANING, mood, or visual action of the assigned scene.
+   - GEMINI DIRECTOR STORYBOARD (BỘ NÃO ĐẠO DIỄN SẮP XẾP):
+     * You are the sole creative director. You decide how scenes and voiceover fit together. The video rendering tool is purely an executor and will NOT invent cuts or scramble your plan.
+     * In "remix_storyboard", arrange the scenes in the exact sequence they should appear to tell the story.
+     * For each storyboard entry, assign the "scene_id" that best matches the spoken sentence's context, mood, and visual emotion.
+     * Ensure the sequence feels cohesive, cinematic, and pleasant to watch, avoiding erratic, disorienting jumps.
    - Provide "title_line1" and "title_line2" in {lang_name}.
 
 OUTPUT FORMAT (JSON ONLY):
@@ -1390,70 +1392,71 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if sc.get("id"):
                     scenes_by_id[sc.get("id")] = sc_dict
 
-        # Bổ sung Scene Cuts bằng FFmpeg nếu AI không chia đủ cảnh hoặc cảnh quá dài (> 5.2s)
-        total_vid_dur = cls.get_video_duration(source_video)
-        needs_ffmpeg_split = (len(clean_scenes) < 4) or any(s["dur"] > 5.2 for s in clean_scenes)
-        if needs_ffmpeg_split:
-            body_start_sec = hook_end if (options.get("keep_original_hook", True) and hook_dur >= 0.5) else 0.0
-            cuts = cls.detect_scene_cuts_ffmpeg(source_video, start_sec=body_start_sec, end_sec=total_vid_dur, min_gap=2.0, max_gap=4.8)
-            if len(cuts) >= 3:
-                f_scenes = []
-                for s_i in range(len(cuts) - 1):
-                    c_st, c_en = cuts[s_i], cuts[s_i + 1]
-                    if c_en - c_st >= 1.0:
-                        s_id = f"SC{s_i + 1}"
-                        sc_item = {
-                            "id": s_id,
-                            "start": c_st,
-                            "end": c_en,
-                            "dur": c_en - c_st,
-                            "has_text": False,
-                            "visual_summary": f"Detected scene {s_i + 1}"
-                        }
-                        f_scenes.append(sc_item)
-                        scenes_by_id[s_id] = sc_item
-                if len(f_scenes) >= len(clean_scenes):
-                    logger.info("🎬 [B-ROLL SPLIT] Đã phân tách video nguồn thành %d cảnh B-Roll tự nhiên bằng FFmpeg (2.0s - 4.8s)", len(f_scenes))
-                    clean_scenes = f_scenes
-
-        # 4. SO SÁNH NỘI DUNG GIỌNG ĐỌC AI VỚI TỪNG CẢNH B-ROLL ĐỂ SẮP XẾP VÀ ĐẢO CẢNH
-        # Không bao giờ ghép y hệt clip gốc: Cảnh nào khớp nghĩa với câu thoại AI nhất sẽ được đưa vào, phá vỡ 100% video hash cũ
+        # 4. SẮP XẾP CẢNH THEO ĐẠO DIỄN GEMINI VISION (TOOL CHỈ THI HÀNH, KHÔNG TỰ Ý ĐẢO / BĂM CẢNH)
+        # Tuân thủ tuyệt đối tư duy đạo diễn của Gemini: Lấy trực tiếp danh sách và thứ tự từ "remix_storyboard".
         min_monetization_total = 62.0
         required_body_dur = max(min_monetization_total - hook_dur, audio_duration, 58.0)
         target_body_dur = max(58.0, required_body_dur)
 
-        clean_scenes = cls.match_and_reorder_broll_by_semantic(
-            clean_scenes=clean_scenes,
-            gemini_plan=gemini_plan,
-            target_body_dur=target_body_dur
-        )
+        storyboard = gemini_plan.get("remix_storyboard", [])
+        ordered_scenes = []
+        if storyboard and isinstance(storyboard, list):
+            for seg in storyboard:
+                sc_id = str(seg.get("scene_id") or "").strip()
+                sc_obj = scenes_by_id.get(sc_id)
+                if not sc_obj:
+                    # Tìm tương đối nếu Gemini đánh số S1, S01, SC1...
+                    for k, v in scenes_by_id.items():
+                        if k.lower() == sc_id.lower() or (sc_id.lstrip("sScC").isdigit() and k.lstrip("sScC") == sc_id.lstrip("sScC")):
+                            sc_obj = v
+                            break
+                if sc_obj:
+                    c_item = dict(sc_obj)
+                    if seg.get("narration_sentence"):
+                        c_item["narration_sentence"] = seg.get("narration_sentence")
+                    ordered_scenes.append(c_item)
+
+        if not ordered_scenes:
+            # Fallback nếu storyboard rỗng: Lấy trực tiếp thứ tự scenes mà Gemini đã phân cảnh
+            ordered_scenes = [dict(s) for s in clean_scenes]
+
+        # Nếu tổng thời lượng các cảnh trong storyboard chưa đủ khớp với giọng đọc AI (target_body_dur):
+        # Lặp lại tuần tự các cảnh theo đúng mạch storyboard của Gemini, không băm vụn
+        cur_body_dur = sum(s["dur"] for s in ordered_scenes)
+        if cur_body_dur < target_body_dur and ordered_scenes:
+            base_pool = list(ordered_scenes)
+            loop_idx = 0
+            while cur_body_dur < target_body_dur and loop_idx < 50:
+                ref_scene = dict(base_pool[loop_idx % len(base_pool)])
+                ref_scene["is_variant"] = True
+                ordered_scenes.append(ref_scene)
+                cur_body_dur += ref_scene["dur"]
+                loop_idx += 1
+
+        clean_scenes = ordered_scenes
         total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
-        # 6. Điều Tốc B-Roll Đàn Hồi Ngẫu Nhiên (Stochastic Elastic Speed Matching)
-        elastic_pts_map = {}
-        if total_clean_dur < target_body_dur and options.get("elastic_broll_speed", True) and clean_scenes:
-            sample_size = max(1, int(len(clean_scenes) * random.uniform(0.5, 0.8)))
-            stretched_indices = set(random.sample(range(len(clean_scenes)), min(sample_size, len(clean_scenes))))
-            for idx in range(len(clean_scenes)):
-                if idx in stretched_indices:
-                    elastic_pts_map[idx] = round(random.uniform(1.025, 1.075), 4)
-                else:
-                    elastic_pts_map[idx] = 1.0
-            logger.info("⏱️ [ELASTIC SPEED] Đã chọn ngẫu nhiên %d/%d cảnh để giãn nhẹ tốc độ.", len(stretched_indices), len(clean_scenes))
-        else:
-            for idx in range(len(clean_scenes)):
-                elastic_pts_map[idx] = 1.0
+        broll_labels = [f"{s.get('id', 'SC')}{'(v)' if s.get('is_variant') else ''} ({s.get('dur', 0):.1f}s)" for s in clean_scenes]
+        logger.info(
+            "🎬 [STORYBOARD GEMINI] Tuân thủ 100%% thứ tự đạo diễn Gemini: %d cảnh B-Roll -> %s (Tổng: %.1fs, Voice: %.1fs)",
+            len(clean_scenes), " -> ".join(broll_labels[:10]) + ("..." if len(broll_labels) > 10 else ""),
+            total_clean_dur, audio_duration
+        )
 
-        # 7. Lật Gương Phản Chiếu Ngẫu Nhiên (Chuẩn theo Chế độ 1 Tóm tắt):
+        # 5. Tốc độ video B-Roll (Giữ tự nhiên 1.0x để xem êm ái, không giật cục)
+        elastic_pts_map = {idx: 1.0 for idx in range(len(clean_scenes))}
+
+        # 6. Lật Gương Phản Chiếu:
+        # Triệt tiêu tình trạng lật gương ngẫu nhiên 45% làm nhân vật đảo chiều liên tục gây chóng mặt buồn nôn.
+        # Mặc định giữ nguyên chiều camera tự nhiên (False). Chỉ lật khi người dùng chủ động yêu cầu trong options ("force_mirror")
         mirror_map = {idx: False for idx in range(len(clean_scenes))}
-        if options.get("mirror_broll", True) and clean_scenes:
-            mirror_count = min(len(clean_scenes), max(1, int(round(len(clean_scenes) * 0.45))))
-            for m_idx in random.sample(range(len(clean_scenes)), mirror_count):
-                mirror_map[m_idx] = True
-            for idx, sc in enumerate(clean_scenes):
-                if sc.get("is_variant", False):
-                    mirror_map[idx] = True
-            logger.info("🪞 [MIRROR] Lật ngẫu nhiên %d/%d cảnh chuẩn như Chế độ 1 (Sub mới và Title overlay lên trên cùng).", mirror_count, len(clean_scenes))
+        if options.get("force_mirror", False):
+            for idx in range(len(clean_scenes)):
+                mirror_map[idx] = True
+            logger.info("🪞 [MIRROR] Lật gương toàn bộ thân video theo tùy chọn người dùng.")
+        else:
+            logger.info("🪞 [MIRROR] Giữ nguyên hướng nhìn tự nhiên của nhân vật và góc quay, không lật gương ngẫu nhiên.")
+
 
         # 7. Xây dựng Title Banner Mới Bằng PIL
         from editor_processor import EditorProcessor
