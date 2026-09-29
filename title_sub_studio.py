@@ -159,8 +159,8 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "tiktok_slim": {
         "key": "tiktok_slim",
         "name": "✨ Thanh Mảnh (TikTok Slim - Arial/Segoe)",
-        "sub_size": 7,
-        "sub_outline": 1,
+        "sub_size": 42,
+        "sub_outline": 2,
         "sub_shadow": 0,
         "sub_margin_v": 80,
         "uppercase": False,
@@ -169,8 +169,8 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "classic": {
         "key": "classic",
         "name": "🏛️ Cổ Điển (Classic - Segoe UI Black/Impact)",
-        "sub_size": 14,
-        "sub_outline": 3,
+        "sub_size": 56,
+        "sub_outline": 4,
         "sub_shadow": 0,
         "sub_margin_v": 80,
         "uppercase": True,
@@ -179,8 +179,8 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "standard": {
         "key": "standard",
         "name": "📺 Tiêu Chuẩn (Standard - Segoe UI)",
-        "sub_size": 10,
-        "sub_outline": 2,
+        "sub_size": 48,
+        "sub_outline": 3,
         "sub_shadow": 0,
         "sub_margin_v": 90,
         "uppercase": False,
@@ -652,49 +652,36 @@ class PreviewCanvas9x16(QWidget):
         if not text:
             return
 
-        # Hàm thống nhất kích thước font chữ trên canvas 1080x1920:
-        def get_effective_sub_size(raw_sz: int) -> int:
-            try:
-                val = int(raw_sz)
-            except Exception:
-                val = 48
-            if val <= 0:
-                return 48
-            if val < 25:
-                # Quy đổi từ đơn vị 288p chuẩn sang 1920p (hệ số 1920/288 = 6.6667)
-                # Ví dụ: 7 -> 47px, 10 -> 67px, 12 -> 80px, 14 -> 93px
-                return max(34, int(round(val * (1920.0 / 288.0))))
-            return max(30, min(120, val))
-
-        effective_sub_sz = get_effective_sub_size(sub_size)
-        canvas_font_size = max(10, int(round(effective_sub_sz * scale)))
-        effective_outline = max(2, int(round(sub_outline * 1.8))) if sub_outline <= 5 else sub_outline
-        step = max(1, int(round(effective_outline * scale)))
-        shadow_off = max(1, int(round(sub_shadow * scale)))
-
         is_tiktok = (_detect_mode(cfg) == "tiktok_remixer")
+        raw_sz = int(cfg.get("sub_size", 48) or 48)
+        if raw_sz <= 16:
+            real_sub_sz = raw_sz * 4
+        else:
+            real_sub_sz = max(20, min(100, raw_sz))
+
+        shadow_off = max(0, int(round(sub_shadow * scale)))
+        step = max(1, int(round(sub_outline * scale)))
+
         if is_tiktok:
-            # Chế độ TikTok Remixer: Tự động khóa vị trí Sub thông minh
+            canvas_font_size = max(8, int(round(real_sub_sz * scale)))
             core_ar = 16.0 / 9.0
             fg_w = disp_w
             fg_h = fg_w / core_ar
             fg_top_y = oy + (disp_h - fg_h) / 2.0
             fg_bottom_y = fg_top_y + fg_h
 
-            # Kiểm tra xem có dải blur che sub cũ không (luôn ưu tiên che dải blur)
+            # Kiểm tra xem có dải blur che sub cũ không
             has_old_sub = bool(cfg.get("use_blur_mask") or cfg.get("auto_blur_sub_part", True))
             if has_old_sub:
-                # 1. Có sub cũ: Đè chính xác lên dải blur che sub cũ (trong video lõi)
-                target_sub_y = fg_top_y + (fg_h * 0.87)
+                # Dải blur nằm ở 0.82 - 0.98 của fg_h, tâm là 0.90 của fg_h
+                target_sub_y = fg_top_y + (fg_h * 0.90)
             else:
-                # 2. Không có sub cũ (video sạch): Đặt ở dải BLUR BÊN DƯỚI (ngay mép dưới video lõi)
+                # Video sạch không có sub cũ: đặt ở dải blur bên dưới mép video lõi
                 target_sub_y = fg_bottom_y + (80.0 * scale)
-
-            dist_from_bottom = (oy + disp_h) - target_sub_y
-        elif sub_size >= 25:
-            dist_from_bottom = float(sub_margin_v) * scale
         else:
-            dist_from_bottom = float(sub_margin_v) * (1920.0 / 288.0) * scale
+            canvas_font_size = max(6, int(round(real_sub_sz * scale)))
+            dist_from_bottom = float(sub_margin_v) * scale
+            target_sub_y = (oy + disp_h) - dist_from_bottom
 
         style_key = cfg.get("sub_style_type", "tiktok_slim")
         font_family = "Segoe UI Black" if style_key == "classic" else ("Arial" if style_key == "tiktok_slim" else "Segoe UI")
@@ -729,8 +716,11 @@ class PreviewCanvas9x16(QWidget):
         line_h = fm.height()
         total_text_h = len(lines) * line_h
 
-        base_bottom_y = oy + disp_h - dist_from_bottom
-        top_y = base_bottom_y - total_text_h
+        if is_tiktok:
+            top_y = target_sub_y - (total_text_h / 2.0)
+        else:
+            base_bottom_y = target_sub_y
+            top_y = base_bottom_y - total_text_h
 
         for i, line_str in enumerate(lines):
             lw = fm.horizontalAdvance(line_str)
@@ -1048,8 +1038,11 @@ class TitleSubStudioDialog(QDialog):
 
         # 4 Spinbox Thông số Phụ Đề
         self.sp_sub_size = QSpinBox()
-        self.sp_sub_size.setRange(2, 60)
-        self.sp_sub_size.setValue(int(self.ts_data.get("sub_size", 7)))
+        self.sp_sub_size.setRange(20, 100)
+        raw_sz_init = int(self.ts_data.get("sub_size", 48) or 48)
+        if raw_sz_init <= 16:
+            raw_sz_init *= 4
+        self.sp_sub_size.setValue(max(20, min(100, raw_sz_init)))
         self.sp_sub_size.setSuffix(" px")
         self.sp_sub_size.valueChanged.connect(self._schedule_refresh)
         fl_sub.addRow("Cỡ Chữ (FontSize):", self.sp_sub_size)

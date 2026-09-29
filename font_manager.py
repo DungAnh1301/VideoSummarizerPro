@@ -142,8 +142,8 @@ class FontManager:
     SUBTITLE_STYLE_MATRIX: Dict[str, Dict] = {
         "classic": {
             "name": "Cổ điển (In hoa to)",
-            "default_size": 26,
-            "default_outline": 3,
+            "default_size": 56,
+            "default_outline": 4,
             "default_shadow": 0,
             "uppercase": True,
             "bold": 1,
@@ -156,9 +156,9 @@ class FontManager:
         },
         "tiktok_slim": {
             "name": "Thanh mảnh (Giống No.1)",
-            "default_size": 16,
+            "default_size": 42,
             "default_outline": 2,
-            "default_shadow": 1,
+            "default_shadow": 0,
             "uppercase": False,
             "bold": 1,
             "fonts": {
@@ -170,8 +170,8 @@ class FontManager:
         },
         "standard": {
             "name": "Bình thường (Tiêu chuẩn)",
-            "default_size": 21,
-            "default_outline": 2,
+            "default_size": 48,
+            "default_outline": 3,
             "default_shadow": 0,
             "uppercase": False,
             "bold": 0,

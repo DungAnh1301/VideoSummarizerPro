@@ -781,7 +781,7 @@ class TikTokRemixerTab(ttk.Frame):
 
         # Hiển thị thông báo chi tiết ngay tại log để người dùng an tâm mọi thông số đã nạp vào video
         look_name = job_options.get("color_look", "8K")
-        sub_sz = job_options.get("sub_size", 38)
+        sub_sz = job_options.get("sub_size", 48)
         c_mode = "Thủ công (Crop Studio)" if job_options.get("use_crop") else "AI Auto"
         t_mode = "Bật" if job_options.get("enable_title", True) else "Tắt"
         s_mode = "Bật" if job_options.get("enable_sub", True) else "Tắt"
