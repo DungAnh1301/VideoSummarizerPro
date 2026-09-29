@@ -683,7 +683,12 @@ class TikTokRemixerTab(ttk.Frame):
         self._collect_config_from_ui()
         self.config["is_tiktok_remixer"] = True
         self.config["app_mode"] = "tiktok_remixer"
-        if self.main_app and hasattr(self.main_app, "open_crop_tool_popup"):
+        if self.main_app and hasattr(self.main_app, "open_crop_blur_studio_popup"):
+            self.main_app.open_crop_blur_studio_popup(
+                on_save_callback=self._on_studio_saved,
+                caller_config=self.config
+            )
+        elif self.main_app and hasattr(self.main_app, "open_crop_tool_popup"):
             self.main_app.open_crop_tool_popup(
                 on_save_callback=self._on_studio_saved,
                 caller_config=self.config

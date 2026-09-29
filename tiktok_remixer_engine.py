@@ -804,13 +804,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if text_h < 12:
                 return None
 
-            pad_y = max(10, int(text_h * 0.15))
+            pad_y = max(8, int(text_h * 0.15))
             raw_blur_y = max(0, min_ytop - pad_y)
             raw_blur_h = min(crop_h - raw_blur_y, (max_ybot + pad_y) - raw_blur_y)
 
-            # Khống chế trần an toàn toán học: dải che sub/part luôn nằm trong 67% - 98% chiều cao video lõi
-            blur_my = max(int(crop_h * 0.67), min(int(crop_h * 0.74), raw_blur_y))
-            blur_mh = min(crop_h - blur_my, max(int(crop_h * 0.22), raw_blur_h))
+            # Khống chế dải che sub/part gọn gàng ở đáy (72% - 98% chiều cao video lõi, chiều cao tối đa 160px)
+            blur_my = max(int(crop_h * 0.72), min(int(crop_h * 0.84), raw_blur_y))
+            blur_mh = min(crop_h - blur_my, max(70, min(160, raw_blur_h)))
 
             blur_mw = int(crop_w * 0.94)
             blur_mx = int(crop_w * 0.03)
@@ -1515,18 +1515,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
 
             if has_blur_mask:
-                # BO VIỀN MỀM VÀ BO GÓC BẰNG MASKEDMERGE CHO HOOK:
-                mask_hook_chain = (
-                    f"color=c=black:s={crop_w}x{crop_h}:r=25:d={hook_dur:.3f}[hmbg];"
-                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={hook_dur:.3f}[hmfg];"
-                    f"[hmbg][hmfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[hmsoft];"
-                )
                 core_crop_hook = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                    f"split=2[c_raw][c_to_blur];"
-                    f"[c_to_blur]boxblur=28:15[c_blurred];"
-                    f"{mask_hook_chain}"
-                    f"[c_raw][c_blurred][hmsoft]maskedmerge[core_clean];"
+                    f"split=2[c_raw][c_sub_crop];"
+                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:5[c_sub_blurred];"
+                    f"[c_raw][c_sub_blurred]overlay={blur_mx}:{blur_my}[core_clean];"
                 )
             else:
                 core_crop_hook = f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y}[core_clean];"
@@ -1613,12 +1606,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if has_blur_mask:
                 fc_clip = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                    f"split=2[c_raw][c_to_blur];"
-                    f"[c_to_blur]boxblur=28:15[c_blurred];"
-                    f"color=c=black:s={crop_w}x{crop_h}:r=25:d={sc_dur + 0.5:.3f}[mbg];"
-                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={sc_dur + 0.5:.3f}[mfg];"
-                    f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[msoft];"
-                    f"[c_raw][c_blurred][msoft]maskedmerge,"
+                    f"split=2[c_raw][c_sub_crop];"
+                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:5[c_sub_blurred];"
+                    f"[c_raw][c_sub_blurred]overlay={blur_mx}:{blur_my},"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
                 cmd_c = [
