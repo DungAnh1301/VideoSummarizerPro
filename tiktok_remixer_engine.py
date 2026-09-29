@@ -973,32 +973,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
             has_blur_mask = True
             logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
-        elif auto_blur:
             geom = gemini_plan.get("layout_geometry", {})
             sub_norm = geom.get("sub_blur_normalized")
             if not sub_norm or not isinstance(sub_norm, dict):
-                sub_norm = {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95}
+                sub_norm = {"ymin": 0.65, "ymax": 0.85, "xmin": 0.02, "xmax": 0.98}
 
-            sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
-            sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
+            sub_orig_ymin = float(sub_norm.get("ymin", 0.65))
+            sub_orig_ymax = float(sub_norm.get("ymax", 0.85))
             crop_span = max(0.01, ymax - ymin)
 
-            if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
-                rel_sub_ymin = 0.82
+            raw_rel_ymin = (sub_orig_ymin - ymin) / crop_span
+            raw_rel_ymax = (sub_orig_ymax - ymin) / crop_span
+
+            # QUAN TRỌNG: Mở rộng mép trên lên ít nhất 10% (raw_rel_ymin - 0.10) để trùm kín 100% mọi tàn dư chữ
+            # (bao gồm badge Part 1, Part 2, và đỉnh chữ cái tránh bị lẹm hay thò đầu ra ngoài).
+            # Khống chế trần: rel_sub_ymin KHÔNG ĐƯỢC VƯỢT QUÁ 0.68 để luôn bảo đảm che kín tuyệt đối.
+            if sub_orig_ymin < ymin or raw_rel_ymin < 0.50:
+                rel_sub_ymin = 0.68
                 rel_sub_ymax = 0.98
             else:
-                rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
-                rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
+                rel_sub_ymin = min(0.68, max(0.55, raw_rel_ymin - 0.10))
+                rel_sub_ymax = max(rel_sub_ymin + 0.18, min(0.99, raw_rel_ymax + 0.04))
 
-            blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
-            blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
+            sub_xmin = min(0.03, float(sub_norm.get("xmin", 0.03)))
+            sub_xmax = max(0.97, float(sub_norm.get("xmax", 0.97)))
+            blur_mx = int(crop_w * sub_xmin)
+            blur_mw = int(crop_w * (sub_xmax - sub_xmin))
             blur_my = int(round(crop_h * rel_sub_ymin))
             blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-            blur_mh = max(30, blur_mh)
+            blur_mh = max(40, blur_mh)
             blur_mw -= blur_mw % 2
             blur_mh -= blur_mh % 2
             has_blur_mask = True
-            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub & Part cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f, che kín 100%%)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
         else:
             rel_sub_ymin = None
             rel_sub_ymax = None

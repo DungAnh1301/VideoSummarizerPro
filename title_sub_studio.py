@@ -673,8 +673,8 @@ class PreviewCanvas9x16(QWidget):
             # Kiểm tra xem có dải blur che sub cũ không
             has_old_sub = bool(cfg.get("use_blur_mask") or cfg.get("auto_blur_sub_part", True))
             if has_old_sub:
-                # Dải blur nằm ở 0.82 - 0.98 của fg_h, tâm là 0.90 của fg_h
-                target_sub_y = fg_top_y + (fg_h * 0.90)
+                # Dải blur mở rộng nằm ở 0.68 - 0.98 của fg_h, tâm là 0.83 của fg_h
+                target_sub_y = fg_top_y + (fg_h * 0.83)
             else:
                 # Video sạch không có sub cũ: đặt ở dải blur bên dưới mép video lõi
                 target_sub_y = fg_bottom_y + (80.0 * scale)
