@@ -618,47 +618,51 @@ OUTPUT FORMAT (JSON ONLY):
     @classmethod
     def wrap_subtitle_text(cls, text: str, font_size: int, max_width_px: int = 940) -> str:
         """
-        Tự động căn dòng phụ đề cân đối (Smart 2-Line Balancing) khi cỡ chữ lớn để không bị tràn màn hình:
-        - Tự động tính số ký tự tối đa trên 1 dòng theo cỡ chữ (FontSize) và chiều rộng hiển thị 1080px (trừ 2 mép an toàn).
-        - Khi câu vượt quá chiều ngang, tìm vị trí ngắt từ tối ưu để chia thành 2 dòng có độ dài cân bằng, đẹp mắt như Title Banner.
-        - Chèn ký tự ngắt dòng chuẩn ASS (\\N) để hiển thị căn giữa hoàn hảo.
+        Tự động căn dòng phụ đề: TUYỆT ĐỐI KHÔNG QUÁ 2 DÒNG (KHÓA CỨNG MAX 2 DÒNG).
+        - Nếu câu ngắn: Giữ nguyên 1 dòng.
+        - Nếu câu dài: Cắt thành đúng 2 dòng cân đối nhất tại ranh giới từ.
+        - Nếu câu quá dài (kể cả chia 2 dòng vẫn dài hơn chiều ngang): Tự động co cỡ chữ (Font-size auto-shrink)
+          bằng thẻ ASS {\\fsXX} để ĐẢM BẢO 100% không bao giờ nhảy sang dòng thứ 3 và không bao giờ tràn mép màn hình.
         """
         text = text.strip()
         if not text:
             return ""
-        if "\\N" in text:
-            return text
-        if "\n" in text:
-            return text.replace("\n", "\\N")
 
-        # Tỉ lệ chiều rộng ký tự trung bình đối với font chữ đậm (Impact, Segoe UI Black, Arial Bold)
+        clean_text = text.replace("\\N", " ").replace("\n", " ").strip()
+        words = clean_text.split()
+        if not words:
+            return ""
+
         char_width_ratio = 0.52
-        max_chars_per_line = max(18, int(max_width_px / max(12, font_size * char_width_ratio)))
+        max_chars_single_line = max(18, int(max_width_px / max(12, font_size * char_width_ratio)))
 
-        if len(text) <= max_chars_per_line:
-            return text
+        if len(clean_text) <= max_chars_single_line or len(words) <= 1:
+            return clean_text
 
-        words = text.split()
-        if len(words) <= 1:
-            return text
+        # BẮT BUỘC MAX 2 DÒNG: Tìm điểm cắt k để chia thành đúng 2 dòng cân đối nhất
+        best_k = 1
+        best_diff = 9999
+        for k in range(1, len(words)):
+            l1 = " ".join(words[:k])
+            l2 = " ".join(words[k:])
+            diff = abs(len(l1) - len(l2))
+            if diff < best_diff:
+                best_diff = diff
+                best_k = k
 
-        # Nếu câu dài vừa phải (cần 2 dòng): Tìm điểm cắt k để 2 dòng có độ dài ký tự cân đối nhất (giống Title 2 dòng)
-        if len(text) <= max_chars_per_line * 2.1:
-            best_k = 1
-            best_diff = 9999
-            for k in range(1, len(words)):
-                l1 = " ".join(words[:k])
-                l2 = " ".join(words[k:])
-                diff = abs(len(l1) - len(l2))
-                if diff < best_diff:
-                    best_diff = diff
-                    best_k = k
-            return f"{' '.join(words[:best_k])}\\N{' '.join(words[best_k:])}"
+        line1 = " ".join(words[:best_k])
+        line2 = " ".join(words[best_k:])
+
+        # Kiểm tra xem dòng dài nhất có vượt quá bề ngang 940px hay không
+        max_line_len = max(len(line1), len(line2))
+        max_allowed_len = int(max_width_px / max(12, font_size * char_width_ratio))
+
+        if max_line_len > max_allowed_len:
+            # Tự động co cỡ chữ (Auto-Shrink) vừa khít cho câu này bằng tag {\fsXX}, giữ đúng 2 dòng
+            fit_font_size = max(28, int(max_width_px / (max_line_len * char_width_ratio)))
+            return f"{{\\fs{fit_font_size}}}{line1}\\N{line2}"
         else:
-            # Nếu câu quá dài (cần 3 dòng), chia đều theo max_chars
-            import textwrap
-            wrapped_lines = textwrap.wrap(text, width=max_chars_per_line)
-            return "\\N".join(wrapped_lines)
+            return f"{line1}\\N{line2}"
 
     @classmethod
     def convert_srt_to_ass(
@@ -684,7 +688,7 @@ OUTPUT FORMAT (JSON ONLY):
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
-WrapStyle: 0
+WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
