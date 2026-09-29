@@ -27,9 +27,9 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     "elastic_broll_speed": True,          # Điều tốc đàn hồi 0.95x trên cảnh lẻ khi thiếu hình
     
     # 4. Re-mix chống bản quyền
-    "shuffle_broll": True,                # Đảo trật tự cảnh b-roll hợp lý
+    "shuffle_broll": True,                # Đảo trật tự cảnh b-roll hợp lý theo giọng đọc AI
     "mirror_broll": True,                 # Lật gương phản chiếu (hflip)
-    "overlay_sub_on_blur_zone": False,    # Ưu tiên Sub chuẩn tại đáy (MarginV Studio), tắt đè dải mờ giữa hình
+    "overlay_sub_on_blur_zone": True,     # Đè Sub mới đè kín lên dải che Sub cũ (Xóa 100% dấu vết đối thủ)
     "blur_bg_916": True,                  # Tạo nền mờ 9:16 điện ảnh phía sau lõi video sạch
     
     # 5. AI Kịch bản & Giọng đọc

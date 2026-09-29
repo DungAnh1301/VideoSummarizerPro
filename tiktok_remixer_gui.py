@@ -256,10 +256,10 @@ class TikTokRemixerTab(ttk.Frame):
         chk_mirr = ttk.Checkbutton(scene_group, text="🪞 Lật gương phản chiếu (hflip)", variable=self.mirror_broll_var)
         chk_mirr.grid(row=3, column=1, sticky=tk.W, padx=(10, 0), pady=1)
 
-        self.overlay_sub_on_blur_var = tk.BooleanVar(value=False)
+        self.overlay_sub_on_blur_var = tk.BooleanVar(value=True)
         chk_sub_over = ttk.Checkbutton(
             scene_group,
-            text="🎯 Đè Sub mới lên dải Sub cũ giữa khung hình (Mặc định tắt để sub nằm đáy 100px theo Studio)",
+            text="🎯 Đè Sub mới đè kín lên dải che Sub cũ (Xóa 100% dấu vết đối thủ)",
             variable=self.overlay_sub_on_blur_var
         )
         chk_sub_over.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=1)
@@ -1055,7 +1055,7 @@ class TikTokRemixerTab(ttk.Frame):
         if hasattr(self, "mirror_broll_var"):
             self.mirror_broll_var.set(self.config.get("mirror_broll", True))
         if hasattr(self, "overlay_sub_on_blur_var"):
-            self.overlay_sub_on_blur_var.set(self.config.get("overlay_sub_on_blur_zone", False))
+            self.overlay_sub_on_blur_var.set(self.config.get("overlay_sub_on_blur_zone", True))
 
         if hasattr(self, "speed_spin"):
             self.speed_spin.set(self.config.get("speed", 1.05))

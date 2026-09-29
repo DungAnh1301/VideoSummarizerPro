@@ -105,6 +105,79 @@ class TikTokRemixerEngine:
             return 1080, 1920
 
     @classmethod
+    def detect_scene_cuts_ffmpeg(
+        cls,
+        video_path: str,
+        start_sec: float = 0.0,
+        end_sec: Optional[float] = None,
+        min_gap: float = 2.0,
+        max_gap: float = 5.2
+    ) -> List[float]:
+        """
+        Dò tất cả các điểm chuyển cảnh (scene cuts) thực tế của video bằng FFmpeg scene detection.
+        Đảm bảo các phân đoạn B-roll có độ dài tự nhiên [min_gap, max_gap] (2.0s - 5.2s),
+        không bị cắt vụn cũng không bị dính cục video dài của đối thủ.
+        """
+        total_dur = cls.get_video_duration(video_path)
+        if end_sec is None or end_sec > total_dur or end_sec <= start_sec:
+            end_sec = total_dur
+
+        scan_dur = max(1.0, end_sec - start_sec)
+        detected_points = []
+        flags = 0x08000000 if os.name == "nt" else 0
+
+        try:
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-ss", f"{start_sec:.3f}",
+                "-t", f"{scan_dur:.3f}",
+                "-i", video_path,
+                "-vf", "scale=160:90,select='gt(scene,0.20)',metadata=print",
+                "-f", "null", "-"
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
+            for x in re.findall(r"pts_time:([0-9.]+)", res.stderr or ""):
+                sec = round(start_sec + float(x), 3)
+                if start_sec + 0.8 <= sec <= end_sec - 0.8:
+                    detected_points.append(sec)
+        except Exception as e:
+            logger.warning(f"⚠️ [SCENE DETECT] Lỗi dò scene bằng FFmpeg: {e}")
+
+        # Lọc các điểm quá sát nhau (< min_gap)
+        clean_cuts = [round(start_sec, 3)]
+        for pt in sorted(detected_points):
+            if pt - clean_cuts[-1] >= min_gap:
+                clean_cuts.append(pt)
+
+        # Nếu khoảng cách giữa 2 điểm cắt quá dài (> max_gap), bổ sung các điểm cắt phụ tự nhiên
+        final_cuts = [clean_cuts[0]]
+        for pt in clean_cuts[1:]:
+            while pt - final_cuts[-1] > max_gap:
+                sub_cut = round(final_cuts[-1] + random.uniform(3.0, 4.5), 3)
+                if pt - sub_cut >= min_gap:
+                    final_cuts.append(sub_cut)
+                else:
+                    break
+            final_cuts.append(pt)
+
+        # Kiểm tra đoạn cuối cùng đến end_sec
+        while end_sec - final_cuts[-1] > max_gap:
+            sub_cut = round(final_cuts[-1] + random.uniform(3.0, 4.5), 3)
+            if end_sec - sub_cut >= min_gap:
+                final_cuts.append(sub_cut)
+            else:
+                break
+
+        if end_sec - final_cuts[-1] >= 1.0:
+            final_cuts.append(round(end_sec, 3))
+        else:
+            final_cuts[-1] = round(end_sec, 3)
+
+        res_cuts = sorted(list(set(final_cuts)))
+        logger.info(f"🎬 [SCENE CUTS FFMPEG] Đã xác định {len(res_cuts)-1} phân đoạn cảnh tự nhiên trong khoảng [{start_sec:.1f}s - {end_sec:.1f}s]")
+        return res_cuts
+
+    @classmethod
     def inspect_and_remix_with_gemini(
         cls,
         video_path: str,
@@ -145,21 +218,21 @@ TASKS:
    - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move down to the exact frame.
    - Set "keep_original_audio": true.
 
-4. FRAME-ACCURATE SCENE SEGMENTATION & VISUAL TAGGING:
-   - Segment the remaining footage into clean B-Roll scenes down to frame-accurate floating-point timestamps (e.g. [3.25, 8.42] rather than coarse seconds).
+4. FRAME-ACCURATE DENSE SCENE SEGMENTATION & VISUAL TAGGING:
+   - Segment the remaining footage into clean B-Roll shots down to frame-accurate floating-point timestamps. Aim for AT LEAST 6 to 12 distinct individual scenes (S1, S2, S3... each 2.0s to 5.0s long) rather than a few giant chunks.
    - For EACH scene, provide:
      * "id": "S1", "S2", "S3"...
      * "clean_range": [start_sec, end_sec] (frame-accurate floating-point seconds)
      * "visual_summary": exact action, subject, facial expression, mood, objects shown
      * "transition_type": "none" (hard cut - DO NOT cut out any frames, cutout_sec: 0.0), or "white_flash"/"zoom_glitch"/"fade_black" (micro cut 0.15s - 0.22s).
 
-5. CONTINUOUS NARRATION & NEAREST-SEMANTIC B-ROLL MATCHING (GHÉP CẢNH CÓ SẴN THEO NGỮ NGHĨA GẦN NHẤT):
+5. CONTINUOUS NARRATION & MANDATORY ANTI-DUPLICATE B-ROLL RE-ORDERING:
    - CRITICAL MONETIZATION CONSTRAINT: The final video MUST be strictly LONGER THAN 60 SECONDS (Target: 62.0s to 70.0s) to qualify for TikTok Creator Rewards.
    - Word budget: Write approx 160 to 195 spoken words in {lang_name} ({locale_code}). Under NO circumstances write fewer than 155 words! The spoken duration MUST be at least 62 seconds long.
-   - You only have these existing raw B-Roll scenes extracted from the source video (no external replacement footage). DO NOT chop them into awkward micro fragments; keep their natural camera motion and emotion intact.
-   - Write a smooth, continuous viral narration story that reads seamlessly from beginning to end without artificial pauses or waiting for cuts.
-   - Re-arrange and sequence the available existing B-Roll scenes in "remix_storyboard" so that each scene visually matches the NEAREST SEMANTIC MEANING, mood, or action of that part of the continuous voiceover/subtitles.
-   - Ensure the re-ordered scene sequence breaks the competitor's original hash while fitting the new narrative progression as coherently as possible.
+   - CRITICAL ANTI-COPYRIGHT HASH RULE (BẮT BUỘC ĐẢO CẢNH CHỐNG QUÉT BẢN QUYỀN):
+     * UNDER NO CIRCUMSTANCES can you keep the original chronological scene order (e.g. S1 -> S2 -> S3 -> S4 is STRICTLY FORBIDDEN and will cause copyright strikes).
+     * You MUST heavily rearrange and remix the scene order in "remix_storyboard" (e.g. S3 -> S1 -> S5 -> S2 -> S6 -> S4) so that adjacent scenes are completely scrambled from the original video.
+     * Match each rewritten narration sentence to the NEAREST SEMANTIC MEANING, mood, or visual action of the assigned scene.
    - Provide "title_line1" and "title_line2" in {lang_name}.
 
 OUTPUT FORMAT (JSON ONLY):
@@ -263,7 +336,7 @@ OUTPUT FORMAT (JSON ONLY):
 
         # Fallback dữ liệu mặc định an toàn nếu không có AI
         logger.warning("⚠️ [GEMINI FALLBACK] Sử dụng thông số phân cảnh mặc định an toàn.")
-        return cls._create_default_fallback_plan(dur, target_market)
+        return cls._create_default_fallback_plan(dur, target_market, source_video=video_path)
 
     @classmethod
     def _parse_json_from_text(cls, text: str) -> Optional[Dict[str, Any]]:
@@ -284,12 +357,82 @@ OUTPUT FORMAT (JSON ONLY):
         return None
 
     @classmethod
-    def _create_default_fallback_plan(cls, dur: float, target_market: str) -> Dict[str, Any]:
-        """Tạo plan mặc định khi không có kết nối AI."""
+    def _create_default_fallback_plan(cls, dur: float, target_market: str, source_video: Optional[str] = None) -> Dict[str, Any]:
+        """Tạo plan mặc định khi không có kết nối AI, tự động dò scene cuts thật và đảo cảnh xen kẽ triệt để."""
         market = get_market_profile(target_market)
-        h_end = min(4.0, dur * 0.15)
+        h_end = min(4.0, max(2.5, dur * 0.12))
         rem_dur = max(2.0, dur - h_end)
-        half_dur = rem_dur / 2.0
+
+        # 1. Dò scene cuts thật từ video nếu có file nguồn
+        raw_cuts = []
+        if source_video and os.path.isfile(source_video):
+            raw_cuts = cls.detect_scene_cuts_ffmpeg(source_video, start_sec=h_end, end_sec=dur, min_gap=2.2, max_gap=4.8)
+
+        if not raw_cuts or len(raw_cuts) < 3:
+            # Chia đều thành 5-8 cảnh tự nhiên (mỗi cảnh ~ 3.2s - 4.5s)
+            step = 3.5
+            cur = h_end
+            raw_cuts = [cur]
+            while cur + step < dur - 1.0:
+                cur += step
+                raw_cuts.append(round(cur, 3))
+            raw_cuts.append(round(dur, 3))
+
+        scenes = []
+        for s_idx in range(len(raw_cuts) - 1):
+            st = raw_cuts[s_idx]
+            en = raw_cuts[s_idx + 1]
+            if en - st >= 0.8:
+                scenes.append({
+                    "id": f"S{s_idx + 1}",
+                    "clean_range": [st, en],
+                    "visual_summary": f"Dramatic action sequence {s_idx + 1}",
+                    "has_text": False,
+                    "transition_type": "none",
+                    "cutout_sec": 0.0
+                })
+
+        # 2. Đảo thứ tự cảnh xen kẽ (Interleaved Narrative Shuffle) chống quét bản quyền 100%
+        # Chia thành 2 nửa và ghép xen kẽ: B[0], A[0], B[1], A[1]...
+        n_scenes = len(scenes)
+        mid = n_scenes // 2
+        half_a = [s["id"] for s in scenes[:mid]]
+        half_b = [s["id"] for s in scenes[mid:]]
+        shuffled_ids = []
+        for i in range(max(len(half_a), len(half_b))):
+            if i < len(half_b):
+                shuffled_ids.append(half_b[i])
+            if i < len(half_a):
+                shuffled_ids.append(half_a[i])
+
+        if len(shuffled_ids) < n_scenes:
+            remaining = [s["id"] for s in scenes if s["id"] not in shuffled_ids]
+            shuffled_ids.extend(remaining)
+
+        # Mẫu câu kịch bản kể chuyện cuốn hút
+        sample_sentences = [
+            "Was in diesem entscheidenden Augenblick geschah, übertraf jede kühnste Erwartung.",
+            "Die Anspannung erreichte sofort den Höhepunkt, als die Beteiligten reagierten.",
+            "Jede einzelne Sekunde zählte, während die dramatische Wende ihren Lauf nahm.",
+            "Niemand im Raum konnte seinen Augen trauen bei diesem unerwarteten Vorfall.",
+            "Die Details wurden erst im Nachhinein klar und sorgten für riesiges Aufsehen.",
+            "Ein unvergesslicher Moment, der die Gemüter der Zuschauer weltweit spaltet."
+        ]
+
+        storyboard = []
+        for seg_idx, sc_id in enumerate(shuffled_ids, 1):
+            sent_text = sample_sentences[(seg_idx - 1) % len(sample_sentences)]
+            sc_obj = next((s for s in scenes if s["id"] == sc_id), None)
+            t_dur = (sc_obj["clean_range"][1] - sc_obj["clean_range"][0]) if sc_obj else 4.0
+            storyboard.append({
+                "segment_index": seg_idx,
+                "scene_id": sc_id,
+                "narration_sentence": sent_text,
+                "target_duration_sec": round(t_dur, 2)
+            })
+
+        full_script = " ".join([s["narration_sentence"] for s in storyboard])
+
         return {
             "layout_geometry": {
                 "has_top_title_or_blur": True,
@@ -309,43 +452,13 @@ OUTPUT FORMAT (JSON ONLY):
                 "keep_original_audio": True,
                 "visual_summary": "Opening highlight"
             },
-            "scenes": [
-                {
-                    "id": "S1",
-                    "clean_range": [h_end, h_end + half_dur],
-                    "visual_summary": "Action progression scene 1",
-                    "has_text": False,
-                    "transition_type": "none",
-                    "cutout_sec": 0.0
-                },
-                {
-                    "id": "S2",
-                    "clean_range": [h_end + half_dur, dur],
-                    "visual_summary": "Climax resolution scene 2",
-                    "has_text": False,
-                    "transition_type": "none",
-                    "cutout_sec": 0.0
-                }
-            ],
-            "remix_storyboard": [
-                {
-                    "segment_index": 1,
-                    "scene_id": "S2",
-                    "narration_sentence": "Unglaubliche Momente, die man einfach gesehen haben muss.",
-                    "target_duration_sec": half_dur
-                },
-                {
-                    "segment_index": 2,
-                    "scene_id": "S1",
-                    "narration_sentence": "Niemand hatte mit dieser unerwarteten Wendung gerechnet.",
-                    "target_duration_sec": half_dur
-                }
-            ],
+            "scenes": scenes,
+            "remix_storyboard": storyboard,
             "rewritten_narration": {
                 "language": market.get("locale", "de-DE"),
-                "title_line1": "REMIX HIGHLIGHT",
-                "title_line2": "TIKTOK SPECIAL",
-                "script_text": "Unglaubliche Momente, die man einfach gesehen haben muss. Niemand hatte mit dieser unerwarteten Wendung gerechnet."
+                "title_line1": "UNGESCHMINKTE WAHRHEIT",
+                "title_line2": "DER REALE VORFALL",
+                "script_text": full_script
             }
         }
 
@@ -587,6 +700,180 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return (round(max(0.0, gemini_ymin + 0.025), 4), round(min(1.0, gemini_ymax - 0.025), 4))
 
     @classmethod
+    def match_and_reorder_broll_by_semantic(
+        cls,
+        clean_scenes: List[Dict[str, Any]],
+        gemini_plan: Dict[str, Any],
+        target_body_dur: float = 58.0
+    ) -> List[Dict[str, Any]]:
+        """
+        So sánh nội dung của từng cảnh B-Roll (visual_summary do Gemini trả về)
+        với nội dung của từng câu trong giọng đọc AI mới để sắp xếp B-Roll khớp theo ngữ nghĩa,
+        ĐẢO CẢNH triệt để và phá vỡ 100% thứ tự cũ của clip gốc.
+        """
+        if not clean_scenes:
+            return []
+
+        narration_info = gemini_plan.get("rewritten_narration", {})
+        script_text = str(narration_info.get("script_text") or "").strip()
+        remix_storyboard = gemini_plan.get("remix_storyboard", [])
+
+        # 1. Trích xuất danh sách các câu thoại của giọng đọc AI mới
+        sentences = []
+        if remix_storyboard and isinstance(remix_storyboard, list):
+            for seg in remix_storyboard:
+                s_txt = str(seg.get("narration_sentence") or "").strip()
+                if s_txt:
+                    sentences.append(s_txt)
+        if not sentences and script_text:
+            sentences = [s.strip() for s in re.split(r'[.!?\n]+', script_text) if len(s.strip()) > 3]
+        if not sentences:
+            sentences = [s.get("visual_summary", f"Scene {i+1}") for i, s in enumerate(clean_scenes)]
+
+        def _tokenize(text: str) -> set:
+            raw = re.sub(r'[^\w\s]', ' ', (text or "").lower())
+            stops = {
+                "the", "a", "an", "and", "or", "of", "to", "in", "is", "are", "was", "were",
+                "this", "that", "it", "for", "with", "on", "at", "from", "by", "about",
+                "der", "die", "das", "und", "oder", "von", "zu", "in", "ist", "sind", "war",
+                "ein", "eine", "einer", "für", "mit", "auf", "an", "aus", "bei", "nicht",
+                "và", "của", "là", "các", "một", "có", "không", "được", "cho", "với", "từ",
+                "những", "này", "đó", "thì", "đã", "sẽ", "trong", "để", "ra", "lại", "rồi"
+            }
+            return {w for w in raw.split() if len(w) >= 3 and w not in stops}
+
+        THEMES = {
+            "anger_fight": {"wut", "angriff", "streit", "kampf", "schlagen", "angry", "fight", "punch", "slap", "hit", "shout", "argue", "giận", "đánh", "cãi", "tát", "xô", "mắng"},
+            "shock_surprise": {"schock", "überraschung", "plötzlich", "unerwartet", "shock", "surprise", "sudden", "unexpected", "astonish", "sốc", "bất ngờ", "kinh ngạc", "ngỡ ngàng", "sững sờ"},
+            "sad_cry": {"traurig", "weinen", "tränen", "verlust", "sad", "cry", "tears", "loss", "grief", "khóc", "buồn", "nước mắt", "đau đớn", "tuyệt vọng"},
+            "speed_motion": {"schnell", "geschwindigkeit", "auto", "rennen", "fahren", "fast", "speed", "car", "run", "drive", "drift", "chạy", "xe", "tốc độ", "lao", "phóng"},
+            "authority_police": {"polizei", "offizier", "verhaftung", "gesetz", "police", "officer", "arrest", "law", "cảnh sát", "công an", "bắt", "còng tay"},
+            "reveal_secret": {"geheimnis", "wahrheit", "entdecken", "secret", "truth", "reveal", "discover", "bí mật", "sự thật", "tiết lộ", "phát hiện", "vỡ lở"}
+        }
+
+        # 2. Chuẩn bị thông tin cảnh B-Roll kèm keywords
+        scenes_meta = []
+        for idx, sc in enumerate(clean_scenes):
+            v_desc = f"{sc.get('visual_summary', '')} scene_{sc.get('id', '')}"
+            scenes_meta.append({
+                "orig_idx": idx,
+                "scene": sc,
+                "keywords": _tokenize(v_desc),
+                "summary_lower": v_desc.lower()
+            })
+
+        # 3. So khớp từng câu thoại giọng đọc AI mới với cảnh B-Roll
+        ordered_scenes = []
+        used_ids = set()
+        last_orig_idx = -999
+
+        for s_idx, sentence in enumerate(sentences):
+            sent_kw = _tokenize(sentence)
+            sent_lower = sentence.lower()
+
+            best_item = None
+            best_score = -999.0
+
+            for cand in scenes_meta:
+                sc_id = cand["scene"]["id"]
+                is_used = sc_id in used_ids
+                # Tránh chọn cảnh kế tiếp ngay sau cảnh cũ của clip đối thủ
+                is_adjacent_old = (cand["orig_idx"] == last_orig_idx + 1)
+                is_same_as_last = (cand["orig_idx"] == last_orig_idx)
+
+                # Trùng từ khóa
+                kw_match = len(sent_kw & cand["keywords"])
+
+                # Đồng cảm xúc / chủ đề
+                theme_score = 0.0
+                for theme, words in THEMES.items():
+                    if any(w in sent_lower for w in words) and any(w in cand["summary_lower"] for w in words):
+                        theme_score += 3.0
+
+                score = (kw_match * 2.5) + theme_score
+                if not is_used:
+                    score += 6.0  # Ưu tiên cảnh mới chưa dùng
+                if is_adjacent_old:
+                    score -= 5.0  # Phạt nặng cảnh đi liền sau theo thứ tự cũ
+                if is_same_as_last:
+                    score -= 10.0 # Cấm lặp lại ngay cảnh vừa chiếu
+
+                if score > best_score:
+                    best_score = score
+                    best_item = cand
+
+            if best_item:
+                sc_copy = dict(best_item["scene"])
+                if best_item["scene"]["id"] in used_ids:
+                    sc_copy["is_variant"] = True
+                    sc_copy["id"] = f"{sc_copy['id']}_v{s_idx+1}"
+                ordered_scenes.append(sc_copy)
+                used_ids.add(best_item["scene"]["id"])
+                last_orig_idx = best_item["orig_idx"]
+
+        # Bổ sung các cảnh sạch còn lại chưa dùng xen kẽ vào
+        remaining = [s for s in clean_scenes if s["id"] not in used_ids]
+        if remaining:
+            random.shuffle(remaining)
+            for rem in remaining:
+                pos = random.randint(0, len(ordered_scenes)) if ordered_scenes else 0
+                ordered_scenes.insert(pos, dict(rem))
+
+        # Kiểm tra tính tuần tự: nếu chẳng may vẫn bị chuỗi tăng dần, ép đảo xen kẽ
+        def _check_sequential(seq):
+            if len(seq) <= 2:
+                return True
+            starts = [s["start"] for s in seq]
+            return all(starts[i] <= starts[i+1] for i in range(len(starts) - 1))
+
+        if _check_sequential(ordered_scenes) and len(ordered_scenes) >= 3:
+            mid = len(ordered_scenes) // 2
+            h1, h2 = ordered_scenes[:mid], ordered_scenes[mid:]
+            inter = []
+            for i in range(max(len(h1), len(h2))):
+                if i < len(h2):
+                    inter.append(h2[i])
+                if i < len(h1):
+                    inter.append(h1[i])
+            ordered_scenes = inter
+
+        # 4. Kéo dài thời lượng bằng Variant Looping xen kẽ (khi tổng < target_body_dur)
+        cur_dur = sum(s["dur"] for s in ordered_scenes)
+        if cur_dur < target_body_dur:
+            deficit = target_body_dur - cur_dur
+            logger.info("⚡ [MONETIZATION >60s] Tổng cảnh (%.1fs) thiếu %.1fs để đạt chuẩn >60s. Thêm B-Roll biến thể xen kẽ...", cur_dur, deficit)
+            pool = [s for s in ordered_scenes if not s.get("has_text", False)] or list(ordered_scenes)
+            random.shuffle(pool)
+            v_idx = 1
+            var_clips = []
+            while cur_dur < target_body_dur + 2.0 and pool:
+                for sc_cand in pool:
+                    v_item = dict(sc_cand)
+                    v_item["id"] = f"{sc_cand['id']}_var{v_idx}"
+                    v_item["is_variant"] = True
+                    var_clips.append(v_item)
+                    cur_dur += v_item["dur"]
+                    v_idx += 1
+                    if cur_dur >= target_body_dur + 2.0:
+                        break
+
+            # Chèn xen kẽ vào các vị trí lẻ
+            final_body = []
+            v_ptr = 0
+            for idx, main_sc in enumerate(ordered_scenes):
+                final_body.append(main_sc)
+                if (idx % 2 == 1) and v_ptr < len(var_clips):
+                    final_body.append(var_clips[v_ptr])
+                    v_ptr += 1
+            while v_ptr < len(var_clips):
+                final_body.append(var_clips[v_ptr])
+                v_ptr += 1
+            ordered_scenes = final_body
+
+        logger.info("🎬 [SEMANTIC B-ROLL] Đã so sánh nội dung giọng đọc AI với %d cảnh B-Roll, đảo lộn hoàn toàn thứ tự clip gốc!", len(ordered_scenes))
+        return ordered_scenes
+
+    @classmethod
     def render_tiktok_remix(
         cls,
         source_video: str,
@@ -746,70 +1033,52 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if sc.get("id"):
                     scenes_by_id[sc.get("id")] = sc_dict
 
-        # 4. Sắp xếp lại thứ tự cảnh: Ưu tiên Storyboard của AI (khớp nội dung mới) hoặc Shuffle
-        remix_storyboard = gemini_plan.get("remix_storyboard", [])
-        ordered_scenes = []
-        if remix_storyboard and isinstance(remix_storyboard, list):
-            for seg in remix_storyboard:
-                sc_id = seg.get("scene_id")
-                if sc_id and sc_id in scenes_by_id:
-                    ordered_scenes.append(dict(scenes_by_id[sc_id]))
-            logger.info("🎬 [STORYBOARD AI] Đã sắp xếp %d cảnh theo kịch bản logic của AI.", len(ordered_scenes))
+        # Bổ sung Scene Cuts bằng FFmpeg nếu AI không chia đủ cảnh hoặc cảnh quá dài (> 5.2s)
+        total_vid_dur = cls.get_video_duration(source_video)
+        needs_ffmpeg_split = (len(clean_scenes) < 4) or any(s["dur"] > 5.2 for s in clean_scenes)
+        if needs_ffmpeg_split:
+            body_start_sec = hook_end if (options.get("keep_original_hook", True) and hook_dur >= 0.5) else 0.0
+            cuts = cls.detect_scene_cuts_ffmpeg(source_video, start_sec=body_start_sec, end_sec=total_vid_dur, min_gap=2.0, max_gap=4.8)
+            if len(cuts) >= 3:
+                f_scenes = []
+                for s_i in range(len(cuts) - 1):
+                    c_st, c_en = cuts[s_i], cuts[s_i + 1]
+                    if c_en - c_st >= 1.0:
+                        s_id = f"SC{s_i + 1}"
+                        sc_item = {
+                            "id": s_id,
+                            "start": c_st,
+                            "end": c_en,
+                            "dur": c_en - c_st,
+                            "has_text": False,
+                            "visual_summary": f"Detected scene {s_i + 1}"
+                        }
+                        f_scenes.append(sc_item)
+                        scenes_by_id[s_id] = sc_item
+                if len(f_scenes) >= len(clean_scenes):
+                    logger.info("🎬 [B-ROLL SPLIT] Đã phân tách video nguồn thành %d cảnh B-Roll tự nhiên bằng FFmpeg (2.0s - 4.8s)", len(f_scenes))
+                    clean_scenes = f_scenes
 
-        # Nếu không có storyboard hoặc còn cảnh thừa, sắp xếp fallback
-        if not ordered_scenes:
-            ordered_scenes = list(clean_scenes)
-            if options.get("shuffle_broll", True) and len(ordered_scenes) > 2:
-                first = ordered_scenes[0]
-                rest = ordered_scenes[1:]
-                random.shuffle(rest)
-                ordered_scenes = [first] + rest
-        else:
-            # Bổ sung các cảnh chưa dùng vào cuối
-            used_ids = {s["id"] for s in ordered_scenes}
-            remaining = [s for s in clean_scenes if s["id"] not in used_ids]
-            if remaining:
-                ordered_scenes.extend(remaining)
-
-        clean_scenes = ordered_scenes
-
-        # 5. Đảm Bảo Chuẩn Thời Lượng Kiếm Tiền TikTok (Bắt buộc > 60s, mục tiêu >= 62.0s)
-        # Hook + Body >= 62.0s
+        # 4. SO SÁNH NỘI DUNG GIỌNG ĐỌC AI VỚI TỪNG CẢNH B-ROLL ĐỂ SẮP XẾP VÀ ĐẢO CẢNH
+        # Không bao giờ ghép y hệt clip gốc: Cảnh nào khớp nghĩa với câu thoại AI nhất sẽ được đưa vào, phá vỡ 100% video hash cũ
         min_monetization_total = 62.0
         required_body_dur = max(min_monetization_total - hook_dur, audio_duration, 58.0)
         target_body_dur = max(58.0, required_body_dur)
-        total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
-        # Nếu video nguồn ngắn hoặc thiếu để đạt > 60s:
-        # Kích hoạt Variant Looping (tái sử dụng các B-Roll hành động với biến thể góc quay/zoom mới)
-        if total_clean_dur < target_body_dur and clean_scenes:
-            deficit = target_body_dur - total_clean_dur
-            logger.info("⚡ [MONETIZATION >60s] Tổng cảnh hiện tại (%.1fs) thiếu %.1fs để đạt chuẩn >60s. Bổ sung B-Roll biến thể...", total_clean_dur, deficit)
-            loop_pool = [s for s in clean_scenes if not s.get("has_text", False)] or clean_scenes
-            added_dur = 0.0
-            variant_idx = 1
-            while total_clean_dur + added_dur < target_body_dur + 2.0 and loop_pool:
-                for sc_cand in loop_pool:
-                    sc_variant = dict(sc_cand)
-                    sc_variant["id"] = f"{sc_cand['id']}_var{variant_idx}"
-                    sc_variant["is_variant"] = True
-                    clean_scenes.append(sc_variant)
-                    added_dur += sc_variant["dur"]
-                    variant_idx += 1
-                    if total_clean_dur + added_dur >= target_body_dur + 2.0:
-                        break
-            total_clean_dur += added_dur
-            logger.info("✅ [MONETIZATION >60s] Đã bổ sung B-Roll biến thể, tổng thời lượng cảnh: %.1fs (Mục tiêu: %.1fs)", total_clean_dur, target_body_dur)
+        clean_scenes = cls.match_and_reorder_broll_by_semantic(
+            clean_scenes=clean_scenes,
+            gemini_plan=gemini_plan,
+            target_body_dur=target_body_dur
+        )
+        total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
         # 6. Điều Tốc B-Roll Đàn Hồi Ngẫu Nhiên (Stochastic Elastic Speed Matching)
         elastic_pts_map = {}
         if total_clean_dur < target_body_dur and options.get("elastic_broll_speed", True) and clean_scenes:
-            # Chọn ngẫu nhiên 50% đến 80% số cảnh để giãn thời lượng
             sample_size = max(1, int(len(clean_scenes) * random.uniform(0.5, 0.8)))
             stretched_indices = set(random.sample(range(len(clean_scenes)), min(sample_size, len(clean_scenes))))
             for idx in range(len(clean_scenes)):
                 if idx in stretched_indices:
-                    # Random dao động nhẹ tốc độ an toàn: 1.025 đến 1.075 (chậm lại 0.93x - 0.975x)
                     elastic_pts_map[idx] = round(random.uniform(1.025, 1.075), 4)
                 else:
                     elastic_pts_map[idx] = 1.0
@@ -819,13 +1088,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 elastic_pts_map[idx] = 1.0
 
         # 7. Lật Gương Phản Chiếu Ngẫu Nhiên (Chuẩn theo Chế độ 1 Tóm tắt):
-        # Lật ngẫu nhiên 40% - 50% số cảnh trực tiếp, không dò chữ, sau đó Sub mới và Title mới overlay lên trên cùng.
         mirror_map = {idx: False for idx in range(len(clean_scenes))}
         if options.get("mirror_broll", True) and clean_scenes:
             mirror_count = min(len(clean_scenes), max(1, int(round(len(clean_scenes) * 0.45))))
             for m_idx in random.sample(range(len(clean_scenes)), mirror_count):
                 mirror_map[m_idx] = True
-            # Cảnh biến thể luôn lật gương để đổi góc quay
             for idx, sc in enumerate(clean_scenes):
                 if sc.get("is_variant", False):
                     mirror_map[idx] = True
@@ -850,7 +1117,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 t_line2 = script_info.get("title_line2", options.get("title_line2", ""))
                 logger.info("🏷️ [TITLE AI] Áp dụng tiêu đề từ kịch bản AI: '%s' / '%s'", t_line1, t_line2)
 
-            # Tự động chia 2 dòng nếu có 1 dòng dài để thể hiện cả 2 màu chữ (Màu 1 & Màu 2)
             if t_line1 and not t_line2 and len(t_line1.split()) >= 3:
                 words = t_line1.split()
                 mid = len(words) // 2
@@ -870,7 +1136,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.info("🚫 [TITLE BANNER] Tiêu đề bị tắt theo cấu hình (enable_title=False).")
 
         # 8. Tính Kích Thước Tiền Cảnh (Foreground) & Tọa Độ Subtitle Mới
-        # Đảm bảo giữ nguyên tỷ lệ khung hình gốc của lõi video sạch (không bị kéo giãn dọc thành sợi bún)
         core_ar = crop_w / max(1, crop_h)
         zoom_val = float(options.get("zoom_percent", 105.0) or 105.0)
         zoom_in = bool(options.get("zoom_in", True))
@@ -881,18 +1146,42 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         video_speed = float(options.get("speed") or options.get("source_speed", 1.05) or 1.05)
         audio_boost = float(options.get("audio_boost", 6.0) or 6.0)
 
-        # Kích thước tiền cảnh (lõi video) trên khung 1080x1920
         fg_w = int(round(cls.OUTPUT_W * zoom_factor * sx))
         fg_w += fg_w % 2
         fg_h = int(round(fg_w / core_ar * sy))
         fg_h += fg_h % 2
 
         # Lề Đáy (MarginV) cho Subtitle:
-        # Ưu tiên tuyệt đối thông số MarginV bạn chỉnh trong Title & Sub Studio (mặc định 100px)
-        # để video xuất ra luôn hiển thị chuẩn xác 1:1 theo bản xem trước (WYSIWYG) ở đáy video 9:16
-        sub_margin_v = int(options.get("sub_margin_v", 100) or 100)
-        sub_margin_v = max(30, min(800, sub_margin_v))
-        logger.info("💬 [SUBTITLE POSITION] Lề đáy phụ đề: MarginV=%d px (khớp 1:1 xem trước Title & Sub Studio)", sub_margin_v)
+        # Nếu bật overlay_sub_on_blur_zone (mặc định True) và có vùng sub cũ cần che:
+        # Tự động tính MarginV để Sub mới đè CHÍNH XÁC lên vết che sub cũ!
+        overlay_sub_on_blur = bool(options.get("overlay_sub_on_blur_zone", True))
+        if overlay_sub_on_blur and (has_blur_mask or (rel_sub_ymin is not None and rel_sub_ymax is not None)):
+            scale_v = fg_h / max(1.0, float(crop_h))
+            if has_blur_mask and blur_mh > 0:
+                blur_center_in_crop = blur_my + (blur_mh / 2.0)
+            else:
+                blur_center_in_crop = crop_h * ((rel_sub_ymin + rel_sub_ymax) / 2.0)
+
+            # Tọa độ Y tâm của vùng che sub cũ trên canvas 1080x1920 (khung hình dọc)
+            fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
+            blur_y_center_canvas = fg_top_y + (blur_center_in_crop * scale_v)
+
+            # Trong ASS Subtitle với Alignment=2 (Bottom-Center), MarginV là khoảng cách từ đáy (Y=1920) lên đáy dòng chữ.
+            # Với cỡ chữ sub_size (mặc định ~ 38-42px):
+            sub_sz = int(options.get("sub_size", 38) or 38)
+            dist_from_bottom = cls.OUTPUT_H - blur_y_center_canvas
+            calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.55)))
+
+            # Tinh chỉnh nếu người dùng có chủ động nâng hạ vị trí trong Studio (mức chuẩn = 100):
+            user_margin_val = int(options.get("sub_margin_v", 100) or 100)
+            margin_offset = (user_margin_val - 100) if user_margin_val != 100 else 0
+
+            sub_margin_v = max(60, min(1600, calc_margin_v + margin_offset))
+            logger.info("🎯 [SUB OVERLAY] Tự động tính toán MarginV=%d px đè CHÍNH XÁC lên dải che Sub cũ (Y_center=%.1f canvas), xóa sạch 100%% dấu vết đối thủ!", sub_margin_v, blur_y_center_canvas)
+        else:
+            sub_margin_v = int(options.get("sub_margin_v", 100) or 100)
+            sub_margin_v = max(30, min(800, sub_margin_v))
+            logger.info("💬 [SUBTITLE POSITION] Lề đáy phụ đề thủ công: MarginV=%d px", sub_margin_v)
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số + Look Stack
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
