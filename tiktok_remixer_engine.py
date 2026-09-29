@@ -975,36 +975,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
         elif auto_blur:
             geom = gemini_plan.get("layout_geometry", {})
-            has_old_sub_detected = geom.get("has_burned_in_subtitles", True)
             sub_norm = geom.get("sub_blur_normalized")
-            if (not has_old_sub_detected) or (sub_norm is None):
-                rel_sub_ymin = None
-                rel_sub_ymax = None
-                blur_mx = blur_my = 0
-                blur_mw = blur_mh = 0
-                has_blur_mask = False
-                logger.info("✨ [BLUR MASK AUTO] AI xác nhận video gốc sạch, không có sub cũ đối thủ ➔ Bỏ qua che mờ.")
+            if not sub_norm or not isinstance(sub_norm, dict):
+                sub_norm = {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95}
+
+            sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
+            sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
+            crop_span = max(0.01, ymax - ymin)
+
+            if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
+                rel_sub_ymin = 0.82
+                rel_sub_ymax = 0.98
             else:
-                sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
-                sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
-                crop_span = max(0.01, ymax - ymin)
+                rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
+                rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
 
-                if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
-                    rel_sub_ymin = 0.82
-                    rel_sub_ymax = 0.98
-                else:
-                    rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
-                    rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
-
-                blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
-                blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
-                blur_my = int(round(crop_h * rel_sub_ymin))
-                blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-                blur_mh = max(30, blur_mh)
-                blur_mw -= blur_mw % 2
-                blur_mh -= blur_mh % 2
-                has_blur_mask = True
-                logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+            blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
+            blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
+            blur_my = int(round(crop_h * rel_sub_ymin))
+            blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
+            blur_mh = max(30, blur_mh)
+            blur_mw -= blur_mw % 2
+            blur_mh -= blur_mh % 2
+            has_blur_mask = True
+            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
         else:
             rel_sub_ymin = None
             rel_sub_ymax = None
