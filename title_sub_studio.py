@@ -656,15 +656,24 @@ class PreviewCanvas9x16(QWidget):
         # Nếu là Chế độ tóm tắt cũ (sub_size <= 20, ví dụ 7, 8): Quy đổi theo hệ số PlayResY=288 cũ (1920 / 288 = 6.6667).
         is_tiktok = (_detect_mode(cfg) == "tiktok_remixer")
         if is_tiktok:
-            # Chế độ TikTok Remixer: Tự động khóa vị trí Sub đè chính xác lên dải blur che sub cũ
+            # Chế độ TikTok Remixer: Tự động khóa vị trí Sub thông minh
             canvas_font_size = max(10, int(round(max(34, sub_size if sub_size >= 25 else sub_size * 5) * scale)))
             core_ar = 16.0 / 9.0
             fg_w = disp_w
             fg_h = fg_w / core_ar
             fg_top_y = oy + (disp_h - fg_h) / 2.0
-            # Vùng sub cũ đối thủ thường ở 87% chiều cao video lõi
-            blur_center_canvas_y = fg_top_y + (fg_h * 0.87)
-            dist_from_bottom = (oy + disp_h) - blur_center_canvas_y
+            fg_bottom_y = fg_top_y + fg_h
+
+            # Kiểm tra xem có dải blur che sub cũ không
+            has_old_sub = bool(cfg.get("overlay_sub_on_blur_zone", True) and (cfg.get("use_blur_mask") or cfg.get("auto_blur_sub_part", True)))
+            if has_old_sub:
+                # 1. Có sub cũ: Đè chính xác lên dải blur che sub cũ (trong video lõi)
+                target_sub_y = fg_top_y + (fg_h * 0.87)
+            else:
+                # 2. Không có sub cũ (video sạch): Đặt ở dải BLUR BÊN DƯỚI (ngay mép dưới video lõi)
+                target_sub_y = fg_bottom_y + (80.0 * scale)
+
+            dist_from_bottom = (oy + disp_h) - target_sub_y
             shadow_off = max(1, int(round(sub_shadow * scale)))
             step = max(1, int(round(sub_outline * scale)))
         elif sub_size >= 25:
@@ -1054,7 +1063,11 @@ class TitleSubStudioDialog(QDialog):
 
         if self.is_tiktok_mode:
             self.sp_sub_margin_v = None
-            lbl_auto_pos = QLabel("🎯 <b>Vị Trí Phụ Đề:</b> Tự động đè chính xác 100% vào khu vực Blur của sub cũ đối thủ (Đã bỏ qua cài đặt vị trí thủ công).")
+            lbl_auto_pos = QLabel(
+                "🎯 <b>Vị Trí Phụ Đề Tự Động (Chế độ 3):</b><br>"
+                "• <i>Khi có Sub cũ:</i> Tự động đè chính xác 100% lên dải Blur che sub cũ.<br>"
+                "• <i>Khi không có Sub cũ:</i> Tự động đặt ở dải Blur bên dưới (ngay dưới mép video lõi, không che hình)."
+            )
             lbl_auto_pos.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 4px 0;")
             lbl_auto_pos.setWordWrap(True)
             fl_sub.addRow(lbl_auto_pos)

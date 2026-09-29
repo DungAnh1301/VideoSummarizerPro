@@ -208,7 +208,8 @@ TASKS:
 1. GEOMETRY CLEANING:
    - Identify top/bottom blurred bars, textures, or burned-in competitor Title banners.
    - Provide "core_crop_normalized": {{"ymin": float, "ymax": float}} to slice off competitor titles and UI, isolating only the clean core action footage.
-   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} precisely bounding burned-in source subtitles and "Part" badges at the bottom to blur.
+   - Provide "has_burned_in_subtitles": true/false (whether there are burned-in subtitles, hardcoded captions, or Part badges at the bottom of the video).
+   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} precisely bounding burned-in source subtitles and "Part" badges at the bottom to blur. If "has_burned_in_subtitles" is false, set "sub_blur_normalized": null.
 
 2. INTRO/OUTRO WATERMARK INSPECTION:
    - Inspect the first 0.5s and last 1.0s frame-by-frame for bouncing TikTok logos or transition wipes.
@@ -239,6 +240,7 @@ OUTPUT FORMAT (JSON ONLY):
 {{
   "layout_geometry": {{
     "has_top_title_or_blur": true,
+    "has_burned_in_subtitles": true,
     "core_crop_normalized": {{"ymin": 0.20, "ymax": 0.80}},
     "sub_blur_normalized": {{"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95}}
   }},
@@ -973,30 +975,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
         elif auto_blur:
             geom = gemini_plan.get("layout_geometry", {})
-            sub_norm = geom.get("sub_blur_normalized", {"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95})
-            sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
-            sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
-            crop_span = max(0.01, ymax - ymin)
-
-            if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
-                rel_sub_ymin = 0.82
-                rel_sub_ymax = 0.98
+            has_old_sub_detected = geom.get("has_burned_in_subtitles", True)
+            sub_norm = geom.get("sub_blur_normalized")
+            if (not has_old_sub_detected) or (sub_norm is None):
+                rel_sub_ymin = None
+                rel_sub_ymax = None
+                blur_mx = blur_my = 0
+                blur_mw = blur_mh = 0
+                has_blur_mask = False
+                logger.info("✨ [BLUR MASK AUTO] AI xác nhận video gốc sạch, không có sub cũ đối thủ ➔ Bỏ qua che mờ.")
             else:
-                rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
-                rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
+                sub_orig_ymin = float(sub_norm.get("ymin", 0.68))
+                sub_orig_ymax = float(sub_norm.get("ymax", 0.76))
+                crop_span = max(0.01, ymax - ymin)
 
-            blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
-            blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
-            blur_my = int(round(crop_h * rel_sub_ymin))
-            blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-            blur_mh = max(30, blur_mh)
-            blur_mw -= blur_mw % 2
-            blur_mh -= blur_mh % 2
-            has_blur_mask = True
-            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+                if sub_orig_ymin < ymin or (sub_orig_ymin - ymin) / crop_span < 0.60:
+                    rel_sub_ymin = 0.82
+                    rel_sub_ymax = 0.98
+                else:
+                    rel_sub_ymin = max(0.0, min(0.95, (sub_orig_ymin - ymin) / crop_span))
+                    rel_sub_ymax = max(rel_sub_ymin + 0.05, min(1.0, (sub_orig_ymax - ymin) / crop_span))
+
+                blur_mx = int(crop_w * float(sub_norm.get("xmin", 0.05)))
+                blur_mw = int(crop_w * (float(sub_norm.get("xmax", 0.95)) - float(sub_norm.get("xmin", 0.05))))
+                blur_my = int(round(crop_h * rel_sub_ymin))
+                blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
+                blur_mh = max(30, blur_mh)
+                blur_mw -= blur_mw % 2
+                blur_mh -= blur_mh % 2
+                has_blur_mask = True
+                logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
         else:
-            rel_sub_ymin = 0.82
-            rel_sub_ymax = 0.98
+            rel_sub_ymin = None
+            rel_sub_ymax = None
             blur_mx = blur_my = 0
             blur_mw = blur_mh = 0
             has_blur_mask = False
@@ -1152,32 +1163,42 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         fg_h += fg_h % 2
 
         # Lề Đáy (MarginV) cho Subtitle (RIÊNG CHẾ ĐỘ 3: TIKTOK REMIXER):
-        # Bỏ qua cài đặt vị trí thủ công từ Title & Sub Studio.
-        # Luôn luôn khóa cứng vị trí Sub mới đè CHÍNH XÁC 100% lên dải Blur che sub cũ của đối thủ!
-        scale_v = fg_h / max(1.0, float(crop_h))
-        if has_blur_mask and blur_mh > 0:
-            blur_center_in_crop = blur_my + (blur_mh / 2.0)
-        elif rel_sub_ymin is not None and rel_sub_ymax is not None:
-            blur_center_in_crop = crop_h * ((rel_sub_ymin + rel_sub_ymax) / 2.0)
-        else:
-            # Fallback vị trí sub cũ đối thủ 16:9 luôn nằm ở ~87% chiều cao video
-            blur_center_in_crop = crop_h * 0.87
+        # 1. Nếu CÓ sub cũ cần che (has_blur_mask VÀ overlay_sub_on_blur_zone):
+        #    -> Khóa cứng vị trí Sub mới đè CHÍNH XÁC 100% lên tâm dải Blur của sub cũ đối thủ.
+        # 2. Nếu KHÔNG CÓ sub cũ để che (Video sạch / không có vết blur):
+        #    -> Đặt Sub ở dải BLUR BÊN DƯỚI (ở giữa mép dưới video lõi và blur bên dưới).
+        overlay_sub_on_blur = bool(options.get("overlay_sub_on_blur_zone", True))
+        has_sub_blur = has_blur_mask and (blur_mh > 0) and overlay_sub_on_blur
 
-        # Tọa độ Y tâm của vùng che sub cũ trên canvas 1080x1920 (khung hình dọc)
-        fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
-        blur_y_center_canvas = fg_top_y + (blur_center_in_crop * scale_v)
-
-        # Trong ASS Subtitle với Alignment=2 (Bottom-Center), MarginV là khoảng cách từ đáy (Y=1920) lên tâm dòng chữ.
         raw_sz = int(options.get("sub_size", 38) or 38)
         sub_sz = max(34, raw_sz * 5) if raw_sz <= 10 else max(30, min(80, raw_sz))
-        dist_from_bottom = cls.OUTPUT_H - blur_y_center_canvas
-        calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.5)))
 
-        sub_margin_v = max(200, min(1400, calc_margin_v))
-        logger.info(
-            "🎯 [CHẾ ĐỘ 3 - SUB OVERLAY BLUR] Khóa cứng vị trí Sub mới đè CHÍNH XÁC 100%% lên khu vực Blur che sub cũ: MarginV=%d px (Tâm blur Y=%.1f canvas, cách đáy %.1f px). Đã bỏ qua cài đặt vị trí thủ công!",
-            sub_margin_v, blur_y_center_canvas, dist_from_bottom
-        )
+        fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
+        fg_bottom_y = fg_top_y + fg_h
+
+        if has_sub_blur:
+            scale_v = fg_h / max(1.0, float(crop_h))
+            blur_center_in_crop = blur_my + (blur_mh / 2.0)
+            blur_y_center_canvas = fg_top_y + (blur_center_in_crop * scale_v)
+
+            dist_from_bottom = cls.OUTPUT_H - blur_y_center_canvas
+            calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.5)))
+            sub_margin_v = max(200, min(1400, calc_margin_v))
+            logger.info(
+                "🎯 [CHẾ ĐỘ 3 - CÓ SUB CŨ] Khóa cứng Sub mới đè CHÍNH XÁC lên dải Blur che sub cũ: MarginV=%d px (Tâm blur Y=%.1f canvas, cách đáy %.1f px).",
+                sub_margin_v, blur_y_center_canvas, dist_from_bottom
+            )
+        else:
+            # Video sạch không có sub cũ: Đặt Sub ở dải BLUR BÊN DƯỚI (ngay mép dưới video lõi)
+            # Nằm giữa mép dưới video và vùng an toàn TikTok (cách mép dưới 80px)
+            target_sub_y = fg_bottom_y + 80.0
+            dist_from_bottom = cls.OUTPUT_H - target_sub_y
+            calc_margin_v = int(round(dist_from_bottom - (sub_sz * 0.5)))
+            sub_margin_v = max(200, min(1400, calc_margin_v))
+            logger.info(
+                "✨ [CHẾ ĐỘ 3 - KHÔNG CÓ SUB CŨ] Video sạch: Tự động đặt Sub ở dải BLUR BÊN DƯỚI (ngay mép dưới video lõi, Y=%.1f canvas, MarginV=%d px)!",
+                target_sub_y, sub_margin_v
+            )
 
         # 9. Bộ Lọc Màu CapCut 15 Thông Số + Look Stack
         color_filter_str = EditorProcessor._build_pure_color_filter(options)
