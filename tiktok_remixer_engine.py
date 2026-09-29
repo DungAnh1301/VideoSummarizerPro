@@ -1007,34 +1007,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             has_blur_mask = False
             logger.info("🌫️ [BLUR MASK] Tắt tính năng che mờ.")
 
-        # Cường độ làm mờ dải che sub từ qc_blur_strength (mặc định 75%)
-        qc_str = int(options.get("qc_blur_strength", 75) or 75)
-        blur_luma_r = max(5, int(round(30 * (qc_str / 75.0))))
-        blur_luma_p = max(5, int(round(20 * (qc_str / 75.0))))
-        mask_boxblur_filter = f"boxblur={blur_luma_r}:{blur_luma_p}"
-
         # 3. Phân Đoạn Hook & Scenes
         hook_info = gemini_plan.get("hook", {})
         hook_start = float(hook_info.get("start_sec", 0.0))
         hook_end = float(hook_info.get("end_sec", 3.5))
         hook_dur = max(0.0, hook_end - hook_start)
 
-        total_vid_dur = cls.get_video_duration(source_video)
-
-        # AI tự kiểm tra và cắt intro / outro nếu bật ai_inspect_intro_outro
-        use_ai_trim_ends = bool(options.get("ai_inspect_intro_outro", True))
-        outro_cut = float(gemini_plan.get("outro_cut_sec", 0.0)) if use_ai_trim_ends else 0.0
-        max_allowed_end = (total_vid_dur - outro_cut) if outro_cut > 0.5 else total_vid_dur
-
-        use_smart_transition = bool(options.get("smart_transition_cutout", True))
         raw_scenes = gemini_plan.get("scenes", [])
         scenes_by_id = {}
         clean_scenes = []
         for sc in raw_scenes:
-            c_range = sc.get("clean_range" if use_smart_transition else "raw_range", sc.get("raw_range", [0, 0]))
+            c_range = sc.get("clean_range", sc.get("raw_range", [0, 0]))
             st, en = float(c_range[0]), float(c_range[1])
-            if use_ai_trim_ends and en > max_allowed_end:
-                en = max_allowed_end
             # Tránh trùng lặp cảnh Hook trong thân video: Hook đã đặt riêng ở 00:00
             if options.get("keep_original_hook", True) and hook_dur >= 0.5:
                 if en <= hook_end + 0.2:
@@ -1055,10 +1039,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     scenes_by_id[sc.get("id")] = sc_dict
 
         # Bổ sung Scene Cuts bằng FFmpeg nếu AI không chia đủ cảnh hoặc cảnh quá dài (> 5.2s)
+        total_vid_dur = cls.get_video_duration(source_video)
         needs_ffmpeg_split = (len(clean_scenes) < 4) or any(s["dur"] > 5.2 for s in clean_scenes)
         if needs_ffmpeg_split:
             body_start_sec = hook_end if (options.get("keep_original_hook", True) and hook_dur >= 0.5) else 0.0
-            cuts = cls.detect_scene_cuts_ffmpeg(source_video, start_sec=body_start_sec, end_sec=max_allowed_end, min_gap=2.0, max_gap=4.8)
+            cuts = cls.detect_scene_cuts_ffmpeg(source_video, start_sec=body_start_sec, end_sec=total_vid_dur, min_gap=2.0, max_gap=4.8)
             if len(cuts) >= 3:
                 f_scenes = []
                 for s_i in range(len(cuts) - 1):
@@ -1085,15 +1070,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         required_body_dur = max(min_monetization_total - hook_dur, audio_duration, 58.0)
         target_body_dur = max(58.0, required_body_dur)
 
-        if options.get("shuffle_broll", True):
-            clean_scenes = cls.match_and_reorder_broll_by_semantic(
-                clean_scenes=clean_scenes,
-                gemini_plan=gemini_plan,
-                target_body_dur=target_body_dur
-            )
-            logger.info("🔀 [SHUFFLE B-ROLL] Đã khớp ngữ nghĩa và đảo cảnh thông minh.")
-        else:
-            logger.info("⏩ [SHUFFLE B-ROLL] Tắt tính năng đảo cảnh: Giữ nguyên thứ tự cảnh tuần tự.")
+        clean_scenes = cls.match_and_reorder_broll_by_semantic(
+            clean_scenes=clean_scenes,
+            gemini_plan=gemini_plan,
+            target_body_dur=target_body_dur
+        )
         total_clean_dur = sum(s["dur"] for s in clean_scenes) or 10.0
 
         # 6. Điều Tốc B-Roll Đàn Hồi Ngẫu Nhiên (Stochastic Elastic Speed Matching)
@@ -1147,6 +1128,22 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 t_line1 = " ".join(words[:mid])
                 t_line2 = " ".join(words[mid:])
                 logger.info("🏷️ [TITLE BANNER 2 MÀU] Đã chia 2 dòng để hiển thị cả 2 màu chữ: '%s' (Màu 1) / '%s' (Màu 2)", t_line1, t_line2)
+
+            # Xử lý số Part đồng bộ với Title Studio
+            if options.get("show_part", False):
+                part_fmt = str(options.get("part_format", "Part") or "Part").strip()
+                part_num = options.get("part_number") or 1
+                part_str = f"{part_fmt} {part_num}".strip()
+                if part_str:
+                    if t_line2:
+                        if not t_line2.lower().endswith(part_str.lower()):
+                            t_line2 = f"{t_line2} {part_str}"
+                    elif t_line1:
+                        if not t_line1.lower().endswith(part_str.lower()):
+                            t_line2 = part_str
+                    else:
+                        t_line1 = part_str
+                    logger.info("🏷️ [PART BADGE] Đã ghép Part vào Title Banner: '%s' / '%s'", t_line1, t_line2)
 
             b_path, banner_w, banner_h = EditorProcessor._create_dynamic_title_banner_custom(
                 work_dir, t_line1, t_line2, options
@@ -1250,7 +1247,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 core_crop_hook = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"split=2[c_orig][c_mask];"
-                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},{mask_boxblur_filter}[c_blur];"
+                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
                     f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
                 )
             else:
@@ -1334,7 +1331,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 vf_clip = (
                     f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"split=2[c_orig][c_mask];"
-                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},{mask_boxblur_filter}[c_blur];"
+                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
                     f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
                 )
