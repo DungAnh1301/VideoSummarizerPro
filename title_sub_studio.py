@@ -293,22 +293,27 @@ class PreviewCanvas9x16(QWidget):
     """
     Canvas Live Preview 9:16 mô phỏng chính xác video 1080x1920:
     - Hiển thị hình ảnh nền video thực tế.
-    - Title Banner: LUÔN HIỂN THỊ khi có text mẫu hoặc khi bật.
+    - Title Banner: LUÔN HIỂN THỊ khi có text mẫu hoặc khi bật. Hỗ trợ KÉO THẢ CHUỘT TRỰC TIẾP (Mouse Drag & Drop) để căn chỉnh vị trí Y trực quan 100%!
     - Subtitle: Quy đổi tọa độ và cỡ chữ chuẩn xác 1:1 theo video render thật.
     - Số Part: Chế độ 1 (Sau Title) và Chế độ 2 (Ở dưới chỉnh tọa độ Y).
     """
+    title_pos_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumSize(260, 480)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background-color: #11111b; border-radius: 8px;")
+        self.setMouseTracking(True)
 
         self.cfg: Dict[str, Any] = {}
         self.title_sample_text: str = "TIÊU ĐỀ VIDEO MẪU\nDÒNG PHỤ BANNER"
         self.sub_sample_text: str = "Đây là phụ đề mẫu đang hiển thị thử nghiệm..."
         self.part_sample_number: str = "1"
         self.bg_pixmap: Optional[QPixmap] = None
+        self.last_banner_rect: Optional[QRectF] = None
+        self.is_dragging_title: bool = False
+        self.drag_offset_y: float = 0.0
 
     def set_background_pixmap(self, pix: Optional[QPixmap]):
         self.bg_pixmap = pix
@@ -493,13 +498,20 @@ class PreviewCanvas9x16(QWidget):
                 out_png, bw, bh = create_dynamic_title_banner(
                     tempfile.gettempdir(), raw, "", banner_opts
                 )
-                pix = QPixmap(out_png)
+                pix = QPixmap()
+                with open(out_png, "rb") as f_img:
+                    pix.loadFromData(f_img.read())
                 if pix and not pix.isNull():
                     bw_c = bw * scale
                     bh_c = bh * scale
                     bx = ox + (disp_w - bw_c) / 2.0
                     by = oy + title_y_pos * scale
-                    p.drawPixmap(QRectF(bx, by, bw_c, bh_c), pix, QRectF(pix.rect()))
+                    self.last_banner_rect = QRectF(bx, by, bw_c, bh_c)
+                    p.drawPixmap(self.last_banner_rect, pix, QRectF(pix.rect()))
+                    if self.is_dragging_title:
+                        p.setPen(QPen(QColor("#89b4fa"), 2, Qt.DashLine))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawRoundedRect(self.last_banner_rect, 8, 8)
                     return
             except Exception:
                 pass
@@ -532,6 +544,7 @@ class PreviewCanvas9x16(QWidget):
         bx1 = ox + (disp_w - bw_c) / 2.0
         by1 = oy + title_y_pos * scale
         banner_box = QRectF(bx1, by1, bw_c, bh_c)
+        self.last_banner_rect = banner_box
 
         radius = max(6.0, 24.0 * scale)
         p.setBrush(QBrush(QColor(bg_hex)))
@@ -557,6 +570,55 @@ class PreviewCanvas9x16(QWidget):
         else:
             p.setPen(QColor(c1_hex))
             p.drawText(banner_box, Qt.AlignCenter, l1)
+
+        if self.is_dragging_title:
+            p.setPen(QPen(QColor("#89b4fa"), 2, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(banner_box, radius, radius)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.position() if hasattr(event, "position") else event.pos()
+            if self.last_banner_rect and self.last_banner_rect.contains(pos):
+                self.is_dragging_title = True
+                self.drag_offset_y = pos.y() - self.last_banner_rect.top()
+                self.setCursor(Qt.ClosedHandCursor)
+                self.update()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = event.position() if hasattr(event, "position") else event.pos()
+        if self.is_dragging_title:
+            scale, ox, oy, disp_w, disp_h = self._calc_viewport()
+            new_top_y = pos.y() - self.drag_offset_y
+            new_y_val = int((new_top_y - oy) / max(0.001, scale))
+            new_y_val = max(10, min(1800, new_y_val))
+            self.cfg["title_y_pos"] = new_y_val
+            self.title_pos_changed.emit(new_y_val)
+            self.update()
+            event.accept()
+            return
+        else:
+            if self.last_banner_rect and self.last_banner_rect.contains(pos):
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.is_dragging_title:
+            self.is_dragging_title = False
+            pos = event.position() if hasattr(event, "position") else event.pos()
+            if self.last_banner_rect and self.last_banner_rect.contains(pos):
+                self.setCursor(Qt.OpenHandCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def _render_bottom_part(self, p: QPainter, scale: float, ox: float, oy: float, disp_w: float):
         """Vẽ số Part ở bên dưới, chung màu với Title khớp 100% render."""
@@ -1201,9 +1263,10 @@ class TitleSubStudioDialog(QDialog):
 
         right_layout.addWidget(gb_source)
 
-        # 2. Canvas 9:16 Preview
+        # 2. Canvas 9:16 Preview (Hỗ trợ kéo thả chuột trực tiếp)
         self.canvas = PreviewCanvas9x16()
         self.canvas.cfg = dict(self.ts_data)
+        self.canvas.title_pos_changed.connect(self._on_title_canvas_dragged)
         right_layout.addWidget(self.canvas, 1)
 
         # 3. 2 Ô Nhập Mẫu Thử Nghiệm
@@ -1354,6 +1417,28 @@ class TitleSubStudioDialog(QDialog):
     # -----------------------------------------------------------------
     # CƠ CHẾ ĐỒNG BỘ VÀ XỬ LÝ SỰ KIỆN
     # -----------------------------------------------------------------
+    def _on_title_canvas_dragged(self, new_y: int):
+        """Đồng bộ khi người dùng dùng chuột kéo thả Title trực tiếp trên màn hình xem trước."""
+        self.sp_title_y.blockSignals(True)
+        self.sp_title_y.setValue(new_y)
+        self.sp_title_y.blockSignals(False)
+        cfg = self.get_values()
+        sk = self.combo_sub_style.currentData() or "tiktok_slim"
+        preset_info = SUBTITLE_PRESETS.get(sk, {})
+        part_pos_desc = "Sau Title (Trên)" if cfg.get("part_position") == "after_title" else f"Dưới Y={cfg.get('part_y_pos')}px"
+        margin_text = f"Lề {self.sp_sub_margin_v.value()}px" if self.sp_sub_margin_v is not None else "Tự đè dải Blur"
+        self.lbl_specs.setText(
+            f"Phong cách: {preset_info.get('name', sk)}  |  "
+            f"Cỡ Sub: {self.sp_sub_size.value()}px ({margin_text})  |  "
+            f"Title Y: {new_y}px (Kéo Chuột Trực Tiếp)  |  "
+            f"Vị trí Part: {part_pos_desc}"
+        )
+
+    def closeEvent(self, event):
+        """Tự động lưu toàn bộ thông số khi người dùng bấm dấu [X] đóng cửa sổ Studio."""
+        self.accept()
+        super().closeEvent(event)
+
     def _schedule_refresh(self, *_):
         self._debounce_timer.start()
 

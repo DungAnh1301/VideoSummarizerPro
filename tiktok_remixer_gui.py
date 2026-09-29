@@ -657,7 +657,17 @@ class TikTokRemixerTab(ttk.Frame):
         if sel in saved and isinstance(saved[sel], dict):
             saved[sel].update(cleaned_saved)
         save_tiktok_remixer_config(self.config)
-        self.log(f"💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title/Sub/Màu/Crop) vào config '{sel}'!")
+
+        # CẬP NHẬT NGAY LẬP TỨC CÁC JOB ĐANG CHỜ (PENDING) TRONG HÀNG ĐỢI
+        # để khi bấm render, video nhận đúng 100% tọa độ Title Y, cỡ Sub và màu sắc mới nhất!
+        updated_jobs = 0
+        for item in self.queue_items:
+            if item.get("status") in ("pending", "failed") and isinstance(item.get("options"), dict):
+                item["options"].update(cleaned_saved)
+                updated_jobs += 1
+
+        y_pos = cleaned_saved.get("title_y_pos", self.config.get("title_y_pos", 260))
+        self.log(f"💾 [TIKTOK REMIXER] Đã lưu cấu hình Studio (Title Y={y_pos}px) vào config '{sel}' (Đã cập nhật {updated_jobs} job đang chờ)!")
 
     def _open_color_studio(self):
         self._collect_config_from_ui()
