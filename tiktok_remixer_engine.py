@@ -756,19 +756,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if core.size == 0:
                     continue
 
-                roi_y_start = int(ch * 0.45)
+                # Chỉ quét nửa dưới của video lõi (nơi chứa Subtitle, Part badge, Watermark)
+                roi_y_start = int(ch * 0.65)
                 roi = core[roi_y_start:, :]
                 if roi.size == 0:
                     continue
 
                 gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                # Lọc các pixel có độ sáng cao đặc trưng của font chữ (trắng / vàng sáng)
+                _, bright_mask = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY)
                 edges = cv2.Canny(gray, 40, 140)
+                text_map = cv2.bitwise_and(edges, bright_mask)
 
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
-                closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+                closed = cv2.morphologyEx(text_map, cv2.MORPH_CLOSE, kernel)
 
                 v_proj = np.sum(closed, axis=1) / 255.0
-                thresh_v = max(12.0, np.max(v_proj) * 0.12) if np.max(v_proj) > 0 else 999.0
+                thresh_v = max(8.0, np.max(v_proj) * 0.10) if np.max(v_proj) > 0 else 999.0
                 text_rows = np.where(v_proj > thresh_v)[0]
 
                 if len(text_rows) > 4:
@@ -793,30 +797,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if not detected_ytops:
                 return None
 
-            min_ytop = int(np.percentile(detected_ytops, 10))
-            max_ybot = int(np.percentile(detected_ybots, 90))
+            min_ytop = int(np.percentile(detected_ytops, 15))
+            max_ybot = int(np.percentile(detected_ybots, 85))
 
             text_h = max_ybot - min_ytop
-            if text_h < 15:
+            if text_h < 12:
                 return None
 
-            pad_y = max(12, int(text_h * 0.15))
-            blur_my = max(0, min_ytop - pad_y)
-            blur_mh = min(crop_h - blur_my, (max_ybot + pad_y) - blur_my)
+            pad_y = max(10, int(text_h * 0.15))
+            raw_blur_y = max(0, min_ytop - pad_y)
+            raw_blur_h = min(crop_h - raw_blur_y, (max_ybot + pad_y) - raw_blur_y)
 
-            min_x = min(detected_xlefts)
-            max_x = max(detected_xrights)
-            text_span_w = max_x - min_x
+            # Khống chế trần an toàn toán học: dải che sub/part luôn nằm trong 67% - 98% chiều cao video lõi
+            blur_my = max(int(crop_h * 0.67), min(int(crop_h * 0.74), raw_blur_y))
+            blur_mh = min(crop_h - blur_my, max(int(crop_h * 0.22), raw_blur_h))
 
-            if text_span_w > crop_w * 0.35:
-                sub_xmin = 0.03
-                sub_xmax = 0.97
-                blur_mx = int(crop_w * sub_xmin)
-                blur_mw = int(crop_w * (sub_xmax - sub_xmin))
-            else:
-                pad_x = max(24, int(text_span_w * 0.12))
-                blur_mx = max(0, min_x - pad_x)
-                blur_mw = min(crop_w - blur_mx, (max_x + pad_x) - blur_mx)
+            blur_mw = int(crop_w * 0.94)
+            blur_mx = int(crop_w * 0.03)
 
             blur_mx -= blur_mx % 2
             blur_my -= blur_my % 2
@@ -1195,6 +1192,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             crop_h = int(orig_h * (ymax - ymin))
             crop_w = orig_w
             crop_x = 0
+            crop_w -= crop_w % 2
+            crop_h -= crop_h % 2
+            crop_x -= crop_x % 2
+            crop_y -= crop_y % 2
             logger.info("✂️ [CROP AUTO] Áp dụng AI + Seam Detector tự động: ymin=%.3f, ymax=%.3f (h=%d, y=%d)", ymin, ymax, crop_h, crop_y)
 
         # 2. Tính toán Tọa độ Bôi Mờ Sub Cũ (Sub Blur Zone)
@@ -1518,7 +1519,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 mask_hook_chain = (
                     f"color=c=black:s={crop_w}x{crop_h}:r=25:d={hook_dur:.3f}[hmbg];"
                     f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={hook_dur:.3f}[hmfg];"
-                    f"[hmbg][hmfg]overlay={blur_mx}:{blur_my},boxblur=10:3[hmsoft];"
+                    f"[hmbg][hmfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[hmsoft];"
                 )
                 core_crop_hook = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
@@ -1611,7 +1612,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"[c_to_blur]boxblur=28:15[c_blurred];"
                     f"color=c=black:s={crop_w}x{crop_h}:r=25[mbg];"
                     f"color=c=white:s={blur_mw}x{blur_mh}:r=25[mfg];"
-                    f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3[msoft];"
+                    f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[msoft];"
                     f"[c_raw][c_blurred][msoft]maskedmerge,"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
