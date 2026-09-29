@@ -578,6 +578,21 @@ OUTPUT FORMAT (JSON ONLY):
         return default_ass
 
     @classmethod
+    def get_effective_sub_size(cls, raw_sz: Any) -> int:
+        """Quy đổi kích thước Subtitle sang PlayResY=1920 đồng nhất 100% với Title Studio."""
+        try:
+            val = int(raw_sz)
+        except Exception:
+            val = 48
+        if val <= 0:
+            return 48
+        if val < 25:
+            # Quy đổi từ đơn vị 288p chuẩn sang 1920p (hệ số 1920/288 = 6.6667)
+            # Ví dụ: 7 -> 47px, 10 -> 67px, 12 -> 80px, 14 -> 93px, 16 -> 107px
+            return max(34, int(round(val * (1920.0 / 288.0))))
+        return max(30, min(120, val))
+
+    @classmethod
     def convert_srt_to_ass(
         cls,
         srt_file: str,
@@ -1157,15 +1172,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         fg_h += fg_h % 2
 
         # Lề Đáy (MarginV) cho Subtitle (RIÊNG CHẾ ĐỘ 3: TIKTOK REMIXER):
-        # 1. Nếu CÓ sub cũ cần che (has_blur_mask VÀ overlay_sub_on_blur_zone):
-        #    -> Khóa cứng vị trí Sub mới đè CHÍNH XÁC 100% lên tâm dải Blur của sub cũ đối thủ.
-        # 2. Nếu KHÔNG CÓ sub cũ để che (Video sạch / không có vết blur):
-        #    -> Đặt Sub ở dải BLUR BÊN DƯỚI (ở giữa mép dưới video lõi và blur bên dưới).
-        overlay_sub_on_blur = bool(options.get("overlay_sub_on_blur_zone", True))
-        has_sub_blur = has_blur_mask and (blur_mh > 0) and overlay_sub_on_blur
-
-        raw_sz = int(options.get("sub_size", 38) or 38)
-        sub_sz = max(34, raw_sz * 5) if raw_sz <= 10 else max(30, min(80, raw_sz))
+        # 1. Nếu CÓ dải blur che sub cũ: Khóa cứng vị trí Sub mới đè CHÍNH XÁC 100% lên tâm dải Blur của sub cũ đối thủ.
+        # 2. Nếu KHÔNG CÓ sub cũ để che (Video sạch): Đặt Sub ở dải BLUR BÊN DƯỚI (ngay mép dưới video lõi).
+        has_sub_blur = has_blur_mask and (blur_mh > 0)
+        sub_sz = cls.get_effective_sub_size(options.get("sub_size", 48))
 
         fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
         fg_bottom_y = fg_top_y + fg_h
@@ -1391,8 +1401,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
             sub_font = style_specs.get("font_name", "Arial")
-            raw_sz = int(options.get("sub_size", 38) or 38)
-            sub_size = max(34, raw_sz * 5) if raw_sz <= 10 else max(30, min(80, raw_sz))
+            sub_size = cls.get_effective_sub_size(options.get("sub_size", 48))
 
             # Chuyển đổi màu sắc an toàn (hỗ trợ cả ASS & Hex)
             raw_c = options.get("sub_color", "&H00FFFF&")
@@ -1401,8 +1410,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             raw_oc = options.get("sub_outline_color", "&H000000&")
             sub_outline_color = cls._to_ass_color(raw_oc, default_ass="&H00000000")
 
-            sub_outline = int(options.get("sub_outline", 4) or 4)
-            sub_shadow = int(options.get("sub_shadow", 1) or 1)
+            raw_ol = int(options.get("sub_outline", 3) or 3)
+            sub_outline = max(2, int(round(raw_ol * 1.8))) if raw_ol <= 5 else raw_ol
+            raw_sh = int(options.get("sub_shadow", 1) or 1)
+            sub_shadow = max(1, int(round(raw_sh * 1.5))) if raw_sh <= 5 else raw_sh
 
             # Nếu phong cách yêu cầu in hoa (ví dụ Classic), in hoa nội dung SRT
             srt_to_use = narration_srt
