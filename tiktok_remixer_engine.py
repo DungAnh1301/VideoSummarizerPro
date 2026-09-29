@@ -711,14 +711,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         crop_h: int
     ) -> Optional[Tuple[int, int, int, int]]:
         """
-        ĐO ĐẠC TOÁN HỌC & COMPUTER VISION CHUẨN XÁC VÙNG CHỮ VÀ BADGE PART CŨ TRÊN VIDEO GỐC:
-        1. Quét đa khung hình (12-16 frames) trong video nguồn.
-        2. Cắt vùng nửa dưới của video lõi sau khi crop (từ 0.45 * crop_h đến crop_h).
-        3. Sử dụng Canny Edge + Morphological Filtering + Vertical/Horizontal Projection
-           để dò tìm chính xác từng dòng văn bản (cả Part 1, Part 2 lẫn phụ đề nhiều dòng).
-        4. Tìm đỉnh cao nhất (Y_min_text) và đáy thấp nhất (Y_max_text) của toàn bộ các con chữ.
-        5. Tính toán lề an toàn khoa học (Adaptive Padding) theo tỷ lệ chiều cao font chữ thực tế (15% text height).
-        6. Trả về (blur_mx, blur_my, blur_mw, blur_mh) chuẩn xác từng pixel.
+        ĐO ĐẠC TOÁN HỌC & COMPUTER VISION CHUẨN XÁC VÙNG PHỤ ĐỀ (SUBTITLE BAND CLUSTERING):
+        1. Quét đa khung hình (20-25 frames) phân bổ đều trong video nguồn.
+        2. Tách các thành phần chữ (Text Candidates) bằng HSV (màu trắng & vàng sáng) + Canny Edges + Morphological Closing.
+        3. Tạo Histogram phân bố mật độ chữ theo trục dọc Y (Y-Distribution Histogram) để tìm chính xác dải Y phụ đề lặp lại (Subtitle Cluster Peak).
+        4. Xác định chiều cao tối đa (Max Height) và bề rộng tối đa (Max Width) thực tế của toàn bộ các câu sub cũ.
+        5. Tạo hộp bao trùm chính xác (Exact Bounding Box) vừa khít dải sub, tuyệt đối không lem vào người nhân vật.
         """
         try:
             import cv2
@@ -729,16 +727,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 return None
 
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 100)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             if total_frames < 5:
                 cap.release()
                 return None
 
-            sample_indices = [int(total_frames * (0.10 + 0.055 * i)) for i in range(14)]
+            num_samples = min(25, max(8, int(total_frames / (fps * 2.0))))
+            sample_indices = [int(total_frames * (0.08 + 0.84 * (i / max(1, num_samples - 1)))) for i in range(num_samples)]
 
-            detected_ytops = []
-            detected_ybots = []
-            detected_xlefts = []
-            detected_xrights = []
+            y_hist = np.zeros(crop_h, dtype=np.int32)
+            sample_boxes = []
 
             for f_idx in sample_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
@@ -756,72 +754,66 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if core.size == 0:
                     continue
 
-                # Chỉ quét nửa dưới của video lõi (nơi chứa Subtitle, Part badge, Watermark)
-                roi_y_start = int(ch * 0.65)
-                roi = core[roi_y_start:, :]
+                # Chỉ quét nửa dưới của video lõi nơi chứa Subtitle
+                roi_y = int(ch * 0.60)
+                roi = core[roi_y:, :]
                 if roi.size == 0:
                     continue
 
                 gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                # Lọc các pixel có độ sáng cao đặc trưng của font chữ (trắng / vàng sáng)
-                _, bright_mask = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY)
+                hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                mask_white = cv2.inRange(gray, 185, 255)
+                mask_yellow = cv2.inRange(hsv, (18, 80, 100), (38, 255, 255))
+                text_color_mask = cv2.bitwise_or(mask_white, mask_yellow)
+
                 edges = cv2.Canny(gray, 40, 140)
-                text_map = cv2.bitwise_and(edges, bright_mask)
+                text_cand = cv2.bitwise_and(edges, edges, mask=cv2.dilate(text_color_mask, np.ones((3, 3), np.uint8)))
 
-                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
-                closed = cv2.morphologyEx(text_map, cv2.MORPH_CLOSE, kernel)
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+                closed = cv2.morphologyEx(text_cand, cv2.MORPH_CLOSE, kernel)
+                contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                v_proj = np.sum(closed, axis=1) / 255.0
-                thresh_v = max(8.0, np.max(v_proj) * 0.10) if np.max(v_proj) > 0 else 999.0
-                text_rows = np.where(v_proj > thresh_v)[0]
-
-                if len(text_rows) > 4:
-                    y_top_roi = text_rows[0]
-                    y_bot_roi = text_rows[-1]
-
-                    sub_band = closed[y_top_roi:y_bot_roi + 1, :]
-                    h_proj = np.sum(sub_band, axis=0) / 255.0
-                    thresh_h = max(5.0, np.max(h_proj) * 0.08) if np.max(h_proj) > 0 else 999.0
-                    text_cols = np.where(h_proj > thresh_h)[0]
-
-                    if len(text_cols) > 20:
-                        abs_y_top = roi_y_start + y_top_roi
-                        abs_y_bot = roi_y_start + y_bot_roi
-                        detected_ytops.append(abs_y_top)
-                        detected_ybots.append(abs_y_bot)
-                        detected_xlefts.append(text_cols[0])
-                        detected_xrights.append(text_cols[-1])
+                for cnt in contours:
+                    x, y, w, h = cv2.boundingRect(cnt)
+                    if w > 50 and 18 < h < 120:
+                        abs_y = roi_y + y
+                        y_hist[abs_y:abs_y + h] += 1
+                        sample_boxes.append((x, abs_y, w, h, x + w, abs_y + h))
 
             cap.release()
 
-            if not detected_ytops:
+            if not sample_boxes:
                 return None
 
-            min_ytop = int(np.percentile(detected_ytops, 15))
-            max_ybot = int(np.percentile(detected_ybots, 85))
-
-            text_h = max_ybot - min_ytop
-            if text_h < 12:
+            peak_val = np.max(y_hist)
+            if peak_val < 2:
                 return None
 
-            pad_y = max(8, int(text_h * 0.15))
-            raw_blur_y = max(0, min_ytop - pad_y)
-            raw_blur_h = min(crop_h - raw_blur_y, (max_ybot + pad_y) - raw_blur_y)
+            # Xác định dải phụ đề xuất hiện thường trực (Sub Band Cluster)
+            thresh = max(2, int(peak_val * 0.35))
+            sub_band_indices = np.where(y_hist >= thresh)[0]
+            if len(sub_band_indices) == 0:
+                return None
 
-            # Khống chế dải che sub/part gọn gàng ở đáy (72% - 98% chiều cao video lõi, chiều cao tối đa 160px)
-            blur_my = max(int(crop_h * 0.72), min(int(crop_h * 0.84), raw_blur_y))
-            blur_mh = min(crop_h - blur_my, max(70, min(160, raw_blur_h)))
+            band_top = int(sub_band_indices[0])
+            band_bot = int(sub_band_indices[-1])
 
-            blur_mw = int(crop_w * 0.94)
-            blur_mx = int(crop_w * 0.03)
+            # Tính toán padding gọn gàng (10-14px)
+            pad_y = 12
+            blur_my = max(0, band_top - pad_y)
+            blur_mh = min(crop_h - blur_my, (band_bot + pad_y) - blur_my)
+
+            blur_mx = 0
+            blur_mw = crop_w
 
             blur_mx -= blur_mx % 2
             blur_my -= blur_my % 2
             blur_mw -= blur_mw % 2
             blur_mh -= blur_mh % 2
             blur_mw = max(16, blur_mw)
-            blur_mh = max(24, blur_mh)
+            blur_mh = max(24, min(160, blur_mh))
 
+            logger.info("🎯 [SUB CLUSTER DETECT] Dải phụ đề tập trung: Y=[%d -> %d], Hộp mờ chuẩn: y=%d, h=%d, w=%d", band_top, band_bot, blur_my, blur_mh, blur_mw)
             return (blur_mx, blur_my, blur_mw, blur_mh)
         except Exception as e:
             logger.warning(f"⚠️ [OPENCV TEXT DETECT] Lỗi đo đạc chữ tự động: {e}")
@@ -1278,6 +1270,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             has_blur_mask = False
             logger.info("🌫️ [BLUR MASK] Tắt tính năng che mờ.")
 
+        blur_box_radius = max(6, min(14, int(blur_mh // 5))) if blur_mh > 0 else 10
+
         # 3. Phân Đoạn Hook & Scenes
         hook_info = gemini_plan.get("hook", {})
         hook_start = float(hook_info.get("start_sec", 0.0))
@@ -1518,7 +1512,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 core_crop_hook = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"split=2[c_raw][c_sub_crop];"
-                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:5[c_sub_blurred];"
+                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur={blur_box_radius}:4[c_sub_blurred];"
                     f"[c_raw][c_sub_blurred]overlay={blur_mx}:{blur_my}[core_clean];"
                 )
             else:
@@ -1607,7 +1601,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 fc_clip = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"split=2[c_raw][c_sub_crop];"
-                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:5[c_sub_blurred];"
+                    f"[c_sub_crop]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur={blur_box_radius}:4[c_sub_blurred];"
                     f"[c_raw][c_sub_blurred]overlay={blur_mx}:{blur_my},"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
