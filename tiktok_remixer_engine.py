@@ -209,7 +209,7 @@ TASKS:
    - Identify top/bottom blurred bars, textures, or burned-in competitor Title banners.
    - Provide "core_crop_normalized": {{"ymin": float, "ymax": float}} to slice off competitor titles and UI, isolating only the clean core action footage.
    - Provide "has_burned_in_subtitles": true/false (whether there are burned-in subtitles, hardcoded captions, or Part badges at the bottom of the video).
-   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} precisely bounding burned-in source subtitles and "Part" badges at the bottom to blur. If "has_burned_in_subtitles" is false, set "sub_blur_normalized": null.
+   - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} forming a TIGHT, PRECISE bounding box covering ONLY the subtitle text lines and "Part" badge at the bottom (typical height is strictly 0.035 to 0.075 of frame, e.g. ymin=0.69, ymax=0.75). DO NOT make it overly tall or touch the subject's torso/chest. If "has_burned_in_subtitles" is false, set "sub_blur_normalized": null.
 
 2. INTRO/OUTRO WATERMARK INSPECTION:
    - Inspect the first 0.5s and last 1.0s frame-by-frame for bouncing TikTok logos or transition wipes.
@@ -1219,49 +1219,100 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             has_blur_mask = True
             logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
         elif auto_blur:
-            # 1. ĐO ĐẠC THỰC TẾ BẰNG COMPUTER VISION TRÊN CÁC KHUNG HÌNH VIDEO GỐC
-            measured = cls.auto_measure_burned_in_text_bounds(source_video, crop_x, crop_y, crop_w, crop_h)
-            if measured is not None:
-                blur_mx, blur_my, blur_mw, blur_mh = measured
-                rel_sub_ymin = blur_my / max(1.0, float(crop_h))
-                rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
-                has_blur_mask = True
-                logger.info(
-                    "🎯 [OPENCV TEXT DETECT] Đã đo đạc CHUẨN XÁC chữ & Part cũ: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, che kín 100%%)",
-                    blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax
-                )
-            else:
-                # 2. Fallback có tính toán từ Gemini plan kết hợp lề an toàn
-                geom = gemini_plan.get("layout_geometry", {})
-                sub_norm = geom.get("sub_blur_normalized")
-                if not sub_norm or not isinstance(sub_norm, dict):
-                    sub_norm = {"ymin": 0.65, "ymax": 0.85, "xmin": 0.02, "xmax": 0.98}
+            geom = gemini_plan.get("layout_geometry", {}) if isinstance(gemini_plan, dict) else {}
+            sub_norm = geom.get("sub_blur_normalized")
+            has_burned_in = geom.get("has_burned_in_subtitles", True)
 
-                sub_orig_ymin = float(sub_norm.get("ymin", 0.65))
-                sub_orig_ymax = float(sub_norm.get("ymax", 0.85))
-                crop_span = max(0.01, ymax - ymin)
+            # ƯU TIÊN 1: Sử dụng trực tiếp tọa độ Gemini Vision quy đổi hình học 2 tầng (2-Stage Coordinate Transformation)
+            if has_burned_in and sub_norm and isinstance(sub_norm, dict) and "ymin" in sub_norm and "ymax" in sub_norm:
+                try:
+                    sub_g_ymin = float(sub_norm.get("ymin", 0.68))
+                    sub_g_ymax = float(sub_norm.get("ymax", 0.75))
+                    sub_g_xmin = float(sub_norm.get("xmin", 0.04))
+                    sub_g_xmax = float(sub_norm.get("xmax", 0.96))
 
-                raw_rel_ymin = (sub_orig_ymin - ymin) / crop_span
-                raw_rel_ymax = (sub_orig_ymax - ymin) / crop_span
+                    if sub_g_ymax <= sub_g_ymin:
+                        sub_g_ymax = sub_g_ymin + 0.05
+                    # Chặn trên nếu Gemini trả về dải quá rộng (tránh bôi mèo vào người)
+                    if sub_g_ymax - sub_g_ymin > 0.09:
+                        sub_g_ymax = sub_g_ymin + 0.075
 
-                if sub_orig_ymin < ymin or raw_rel_ymin < 0.50:
-                    rel_sub_ymin = 0.68
-                    rel_sub_ymax = 0.98
+                    crop_span = max(0.01, ymax - ymin)
+                    # Quy đổi tọa độ normalized từ khung 9:16 gốc sang tọa độ tỉ lệ video lõi (Core Crop)
+                    raw_rel_ymin = (sub_g_ymin - ymin) / crop_span
+                    raw_rel_ymax = (sub_g_ymax - ymin) / crop_span
+
+                    # Sanity check: Subtitle TikTok luôn ở 1/3 dưới cùng của video lõi
+                    if raw_rel_ymin < 0.45:
+                        raw_rel_ymin = 0.72
+                        raw_rel_ymax = 0.80
+
+                    # Padding an toàn nhỏ (khoảng 6-10px) để che sạch stroke viền chữ
+                    pad_y = max(4, min(10, int(crop_h * 0.008)))
+                    raw_my = int(round(crop_h * raw_rel_ymin))
+                    raw_mh = int(round(crop_h * (raw_rel_ymax - raw_rel_ymin)))
+
+                    blur_my = max(0, raw_my - pad_y)
+                    blur_mh = raw_mh + (2 * pad_y)
+
+                    # Khóa cứng trần/sàn: Hộp blur phụ đề chuẩn chỉ từ 44px đến tối đa 100px trên video lõi
+                    blur_mh = max(44, min(100, blur_mh))
+                    if blur_my + blur_mh > crop_h:
+                        blur_my = max(0, crop_h - blur_mh)
+
+                    # Chiều ngang (X, W) ôm trọn dải sub
+                    pad_x = max(0.01, min(0.03, (sub_g_xmax - sub_g_xmin) * 0.04))
+                    blur_mx = max(0, int(round(crop_w * max(0.01, sub_g_xmin - pad_x))))
+                    blur_mw = min(crop_w - blur_mx, int(round(crop_w * (min(0.99, sub_g_xmax + pad_x) - max(0.0, sub_g_xmin - pad_x)))))
+
+                    # Đảm bảo chia hết cho 2 cho FFmpeg
+                    blur_mw -= blur_mw % 2
+                    blur_mh -= blur_mh % 2
+                    blur_mw = max(32, blur_mw)
+                    blur_mh = max(32, blur_mh)
+
+                    rel_sub_ymin = blur_my / max(1.0, float(crop_h))
+                    rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
+                    has_blur_mask = True
+                    logger.info(
+                        "🎯 [GEMINI VISION BLUR 2-STAGE] Đã quy đổi hệ tọa độ 2 tầng từ Gemini Vision: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, hộp blur gọn gàng %dpx)",
+                        blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax, blur_mh
+                    )
+                except Exception as e_geom:
+                    logger.warning("⚠️ Lỗi quy đổi tọa độ Gemini Vision: %s, chuyển sang đo đạc fallback...", e_geom)
+                    sub_norm = None
+
+            if not has_blur_mask:
+                # ƯU TIÊN 2 (FALLBACK): Đo đạc bằng Computer Vision khi Gemini offline hoặc không có tọa độ
+                measured = cls.auto_measure_burned_in_text_bounds(source_video, crop_x, crop_y, crop_w, crop_h)
+                if measured is not None:
+                    blur_mx, blur_my, blur_mw, blur_mh = measured
+                    rel_sub_ymin = blur_my / max(1.0, float(crop_h))
+                    rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
+                    has_blur_mask = True
+                    logger.info(
+                        "🎯 [OPENCV TEXT DETECT] Đã đo đạc CHUẨN XÁC chữ & Part cũ: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, che kín 100%%)",
+                        blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax
+                    )
+                elif has_burned_in:
+                    # ƯU TIÊN 3: Mặc định an toàn nhỏ gọn không bao giờ lem người
+                    rel_sub_ymin = 0.74
+                    rel_sub_ymax = 0.82
+                    blur_mx = int(crop_w * 0.04)
+                    blur_mw = int(crop_w * 0.92)
+                    blur_mh = 64
+                    blur_my = int(round(crop_h * 0.75))
+                    blur_mw -= blur_mw % 2
+                    blur_mh -= blur_mh % 2
+                    has_blur_mask = True
+                    logger.info("🌫️ [BLUR MASK DEFAULT] Áp dụng dải mờ an toàn gọn nhẹ: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
                 else:
-                    rel_sub_ymin = min(0.68, max(0.55, raw_rel_ymin - 0.10))
-                    rel_sub_ymax = max(rel_sub_ymin + 0.18, min(0.99, raw_rel_ymax + 0.04))
-
-                sub_xmin = min(0.03, float(sub_norm.get("xmin", 0.03)))
-                sub_xmax = max(0.97, float(sub_norm.get("xmax", 0.97)))
-                blur_mx = int(crop_w * sub_xmin)
-                blur_mw = int(crop_w * (sub_xmax - sub_xmin))
-                blur_my = int(round(crop_h * rel_sub_ymin))
-                blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-                blur_mh = max(40, blur_mh)
-                blur_mw -= blur_mw % 2
-                blur_mh -= blur_mh % 2
-                has_blur_mask = True
-                logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub & Part cũ (Fallback): x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+                    rel_sub_ymin = None
+                    rel_sub_ymax = None
+                    blur_mx = blur_my = 0
+                    blur_mw = blur_mh = 0
+                    has_blur_mask = False
+                    logger.info("✨ [BLUR MASK] Video nguồn sạch, không có phụ đề cũ cần che.")
         else:
             rel_sub_ymin = None
             rel_sub_ymax = None
