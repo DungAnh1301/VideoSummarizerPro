@@ -1618,7 +1618,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"color=c=black:s={crop_w}x{crop_h}:r=25:d={sc_dur + 0.5:.3f}[mbg];"
                     f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={sc_dur + 0.5:.3f}[mfg];"
                     f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[msoft];"
-                    f"[c_raw][c_blurred][msoft]maskedmerge=shortest=1,"
+                    f"[c_raw][c_blurred][msoft]maskedmerge,"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
                 cmd_c = [
@@ -1651,9 +1651,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     c_file
                 ]
             logger.info("✂️ [B-ROLL %d/%d] Đang dựng clip B-Roll %03d: %.2fs -> %.2fs (dur=%.2fs)...", idx + 1, total_brolls, idx, sc_start, sc_end, sc_dur)
-            subprocess.run(cmd_c, capture_output=True, creationflags=flags)
-            if os.path.isfile(c_file):
+            res_c = subprocess.run(cmd_c, capture_output=True, text=True, creationflags=flags)
+            if res_c.returncode != 0 or not os.path.isfile(c_file):
+                logger.error("❌ [B-ROLL %03d] Lỗi cắt B-Roll: %s", idx, res_c.stderr)
+            else:
                 clip_files.append(c_file)
+
+        if not clip_files:
+            logger.error("❌ [B-ROLL CONCAT] Danh sách clip B-Roll rỗng!")
+            raise RuntimeError("Không có clip B-Roll hợp lệ để ghép thân video.")
 
         # Ghi danh sách ghép B-Roll
         with open(body_concat_list, "w", encoding="utf-8") as bf:
@@ -1665,7 +1671,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", body_concat_list,
             "-c", "copy", body_cut_mp4
         ]
-        subprocess.run(cmd_concat_body, capture_output=True, creationflags=flags)
+        res_concat = subprocess.run(cmd_concat_body, capture_output=True, text=True, creationflags=flags)
+        if res_concat.returncode != 0 or not os.path.isfile(body_cut_mp4):
+            logger.error("❌ [CONCAT BODY ERROR] Ghép thân video thất bại: %s", res_concat.stderr)
+            raise RuntimeError("Ghép thân video thất bại.")
         if timing_stats is not None:
             timing_stats["t_broll"] = round(time.time() - t_broll_start, 2)
 
@@ -1821,7 +1830,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             body_rendered_mp4
         ]
         logger.info(f"🚀 [BODY RENDER] Thực thi đóng gói thân video 9:16: {' '.join(cmd_body_final)}")
-        subprocess.run(cmd_body_final, capture_output=True, text=True, creationflags=flags)
+        res_body = subprocess.run(cmd_body_final, capture_output=True, text=True, creationflags=flags)
+        if res_body.returncode != 0 or not os.path.isfile(body_rendered_mp4):
+            logger.error("❌ [BODY RENDER ERROR] Lỗi render thân video (mã lỗi %s): %s", res_body.returncode, res_body.stderr)
         if timing_stats is not None:
             timing_stats["t_body"] = round(time.time() - t_body_start, 2)
 
