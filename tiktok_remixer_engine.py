@@ -1265,38 +1265,44 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if has_burned_in and sub_norm and isinstance(sub_norm, dict) and "ymin" in sub_norm and "ymax" in sub_norm:
                 try:
                     sub_g_ymin = float(sub_norm.get("ymin", 0.68))
-                    sub_g_ymax = float(sub_norm.get("ymax", 0.75))
-                    sub_g_xmin = float(sub_norm.get("xmin", 0.04))
-                    sub_g_xmax = float(sub_norm.get("xmax", 0.96))
+                    sub_g_ymax = float(sub_norm.get("ymax", 0.78))
+                    sub_g_xmin = float(sub_norm.get("xmin", 0.03))
+                    sub_g_xmax = float(sub_norm.get("xmax", 0.97))
 
                     if sub_g_ymax <= sub_g_ymin:
-                        sub_g_ymax = sub_g_ymin + 0.05
-                    # Chặn trên nếu Gemini trả về dải quá rộng (tránh bôi mèo vào người)
-                    if sub_g_ymax - sub_g_ymin > 0.09:
-                        sub_g_ymax = sub_g_ymin + 0.075
+                        sub_g_ymax = sub_g_ymin + 0.08
+                    # Cho phép dải cao tới 0.18 để bao trọn cả phụ đề 2 dòng + nét viền
+                    if sub_g_ymax - sub_g_ymin > 0.18:
+                        sub_g_ymax = sub_g_ymin + 0.16
 
                     crop_span = max(0.01, ymax - ymin)
                     # Quy đổi tọa độ normalized từ khung 9:16 gốc sang tọa độ tỉ lệ video lõi (Core Crop)
                     raw_rel_ymin = (sub_g_ymin - ymin) / crop_span
                     raw_rel_ymax = (sub_g_ymax - ymin) / crop_span
 
-                    # Sanity check: Subtitle TikTok luôn ở 1/3 dưới cùng của video lõi
+                    # Sanity check: Subtitle TikTok luôn ở nửa dưới của video lõi
                     if raw_rel_ymin < 0.45:
-                        raw_rel_ymin = 0.72
-                        raw_rel_ymax = 0.80
+                        raw_rel_ymin = 0.70
+                        raw_rel_ymax = 0.90
 
-                    # Padding an toàn nhỏ (khoảng 6-10px) để che sạch stroke viền chữ
-                    pad_y = max(4, min(10, int(crop_h * 0.008)))
+                    # Padding an toàn để che sạch stroke viền chữ
+                    pad_y = max(6, min(14, int(crop_h * 0.012)))
                     raw_my = int(round(crop_h * raw_rel_ymin))
                     raw_mh = int(round(crop_h * (raw_rel_ymax - raw_rel_ymin)))
 
                     blur_my = max(0, raw_my - pad_y)
                     blur_mh = raw_mh + (2 * pad_y)
 
-                    # Khóa cứng trần/sàn: Hộp blur phụ đề chuẩn chỉ từ 44px đến tối đa 100px trên video lõi
-                    blur_mh = max(44, min(100, blur_mh))
-                    if blur_my + blur_mh > crop_h:
-                        blur_my = max(0, crop_h - blur_mh)
+                    # Hộp blur phụ đề: Cho phép từ 48px đến 180px để bao trọn phụ đề 2 dòng
+                    blur_mh = max(48, min(180, blur_mh))
+
+                    # QUY TẮC TRIỆT TIÊU CHỮ LÒI ĐÁY:
+                    # Nếu đáy hộp blur chỉ cách mép đáy video lõi <= 65px (như chữ dòng 2 "apartment"),
+                    # mở rộng mép blur chạm thẳng xuống đáy video lõi (crop_h) để KHÔNG BAO GIỜ bị lọt chữ cũ ra ngoài!
+                    if crop_h - (blur_my + blur_mh) <= 65:
+                        blur_mh = crop_h - blur_my
+                    elif blur_my + blur_mh > crop_h:
+                        blur_mh = crop_h - blur_my
 
                     # Chiều ngang (X, W) ôm trọn dải sub
                     pad_x = max(0.01, min(0.03, (sub_g_xmax - sub_g_xmin) * 0.04))
@@ -1313,7 +1319,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
                     has_blur_mask = True
                     logger.info(
-                        "🎯 [GEMINI VISION BLUR 2-STAGE] Đã quy đổi hệ tọa độ 2 tầng từ Gemini Vision: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, hộp blur gọn gàng %dpx)",
+                        "🎯 [GEMINI VISION BLUR 2-STAGE] Đã quy đổi hệ tọa độ 2 tầng từ Gemini Vision: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, che kín 100%% phụ đề cũ %dpx)",
                         blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax, blur_mh
                     )
                 except Exception as e_geom:
@@ -1325,6 +1331,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 measured = cls.auto_measure_burned_in_text_bounds(source_video, crop_x, crop_y, crop_w, crop_h)
                 if measured is not None:
                     blur_mx, blur_my, blur_mw, blur_mh = measured
+                    if crop_h - (blur_my + blur_mh) <= 65:
+                        blur_mh = crop_h - blur_my
+                    blur_mw -= blur_mw % 2
+                    blur_mh -= blur_mh % 2
                     rel_sub_ymin = blur_my / max(1.0, float(crop_h))
                     rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
                     has_blur_mask = True
@@ -1333,13 +1343,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax
                     )
                 elif has_burned_in:
-                    # ƯU TIÊN 3: Mặc định an toàn nhỏ gọn không bao giờ lem người
-                    rel_sub_ymin = 0.74
-                    rel_sub_ymax = 0.82
-                    blur_mx = int(crop_w * 0.04)
-                    blur_mw = int(crop_w * 0.92)
-                    blur_mh = 64
-                    blur_my = int(round(crop_h * 0.75))
+                    # ƯU TIÊN 3: Mặc định bao trọn dải dưới của video lõi, chạm đáy video lõi để triệt tiêu mọi chữ
+                    rel_sub_ymin = 0.70
+                    rel_sub_ymax = 1.00
+                    blur_mx = int(crop_w * 0.03)
+                    blur_mw = int(crop_w * 0.94)
+                    blur_my = int(round(crop_h * 0.70))
+                    blur_mh = crop_h - blur_my
                     blur_mw -= blur_mw % 2
                     blur_mh -= blur_mh % 2
                     has_blur_mask = True
@@ -1546,8 +1556,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         #    -> Đặt Sub ở dải BLUR BÊN DƯỚI (ở giữa mép dưới video lõi và blur bên dưới).
         has_sub_blur = bool(has_blur_mask and (blur_mh > 0))
 
-        raw_sz = int(options.get("sub_size", 48) or 48)
-        sub_sz = (raw_sz * 4) if raw_sz <= 16 else max(20, min(100, raw_sz))
+        raw_sz = int(options.get("sub_size", 68) or 68)
+        if raw_sz <= 16:
+            raw_sz = raw_sz * 4
+        elif raw_sz == 48:
+            raw_sz = 68
+        sub_sz = max(24, min(140, raw_sz))
 
         fg_top_y = (cls.OUTPUT_H - fg_h) / 2.0
         fg_bottom_y = fg_top_y + fg_h
@@ -1802,8 +1816,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
 
             sub_font = style_specs.get("font_name", "Arial")
-            raw_sz = int(options.get("sub_size", 48) or 48)
-            sub_size = (raw_sz * 4) if raw_sz <= 16 else max(20, min(100, raw_sz))
+            raw_sz = int(options.get("sub_size", 68) or 68)
+            if raw_sz <= 16:
+                raw_sz = raw_sz * 4
+            elif raw_sz == 48:
+                raw_sz = 68
+            sub_size = max(24, min(140, raw_sz))
 
             # Chuyển đổi màu sắc an toàn (hỗ trợ cả ASS & Hex)
             raw_c = options.get("sub_color", "&H00FFFF&")
@@ -1812,8 +1830,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             raw_oc = options.get("sub_outline_color", "&H000000&")
             sub_outline_color = cls._to_ass_color(raw_oc, default_ass="&H00000000")
 
-            sub_outline = int(options.get("sub_outline", 4) or 4)
-            sub_shadow = int(options.get("sub_shadow", 1) or 1)
+            sub_outline = max(3, int(options.get("sub_outline", 4) or 4))
+            sub_shadow = int(options.get("sub_shadow", 0) or 0)
 
             # Nếu phong cách yêu cầu in hoa (ví dụ Classic), in hoa nội dung SRT
             srt_to_use = narration_srt

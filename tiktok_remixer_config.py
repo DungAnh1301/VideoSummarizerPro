@@ -82,8 +82,8 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     
     "enable_sub": True,
     "sub_style_type": "tiktok_slim",
-    "sub_size": 48,
-    "sub_outline": 3,
+    "sub_size": 68,
+    "sub_outline": 4,
     "sub_shadow": 0,
     "sub_margin_v": 100,
     "sub_color": "&H00FFFF&",

@@ -159,8 +159,8 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "tiktok_slim": {
         "key": "tiktok_slim",
         "name": "✨ Thanh Mảnh (TikTok Slim - Arial/Segoe)",
-        "sub_size": 42,
-        "sub_outline": 2,
+        "sub_size": 58,
+        "sub_outline": 3,
         "sub_shadow": 0,
         "sub_margin_v": 80,
         "uppercase": False,
@@ -169,7 +169,7 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "classic": {
         "key": "classic",
         "name": "🏛️ Cổ Điển (Classic - Segoe UI Black/Impact)",
-        "sub_size": 56,
+        "sub_size": 76,
         "sub_outline": 4,
         "sub_shadow": 0,
         "sub_margin_v": 80,
@@ -179,7 +179,7 @@ SUBTITLE_PRESETS: Dict[str, Dict[str, Any]] = {
     "standard": {
         "key": "standard",
         "name": "📺 Tiêu Chuẩn (Standard - Segoe UI)",
-        "sub_size": 48,
+        "sub_size": 68,
         "sub_outline": 3,
         "sub_shadow": 0,
         "sub_margin_v": 90,
@@ -1038,11 +1038,11 @@ class TitleSubStudioDialog(QDialog):
 
         # 4 Spinbox Thông số Phụ Đề
         self.sp_sub_size = QSpinBox()
-        self.sp_sub_size.setRange(20, 100)
-        raw_sz_init = int(self.ts_data.get("sub_size", 48) or 48)
+        self.sp_sub_size.setRange(20, 140)
+        raw_sz_init = int(self.ts_data.get("sub_size", 68) or 68)
         if raw_sz_init <= 16:
             raw_sz_init *= 4
-        self.sp_sub_size.setValue(max(20, min(100, raw_sz_init)))
+        self.sp_sub_size.setValue(max(20, min(140, raw_sz_init)))
         self.sp_sub_size.setSuffix(" px")
         self.sp_sub_size.valueChanged.connect(self._schedule_refresh)
         fl_sub.addRow("Cỡ Chữ (FontSize):", self.sp_sub_size)
