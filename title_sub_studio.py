@@ -657,7 +657,7 @@ class PreviewCanvas9x16(QWidget):
         if raw_sz <= 16:
             real_sub_sz = raw_sz * 4
         else:
-            real_sub_sz = max(20, min(100, raw_sz))
+            real_sub_sz = max(20, min(140, raw_sz))
 
         shadow_off = max(0, int(round(sub_shadow * scale)))
         step = max(1, int(round(sub_outline * scale)))

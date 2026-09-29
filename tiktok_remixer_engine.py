@@ -616,6 +616,51 @@ OUTPUT FORMAT (JSON ONLY):
         return default_ass
 
     @classmethod
+    def wrap_subtitle_text(cls, text: str, font_size: int, max_width_px: int = 940) -> str:
+        """
+        Tự động căn dòng phụ đề cân đối (Smart 2-Line Balancing) khi cỡ chữ lớn để không bị tràn màn hình:
+        - Tự động tính số ký tự tối đa trên 1 dòng theo cỡ chữ (FontSize) và chiều rộng hiển thị 1080px (trừ 2 mép an toàn).
+        - Khi câu vượt quá chiều ngang, tìm vị trí ngắt từ tối ưu để chia thành 2 dòng có độ dài cân bằng, đẹp mắt như Title Banner.
+        - Chèn ký tự ngắt dòng chuẩn ASS (\\N) để hiển thị căn giữa hoàn hảo.
+        """
+        text = text.strip()
+        if not text:
+            return ""
+        if "\\N" in text:
+            return text
+        if "\n" in text:
+            return text.replace("\n", "\\N")
+
+        # Tỉ lệ chiều rộng ký tự trung bình đối với font chữ đậm (Impact, Segoe UI Black, Arial Bold)
+        char_width_ratio = 0.52
+        max_chars_per_line = max(18, int(max_width_px / max(12, font_size * char_width_ratio)))
+
+        if len(text) <= max_chars_per_line:
+            return text
+
+        words = text.split()
+        if len(words) <= 1:
+            return text
+
+        # Nếu câu dài vừa phải (cần 2 dòng): Tìm điểm cắt k để 2 dòng có độ dài ký tự cân đối nhất (giống Title 2 dòng)
+        if len(text) <= max_chars_per_line * 2.1:
+            best_k = 1
+            best_diff = 9999
+            for k in range(1, len(words)):
+                l1 = " ".join(words[:k])
+                l2 = " ".join(words[k:])
+                diff = abs(len(l1) - len(l2))
+                if diff < best_diff:
+                    best_diff = diff
+                    best_k = k
+            return f"{' '.join(words[:best_k])}\\N{' '.join(words[best_k:])}"
+        else:
+            # Nếu câu quá dài (cần 3 dòng), chia đều theo max_chars
+            import textwrap
+            wrapped_lines = textwrap.wrap(text, width=max_chars_per_line)
+            return "\\N".join(wrapped_lines)
+
+    @classmethod
     def convert_srt_to_ass(
         cls,
         srt_file: str,
@@ -639,6 +684,7 @@ OUTPUT FORMAT (JSON ONLY):
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
@@ -658,7 +704,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                         g = m.groups()
                         st = f"{int(g[0])}:{g[1]}:{g[2]}.{g[3][:2]}"
                         en = f"{int(g[4])}:{g[5]}:{g[6]}.{g[7][:2]}"
-                        txt = " ".join(lines[2:])
+                        raw_txt = " ".join(lines[2:]).strip()
+                        txt = cls.wrap_subtitle_text(raw_txt, font_size=font_size, max_width_px=940)
                         events.append(f"Dialogue: 0,{st},{en},Default,,0,0,{margin_v},,{txt}")
 
             with open(ass_file, "w", encoding="utf-8") as f:
