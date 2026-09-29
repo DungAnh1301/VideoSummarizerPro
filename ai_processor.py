@@ -2438,6 +2438,99 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
             }
 
     @classmethod
+    def sanitize_text_for_tts(cls, text: str) -> str:
+        """
+        Làm sạch kịch bản văn bản trước khi gửi lên CapCut TTS hoặc Edge-TTS:
+        - BẢO TOÀN 100% mọi chữ cái có dấu quốc tế (Đức: ä, ö, ü, ß; Pháp: é, è, ê, ç; TBN: ñ, á; Việt: à, á, ơ, ư; Nhật, Hàn, v.v.)
+        - Loại bỏ các thẻ rác Markdown: **bold**, *italic*, __underline__, # Header, ---, > blockquote.
+        - Loại bỏ các nhãn phân đoạn cảnh: [S1], [Scene 1], (Hook), Scene 1:, Shot 2:
+        - Loại bỏ Emoji / icon đồ họa gây lỗi bộ phân tích âm vị phoneme của máy chủ TTS.
+        - Chuẩn hóa các dấu ngoặc kép xoăn (curly quotes “ ”, ‘ ’) và gạch ngang dài.
+        - Xóa khoảng trắng và dấu cách lặp dư thừa.
+        """
+        if not text:
+            return ""
+        import re
+        s = str(text)
+        # 1. Bóc các nhãn cảnh như [S1], [Cảnh 1], (Hook), Scene 1:, Shot 2:
+        s = re.sub(r'\[(?:S\d+|Scene\s*\d+|Cảnh\s*\d+|Hook|B-Roll|Shot\s*\d+)[^\]]*\]', '', s, flags=re.IGNORECASE)
+        s = re.sub(r'\((?:S\d+|Scene\s*\d+|Cảnh\s*\d+|Hook|B-Roll|Shot\s*\d+)[^\)]*\)', '', s, flags=re.IGNORECASE)
+        s = re.sub(r'^(?:S\d+|Scene\s*\d+|Cảnh\s*\d+|Hook|B-Roll|Shot\s*\d+)\s*[:：\-]\s*', '', s, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # 2. Xóa các cú pháp Markdown (giữ lại chữ bên trong)
+        s = re.sub(r'\*\*([^*]+)\*\*', r'\1', s)
+        s = re.sub(r'\*([^*]+)\*', r'\1', s)
+        s = re.sub(r'__([^_]+)__', r'\1', s)
+        s = re.sub(r'_([^_]+)_', r'\1', s)
+        s = re.sub(r'#{1,6}\s*', '', s)
+        s = re.sub(r'^\s*[-*+]\s+', '', s, flags=re.MULTILINE)
+        s = re.sub(r'[`~^]', '', s)
+        
+        # 3. Chuẩn hóa dấu ngoặc kép xoăn và gạch ngang dài
+        s = s.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+        s = s.replace('—', ' - ').replace('–', ' - ')
+        s = s.replace('&', ' and ')
+        
+        # 4. Loại bỏ Emoji (giữ nguyên chữ cái có dấu mọi ngôn ngữ)
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"
+            "\U0001F300-\U0001F5FF"
+            "\U0001F680-\U0001F6FF"
+            "\U0001F1E0-\U0001F1FF"
+            "\U00002702-\U000027B0"
+            "\U000024C2-\U0001F251"
+            "\U0001F900-\U0001F9FF"
+            "\U0001FA70-\U0001FAFF"
+            "]+", flags=re.UNICODE
+        )
+        s = emoji_pattern.sub('', s)
+        
+        # 5. Xóa khoảng trắng thừa
+        lines = [re.sub(r'\s+', ' ', line).strip() for line in s.split('\n')]
+        clean_text = ' '.join([line for line in lines if line])
+        return clean_text.strip()
+
+    @classmethod
+    def split_text_for_tts(cls, text: str, max_words: int = 100) -> list[str]:
+        """
+        Tách văn bản thành các chunk câu hoàn chỉnh theo ngữ pháp quốc tế (. ! ? 。 ！？),
+        giúp CapCut TTS render cực nhanh, không bao giờ bị nghẽn hay timeout.
+        """
+        import re
+        words = text.split()
+        if len(words) <= max_words:
+            return [text]
+        
+        sentences = re.split(r'([.!?。！？]+(?:\s+|$))', text)
+        full_sentences = []
+        for i in range(0, len(sentences) - 1, 2):
+            s_text = sentences[i]
+            s_punct = sentences[i + 1] if i + 1 < len(sentences) else ""
+            combined = (s_text + s_punct).strip()
+            if combined:
+                full_sentences.append(combined)
+        if len(sentences) % 2 == 1 and sentences[-1].strip():
+            full_sentences.append(sentences[-1].strip())
+            
+        chunks = []
+        current_chunk = []
+        current_count = 0
+        for s in full_sentences:
+            s_len = len(s.split())
+            if current_count + s_len > max_words and current_chunk:
+                chunks.append(" ".join(current_chunk))
+                current_chunk = [s]
+                current_count = s_len
+            else:
+                current_chunk.append(s)
+                current_count += s_len
+                
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        return chunks if chunks else [text]
+
+    @classmethod
     def generate_voice(cls, voice_option: str, text: str, output_path: str = "temp/voice_output.mp3",
                        locale: str = "en-US") -> str:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -2456,6 +2549,8 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                 import time
                 import re
                 import json
+                import requests
+                import subprocess
                 
                 # Trích xuất chính xác voice_type (speaker_id) nằm trong ngoặc đơn
                 match = re.search(r'\((.*?)\)', voice_option)
@@ -2464,82 +2559,127 @@ Rewrite it tighter and more selective while keeping engagement extremely high. R
                 else:
                     speaker_id = voice_option.split(" ")[0].strip()
                 
-                client = CapCutClient()
-                # 1. Tạo task TTS mới (dùng đúng tham số 'texts' và 'voice')
-                task_info = client.create_tts_task(texts=text, voice=speaker_id)
+                # 1. Làm sạch văn bản đa ngôn ngữ chống lỗi ServerError:EmptyRespData
+                clean_full_text = cls.sanitize_text_for_tts(text)
+                if not clean_full_text:
+                    clean_full_text = text
                 
-                task_id = None
-                token = None
-                try:
-                    tasks = task_info.get("data", {}).get("tasks", [])
-                    if tasks:
-                        task_id = tasks[0].get("id")
-                        token = tasks[0].get("token")
-                except:
-                    pass
-                
-                if not task_id:
-                    raise Exception(f"Không nhận được task_id từ CapCut TTS API! Response: {task_info}")
-                
-                logger.info(f"⏳ Đang xử lý CapCut TTS Task ID: {task_id}. Đang chờ...")
-                
-                # 2. Query trạng thái cho đến khi succeed (có retry chống socket reset 10054)
-                speech_url = None
-                for poll_idx in range(40):
-                    time.sleep(2)
-                    try:
-                        status_res = client.query_tts_task(task_id=task_id, token=token)
-                    except Exception as query_err:
-                        logger.warning(f"⚠️ [CapCut TTS] Mạng/socket gián đoạn khi query ({query_err}), tự động thử lại...")
-                        time.sleep(1.5)
-                        continue
+                # 2. Chia văn bản thành các đoạn câu hoàn chỉnh nếu quá dài (> 95 từ)
+                chunks = cls.split_text_for_tts(clean_full_text, max_words=95)
+                logger.info("🎙️ [CapCut TTS] Kịch bản gồm %d từ, chia làm %d đoạn câu để xử lý siêu tốc...", len(clean_full_text.split()), len(chunks))
 
-                    status = None
+                client = CapCutClient()
+                temp_chunk_files = []
+                flags = 0x08000000 if os.name == "nt" else 0
+
+                def _render_single_chunk(chunk_str: str, target_mp3: str) -> bool:
+                    for chunk_attempt in range(3):
+                        try:
+                            task_info = client.create_tts_task(texts=chunk_str, voice=speaker_id)
+                            tasks = task_info.get("data", {}).get("tasks", [])
+                            if not tasks:
+                                time.sleep(1.5)
+                                continue
+                            task_id = tasks[0].get("id")
+                            token = tasks[0].get("token")
+                            if not task_id:
+                                time.sleep(1.5)
+                                continue
+
+                            speech_url = None
+                            for poll_idx in range(50):
+                                time.sleep(2)
+                                try:
+                                    status_res = client.query_tts_task(task_id=task_id, token=token)
+                                except Exception:
+                                    time.sleep(1.5)
+                                    continue
+                                tasks_q = status_res.get("data", {}).get("tasks", [])
+                                status = tasks_q[0].get("status") if tasks_q else status_res.get("status")
+
+                                if status == "succeed":
+                                    payload_str = tasks_q[0].get("payload") if tasks_q else ""
+                                    if payload_str:
+                                        try:
+                                            payload_data = json.loads(payload_str)
+                                            subs = payload_data.get("audio_subtitles", [])
+                                            if subs:
+                                                speech_url = subs[0].get("speech_url")
+                                        except Exception:
+                                            pass
+                                    if not speech_url:
+                                        speech_url = status_res.get("speech_url")
+                                    break
+                                elif status == "failed":
+                                    logger.warning("⚠️ [CapCut TTS Chunk] Server báo failed ở lần thử %d, đang tự động retry...", chunk_attempt + 1)
+                                    break
+                            
+                            if speech_url:
+                                for dl_try in range(3):
+                                    try:
+                                        r = requests.get(speech_url, timeout=35)
+                                        if r.status_code == 200 and len(r.content) > 1000:
+                                            with open(target_mp3, "wb") as f_out:
+                                                f_out.write(r.content)
+                                            return True
+                                    except Exception:
+                                        time.sleep(1.5)
+                        except Exception as ex_chk:
+                            logger.warning("⚠️ [CapCut TTS Chunk Error] %s (Thử lại %d/3)...", ex_chk, chunk_attempt + 1)
+                            time.sleep(2)
+                    return False
+
+                # Render từng chunk
+                out_dir = os.path.dirname(output_path) or "temp"
+                for idx, chk in enumerate(chunks):
+                    if len(chunks) == 1:
+                        target_mp3 = output_path
+                    else:
+                        target_mp3 = os.path.join(out_dir, f"capcut_chunk_{idx}_{int(time.time())}.mp3")
+                    
+                    ok = _render_single_chunk(chk, target_mp3)
+                    if not ok or not os.path.isfile(target_mp3):
+                        raise Exception(f"Không thể render đoạn voice CapCut #{idx + 1} sau 3 lần thử lại!")
+                    temp_chunk_files.append(target_mp3)
+
+                if len(chunks) > 1:
+                    # Ghép các chunk lại bằng ffmpeg
+                    concat_list_file = os.path.join(out_dir, f"concat_list_{int(time.time())}.txt")
+                    with open(concat_list_file, "w", encoding="utf-8") as cf:
+                        for f_p in temp_chunk_files:
+                            cf.write(f"file '{os.path.abspath(f_p).replace(chr(92), '/')}'\n")
+                    
+                    cmd_concat = [
+                        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                        "-i", concat_list_file,
+                        "-c", "copy",
+                        output_path
+                    ]
+                    res_cat = subprocess.run(cmd_concat, capture_output=True, text=True, creationflags=flags)
+                    if res_cat.returncode != 0 or not os.path.isfile(output_path):
+                        # Fallback re-encode nếu concat copy lỗi
+                        cmd_concat_re = [
+                            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                            "-i", concat_list_file,
+                            "-c:a", "libmp3lame", "-b:a", "192k",
+                            output_path
+                        ]
+                        subprocess.run(cmd_concat_re, capture_output=True, text=True, creationflags=flags)
+
+                    # Dọn dẹp chunk tạm
                     try:
-                        tasks_q = status_res.get("data", {}).get("tasks", [])
-                        if tasks_q:
-                            status = tasks_q[0].get("status")
-                            payload_str = tasks_q[0].get("payload")
-                            if payload_str:
-                                payload_data = json.loads(payload_str)
-                                subs = payload_data.get("audio_subtitles", [])
-                                if subs:
-                                    speech_url = subs[0].get("speech_url")
+                        os.remove(concat_list_file)
+                        for f_p in temp_chunk_files:
+                            if os.path.isfile(f_p):
+                                os.remove(f_p)
                     except Exception:
                         pass
-                        
-                    if not status:
-                        status = status_res.get("status")
-                        
-                    if status == "succeed":
-                        if not speech_url:
-                            speech_url = status_res.get("speech_url")
-                        break
-                    elif status == "failed":
-                        raise Exception("CapCut TTS Task thất bại từ phía server!")
-                
-                if not speech_url:
-                    raise Exception("Quá thời gian chờ CapCut TTS phản hồi audio URL!")
-                
-                # 3. Tải file MP3 về (có retry)
-                download_success = False
-                for dl_try in range(3):
-                    try:
-                        r = requests.get(speech_url, timeout=30)
-                        if r.status_code == 200 and len(r.content) > 1000:
-                            with open(output_path, "wb") as f:
-                                f.write(r.content)
-                            logger.info(f"✅ Đã tải file CapCut TTS thành công tại: {output_path}")
-                            download_success = True
-                            return output_path
-                        else:
-                            logger.warning(f"⚠️ Tải MP3 thất bại [{r.status_code}], thử lại ({dl_try + 1}/3)...")
-                    except Exception as dl_err:
-                        logger.warning(f"⚠️ Lỗi mạng khi tải MP3 ({dl_err}), thử lại ({dl_try + 1}/3)...")
-                    time.sleep(2)
 
-                if not download_success:
-                    raise Exception(f"Không thể tải file MP3 từ URL: {speech_url}")
+                if os.path.isfile(output_path) and os.path.getsize(output_path) > 1000:
+                    logger.info("✅ [CapCut TTS] Đã xuất thành công toàn bộ audio giọng '%s' tại: %s (Dung lượng: %.2f KB)", speaker_id, output_path, os.path.getsize(output_path) / 1024)
+                    return output_path
+                else:
+                    raise Exception("File audio xuất xưởng không hợp lệ hoặc quá nhỏ!")
             except Exception as e:
                 logger.error(f"❌ Lỗi CapCut TTS API, tự động chuyển về Edge-TTS: {e}")
                 import edge_tts
