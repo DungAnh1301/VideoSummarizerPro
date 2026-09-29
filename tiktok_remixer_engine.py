@@ -702,6 +702,165 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return (round(max(0.0, gemini_ymin + 0.025), 4), round(min(1.0, gemini_ymax - 0.025), 4))
 
     @classmethod
+    def auto_measure_burned_in_text_bounds(
+        cls,
+        source_video: str,
+        crop_x: int,
+        crop_y: int,
+        crop_w: int,
+        crop_h: int
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        ĐO ĐẠC TOÁN HỌC & COMPUTER VISION CHUẨN XÁC VÙNG CHỮ VÀ BADGE PART CŨ TRÊN VIDEO GỐC:
+        1. Quét đa khung hình (12-16 frames) trong video nguồn.
+        2. Cắt vùng nửa dưới của video lõi sau khi crop (từ 0.45 * crop_h đến crop_h).
+        3. Sử dụng Canny Edge + Morphological Filtering + Vertical/Horizontal Projection
+           để dò tìm chính xác từng dòng văn bản (cả Part 1, Part 2 lẫn phụ đề nhiều dòng).
+        4. Tìm đỉnh cao nhất (Y_min_text) và đáy thấp nhất (Y_max_text) của toàn bộ các con chữ.
+        5. Tính toán lề an toàn khoa học (Adaptive Padding) theo tỷ lệ chiều cao font chữ thực tế (15% text height).
+        6. Trả về (blur_mx, blur_my, blur_mw, blur_mh) chuẩn xác từng pixel.
+        """
+        try:
+            import cv2
+            import numpy as np
+
+            cap = cv2.VideoCapture(source_video)
+            if not cap.isOpened():
+                return None
+
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 100)
+            if total_frames < 5:
+                cap.release()
+                return None
+
+            sample_indices = [int(total_frames * (0.10 + 0.055 * i)) for i in range(14)]
+
+            detected_ytops = []
+            detected_ybots = []
+            detected_xlefts = []
+            detected_xrights = []
+
+            for f_idx in sample_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
+
+                f_h, f_w = frame.shape[:2]
+                cx = max(0, min(f_w - 2, crop_x))
+                cy = max(0, min(f_h - 2, crop_y))
+                cw = max(2, min(f_w - cx, crop_w))
+                ch = max(2, min(f_h - cy, crop_h))
+
+                core = frame[cy:cy + ch, cx:cx + cw]
+                if core.size == 0:
+                    continue
+
+                roi_y_start = int(ch * 0.45)
+                roi = core[roi_y_start:, :]
+                if roi.size == 0:
+                    continue
+
+                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                edges = cv2.Canny(gray, 40, 140)
+
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
+                closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+                v_proj = np.sum(closed, axis=1) / 255.0
+                thresh_v = max(12.0, np.max(v_proj) * 0.12) if np.max(v_proj) > 0 else 999.0
+                text_rows = np.where(v_proj > thresh_v)[0]
+
+                if len(text_rows) > 4:
+                    y_top_roi = text_rows[0]
+                    y_bot_roi = text_rows[-1]
+
+                    sub_band = closed[y_top_roi:y_bot_roi + 1, :]
+                    h_proj = np.sum(sub_band, axis=0) / 255.0
+                    thresh_h = max(5.0, np.max(h_proj) * 0.08) if np.max(h_proj) > 0 else 999.0
+                    text_cols = np.where(h_proj > thresh_h)[0]
+
+                    if len(text_cols) > 20:
+                        abs_y_top = roi_y_start + y_top_roi
+                        abs_y_bot = roi_y_start + y_bot_roi
+                        detected_ytops.append(abs_y_top)
+                        detected_ybots.append(abs_y_bot)
+                        detected_xlefts.append(text_cols[0])
+                        detected_xrights.append(text_cols[-1])
+
+            cap.release()
+
+            if not detected_ytops:
+                return None
+
+            min_ytop = int(np.percentile(detected_ytops, 10))
+            max_ybot = int(np.percentile(detected_ybots, 90))
+
+            text_h = max_ybot - min_ytop
+            if text_h < 15:
+                return None
+
+            pad_y = max(12, int(text_h * 0.15))
+            blur_my = max(0, min_ytop - pad_y)
+            blur_mh = min(crop_h - blur_my, (max_ybot + pad_y) - blur_my)
+
+            min_x = min(detected_xlefts)
+            max_x = max(detected_xrights)
+            text_span_w = max_x - min_x
+
+            if text_span_w > crop_w * 0.35:
+                sub_xmin = 0.03
+                sub_xmax = 0.97
+                blur_mx = int(crop_w * sub_xmin)
+                blur_mw = int(crop_w * (sub_xmax - sub_xmin))
+            else:
+                pad_x = max(24, int(text_span_w * 0.12))
+                blur_mx = max(0, min_x - pad_x)
+                blur_mw = min(crop_w - blur_mx, (max_x + pad_x) - blur_mx)
+
+            blur_mx -= blur_mx % 2
+            blur_my -= blur_my % 2
+            blur_mw -= blur_mw % 2
+            blur_mh -= blur_mh % 2
+            blur_mw = max(16, blur_mw)
+            blur_mh = max(24, blur_mh)
+
+            return (blur_mx, blur_my, blur_mw, blur_mh)
+        except Exception as e:
+            logger.warning(f"⚠️ [OPENCV TEXT DETECT] Lỗi đo đạc chữ tự động: {e}")
+            return None
+
+    @classmethod
+    def create_feathered_mask_image(
+        cls,
+        out_path: str,
+        crop_w: int,
+        crop_h: int,
+        blur_mx: int,
+        blur_my: int,
+        blur_mw: int,
+        blur_mh: int,
+        corner_radius: int = 20,
+        feather_blur: int = 10
+    ) -> str:
+        """
+        Tạo mặt nạ bo viền mềm và bo góc tự động (Soft Feathering Mask):
+        Nền đen kích thước crop_w x crop_h, vùng chữ màu trắng được vẽ hình chữ nhật bo tròn góc
+        và làm mờ Gaussian Blur nhẹ để mép viền chuyển tiếp mượt mà êm dịu, không bị nhát cắt sắc cạnh.
+        """
+        from PIL import Image, ImageDraw, ImageFilter
+        mask = Image.new("L", (crop_w, crop_h), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rounded_rectangle(
+            [blur_mx, blur_my, blur_mx + blur_mw, blur_my + blur_mh],
+            radius=corner_radius,
+            fill=255
+        )
+        feathered = mask.filter(ImageFilter.GaussianBlur(radius=feather_blur))
+        feathered.save(out_path)
+        return out_path
+
+    @classmethod
     def sanitize_broll_sequence(cls, scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         BẢO HỘ TỐI HẬU CHỐNG QUÉT BẢN QUYỀN TIKTOK:
@@ -1066,39 +1225,50 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
             has_blur_mask = True
             logger.info("🌫️ [BLUR MASK STUDIO] Áp dụng vùng che mờ thủ công từ Crop Studio: x=%d, y=%d, w=%d, h=%d", blur_mx, blur_my, blur_mw, blur_mh)
-            geom = gemini_plan.get("layout_geometry", {})
-            sub_norm = geom.get("sub_blur_normalized")
-            if not sub_norm or not isinstance(sub_norm, dict):
-                sub_norm = {"ymin": 0.65, "ymax": 0.85, "xmin": 0.02, "xmax": 0.98}
-
-            sub_orig_ymin = float(sub_norm.get("ymin", 0.65))
-            sub_orig_ymax = float(sub_norm.get("ymax", 0.85))
-            crop_span = max(0.01, ymax - ymin)
-
-            raw_rel_ymin = (sub_orig_ymin - ymin) / crop_span
-            raw_rel_ymax = (sub_orig_ymax - ymin) / crop_span
-
-            # QUAN TRỌNG: Mở rộng mép trên lên ít nhất 10% (raw_rel_ymin - 0.10) để trùm kín 100% mọi tàn dư chữ
-            # (bao gồm badge Part 1, Part 2, và đỉnh chữ cái tránh bị lẹm hay thò đầu ra ngoài).
-            # Khống chế trần: rel_sub_ymin KHÔNG ĐƯỢC VƯỢT QUÁ 0.68 để luôn bảo đảm che kín tuyệt đối.
-            if sub_orig_ymin < ymin or raw_rel_ymin < 0.50:
-                rel_sub_ymin = 0.68
-                rel_sub_ymax = 0.98
+        elif auto_blur:
+            # 1. ĐO ĐẠC THỰC TẾ BẰNG COMPUTER VISION TRÊN CÁC KHUNG HÌNH VIDEO GỐC
+            measured = cls.auto_measure_burned_in_text_bounds(source_video, crop_x, crop_y, crop_w, crop_h)
+            if measured is not None:
+                blur_mx, blur_my, blur_mw, blur_mh = measured
+                rel_sub_ymin = blur_my / max(1.0, float(crop_h))
+                rel_sub_ymax = (blur_my + blur_mh) / max(1.0, float(crop_h))
+                has_blur_mask = True
+                logger.info(
+                    "🎯 [OPENCV TEXT DETECT] Đã đo đạc CHUẨN XÁC chữ & Part cũ: x=%d, y=%d, w=%d, h=%d (rel=%.3f-%.3f, che kín 100%%)",
+                    blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax
+                )
             else:
-                rel_sub_ymin = min(0.68, max(0.55, raw_rel_ymin - 0.10))
-                rel_sub_ymax = max(rel_sub_ymin + 0.18, min(0.99, raw_rel_ymax + 0.04))
+                # 2. Fallback có tính toán từ Gemini plan kết hợp lề an toàn
+                geom = gemini_plan.get("layout_geometry", {})
+                sub_norm = geom.get("sub_blur_normalized")
+                if not sub_norm or not isinstance(sub_norm, dict):
+                    sub_norm = {"ymin": 0.65, "ymax": 0.85, "xmin": 0.02, "xmax": 0.98}
 
-            sub_xmin = min(0.03, float(sub_norm.get("xmin", 0.03)))
-            sub_xmax = max(0.97, float(sub_norm.get("xmax", 0.97)))
-            blur_mx = int(crop_w * sub_xmin)
-            blur_mw = int(crop_w * (sub_xmax - sub_xmin))
-            blur_my = int(round(crop_h * rel_sub_ymin))
-            blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
-            blur_mh = max(40, blur_mh)
-            blur_mw -= blur_mw % 2
-            blur_mh -= blur_mh % 2
-            has_blur_mask = True
-            logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub & Part cũ: x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f, che kín 100%%)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
+                sub_orig_ymin = float(sub_norm.get("ymin", 0.65))
+                sub_orig_ymax = float(sub_norm.get("ymax", 0.85))
+                crop_span = max(0.01, ymax - ymin)
+
+                raw_rel_ymin = (sub_orig_ymin - ymin) / crop_span
+                raw_rel_ymax = (sub_orig_ymax - ymin) / crop_span
+
+                if sub_orig_ymin < ymin or raw_rel_ymin < 0.50:
+                    rel_sub_ymin = 0.68
+                    rel_sub_ymax = 0.98
+                else:
+                    rel_sub_ymin = min(0.68, max(0.55, raw_rel_ymin - 0.10))
+                    rel_sub_ymax = max(rel_sub_ymin + 0.18, min(0.99, raw_rel_ymax + 0.04))
+
+                sub_xmin = min(0.03, float(sub_norm.get("xmin", 0.03)))
+                sub_xmax = max(0.97, float(sub_norm.get("xmax", 0.97)))
+                blur_mx = int(crop_w * sub_xmin)
+                blur_mw = int(crop_w * (sub_xmax - sub_xmin))
+                blur_my = int(round(crop_h * rel_sub_ymin))
+                blur_mh = int(round(crop_h * (rel_sub_ymax - rel_sub_ymin)))
+                blur_mh = max(40, blur_mh)
+                blur_mw -= blur_mw % 2
+                blur_mh -= blur_mh % 2
+                has_blur_mask = True
+                logger.info("🌫️ [BLUR MASK AUTO] Tự động che mờ sub & Part cũ (Fallback): x=%d, y=%d, w=%d, h=%d (rel=%.2f-%.2f)", blur_mx, blur_my, blur_mw, blur_mh, rel_sub_ymin, rel_sub_ymax)
         else:
             rel_sub_ymin = None
             rel_sub_ymax = None
@@ -1344,11 +1514,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
 
             if has_blur_mask:
+                # BO VIỀN MỀM VÀ BO GÓC BẰNG MASKEDMERGE CHO HOOK:
+                mask_hook_chain = (
+                    f"color=c=black:s={crop_w}x{crop_h}:r=25:d={hook_dur:.3f}[hmbg];"
+                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={hook_dur:.3f}[hmfg];"
+                    f"[hmbg][hmfg]overlay={blur_mx}:{blur_my},boxblur=10:3[hmsoft];"
+                )
                 core_crop_hook = (
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                    f"split=2[c_orig][c_mask];"
-                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
-                    f"[c_orig][c_blur]overlay={blur_mx}:{blur_my}[core_clean];"
+                    f"split=2[c_raw][c_to_blur];"
+                    f"[c_to_blur]boxblur=28:15[c_blurred];"
+                    f"{mask_hook_chain}"
+                    f"[c_raw][c_blurred][hmsoft]maskedmerge[core_clean];"
                 )
             else:
                 core_crop_hook = f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y}[core_clean];"
@@ -1428,28 +1605,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             zoom_var_filter = ",crop=iw*0.90:ih*0.90,scale=iw:ih" if sc.get("is_variant", False) else ""
 
             if has_blur_mask:
-                vf_clip = (
-                    f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-                    f"split=2[c_orig][c_mask];"
-                    f"[c_mask]crop={blur_mw}:{blur_mh}:{blur_mx}:{blur_my},boxblur=25:20[c_blur];"
-                    f"[c_orig][c_blur]overlay={blur_mx}:{blur_my},"
-                    f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
+                fc_clip = (
+                    f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
+                    f"split=2[c_raw][c_to_blur];"
+                    f"[c_to_blur]boxblur=28:15[c_blurred];"
+                    f"color=c=black:s={crop_w}x{crop_h}:r=25[mbg];"
+                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25[mfg];"
+                    f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3[msoft];"
+                    f"[c_raw][c_blurred][msoft]maskedmerge,"
+                    f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
+                cmd_c = [
+                    "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
+                    "-i", source_video,
+                    "-filter_complex", fc_clip,
+                    "-map", "[vout]",
+                    "-an",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+                    "-r", "25", "-pix_fmt", "yuv420p",
+                    c_file
+                ]
             else:
                 vf_clip = (
                     f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
                 )
-
-            cmd_c = [
-                "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
-                "-i", source_video,
-                "-vf", vf_clip,
-                "-an",
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
-                "-r", "25", "-pix_fmt", "yuv420p",
-                c_file
-            ]
+                cmd_c = [
+                    "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
+                    "-i", source_video,
+                    "-vf", vf_clip,
+                    "-an",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+                    "-r", "25", "-pix_fmt", "yuv420p",
+                    c_file
+                ]
             subprocess.run(cmd_c, capture_output=True, creationflags=flags)
             if os.path.isfile(c_file):
                 clip_files.append(c_file)
