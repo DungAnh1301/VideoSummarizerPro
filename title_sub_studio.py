@@ -7,10 +7,11 @@ TITLE & SUBTITLE STUDIO (LIVE PREVIEW 9:16 TRỰC QUAN CHUẨN XÁC 100%)
 from __future__ import annotations
 
 import os
+import sys
 import re
 import urllib.request
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, Signal, QThread
 from PySide6.QtGui import (
@@ -1552,7 +1553,8 @@ def open_title_sub_studio_popup(
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance()
     if app is None:
-        app = QApplication(sys.argv)
+        args = sys.argv if (hasattr(sys, 'argv') and sys.argv) else ["TitleSubStudio"]
+        app = QApplication(args)
     cfg = dict(current_config or current_data or {})
     vpath = video_source or sample_video_path or cfg.get("video_source") or cfg.get("source_url_or_path") or cfg.get("youtube_url") or ""
     dlg = TitleSubStudioDialog(cfg, sample_video_path=vpath, parent=None)
