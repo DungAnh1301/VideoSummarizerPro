@@ -247,17 +247,28 @@ TASKS:
    - Provide "has_burned_in_subtitles": true/false (whether there are burned-in subtitles, hardcoded captions, or Part badges at the bottom of the video).
    - Provide "sub_blur_normalized": {{"ymin": float, "ymax": float, "xmin": float, "xmax": float}} forming a TIGHT, PRECISE bounding box covering ONLY the subtitle text lines and "Part" badge at the bottom (typical height is strictly 0.035 to 0.075 of frame, e.g. ymin=0.69, ymax=0.75). DO NOT make it overly tall or touch the subject's torso/chest. If "has_burned_in_subtitles" is false, set "sub_blur_normalized": null.
 
-2. INTRO/OUTRO WATERMARK INSPECTION:
-   - Inspect the first 0.5s and last 1.0s frame-by-frame for bouncing TikTok logos or transition wipes.
-   - Only set trim if actual animated watermarks appear. If real action/speech starts at 0.0s, keep "trim_start_sec": 0.0.
+2. INTRO/OUTRO & WARNING/TITLE CARD INSPECTION (TRUY QUÉT THẺ CẢNH BÁO / INTRO CARD ĐẦU VIDEO):
+   - CRITICAL REQUIREMENT: Scrutinize the very beginning (0.0s to 4.0s) frame-by-frame. Detect if the video starts with:
+     * Graphic content disclaimers ("GRAPHIC CONTENT", "WARNING", "VIEWER DISCRETION", etc.)
+     * Attention-grabber text screens ("WATCH THIS PART", "WAIT FOR IT", "PART 1", etc.)
+     * Channel intro logos, reel icons, freeze-frame meme slides, or intro transition wipes.
+   - If ANY such intro card, warning screen, or logo slide is present:
+     * Set "has_intro_card": true
+     * Set "intro_card_end_sec": the exact second when this card DISAPPEARS and real live-action footage begins (e.g. 1.2s, 2.87s).
+     * Set "trim_start_sec": intro_card_end_sec.
+   - If the video immediately starts with real live action/people at 0.0s without any card or text screen, set "has_intro_card": false, "trim_start_sec": 0.0.
 
-3. HOOK DETECTION:
-   - Pinpoint the climax hook at the beginning (0.0s to 3.5s - 5.0s) featuring the most dramatic reaction, expression, or suspenseful move down to the exact frame.
+3. HOOK DETECTION (BẮT BUỘC NÉ SẠCH MỌI CARD CẢNH BÁO & FLASH RÁC):
+   - The Hook MUST be 100% pure real live-action footage (real people moving, speaking, or dramatic conflict).
+   - ABSOLUTE PROHIBITION: The Hook MUST NEVER start on or contain an intro warning card, graphic disclaimer, or transition flash!
+   - If an intro card exists, hook "start_sec" MUST be >= "intro_card_end_sec" (e.g. if warning card ends at 2.87s, hook starts at 2.9s, NOT at 0.0s!).
+   - Duration: typically 3.0s to 4.5s of the most intense dramatic action/reaction.
    - Set "keep_original_audio": true.
 
-4. FRAME-ACCURATE SCENE SEGMENTATION & VISUAL TAGGING (CHIA CẢNH TỰ NHIÊN THEO GÓC MÁY):
+4. FRAME-ACCURATE SCENE SEGMENTATION & CLEAN SEAM TRIMMING (TRIỆT TIÊU DÍNH 1 FRAME CHUYỂN CẢNH):
    - Segment the footage after the hook into distinct, coherent story scenes (S1, S2, S3...) based on natural camera shot changes and storytelling moments.
    - PACING REQUIREMENT: Keep scene lengths comfortable and cinematic (typically 4.0s to 8.0s per scene, matching real camera shot boundaries). DO NOT over-segment into rapid, jarring 1s - 2s micro-cuts that make viewers dizzy or nauseous.
+   - ZERO-BLEED REQUIREMENT: Never include single-frame transition flashes, lingering text from previous cuts, white flashes, black fades, or cut artifacts at the scene boundaries. Always place start_sec strictly INSIDE the stable action shot.
    - For EACH scene, provide:
      * "id": "S1", "S2", "S3"...
      * "clean_range": [start_sec, end_sec] (frame-accurate floating-point seconds)
@@ -283,17 +294,18 @@ OUTPUT FORMAT (JSON ONLY):
     "sub_blur_normalized": {{"ymin": 0.68, "ymax": 0.76, "xmin": 0.05, "xmax": 0.95}}
   }},
   "intro_outro_inspection": {{
-    "has_intro_tiktok_logo": false,
+    "has_intro_card": false,
+    "intro_card_end_sec": 0.0,
     "trim_start_sec": 0.0,
     "has_outro_tiktok_logo": false,
     "trim_end_sec": 0.0
   }},
   "hook": {{
     "has_hook": true,
-    "start_sec": 0.0,
-    "end_sec": 3.8,
+    "start_sec": 1.2,
+    "end_sec": 4.5,
     "keep_original_audio": true,
-    "visual_summary": "Shocked facial expression of the protagonist"
+    "visual_summary": "Intense live-action argument right after any intro card"
   }},
   "scenes": [
     {{
@@ -718,6 +730,55 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         except Exception as e:
             logger.warning(f"⚠️ [ASS SUB] Không chuyển đổi được sang ASS: {e}")
             return False
+
+    @classmethod
+    def detect_intro_card_boundary(cls, source_video: str, max_scan_sec: float = 4.0) -> float:
+        """
+        Tự động phát hiện và đo đạc chính xác thời điểm kết thúc của các thẻ giới thiệu,
+        cảnh báo nội dung (Warning / Graphic Content / Title Card) ở đầu video nguồn.
+        Sử dụng phân tích biến thiên khung hình liên tiếp (Inter-frame difference & scene cut jump).
+        Trả về số giây (float) nơi nội dung video thật bắt đầu (ví dụ: 2.87s).
+        """
+        try:
+            import cv2
+            import numpy as np
+
+            cap = cv2.VideoCapture(source_video)
+            if not cap.isOpened():
+                return 0.0
+
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            max_frames = int(max_scan_sec * fps)
+            prev = None
+            idx = 0
+            diffs = []
+
+            while idx < max_frames:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    break
+                gray = cv2.cvtColor(cv2.resize(frame, (180, 240)), cv2.COLOR_BGR2GRAY)
+                if prev is not None:
+                    diff = float(np.mean(cv2.absdiff(gray, prev)))
+                    t = idx / fps
+                    diffs.append((t, diff))
+                prev = gray
+                idx += 1
+
+            cap.release()
+
+            # Tìm bước nhảy Scene Cut lớn (diff >= 22.0) trong dải 0.3s -> 3.5s
+            # Đây là thời điểm tấm card đồ họa tĩnh/cảnh báo kết thúc và chuyển cảnh sang video thực tế
+            for t, diff in diffs:
+                if 0.3 <= t <= 3.5 and diff >= 22.0:
+                    clean_t = round(t + 0.08, 3)
+                    logger.info("🛡️ [OPENCV INTRO DETECTOR] Phát hiện thẻ cảnh báo/Intro Card rác kết thúc tại %.2fs (diff=%.1f). Dời mốc sạch 100%% sang %.2fs!", t, diff, clean_t)
+                    return clean_t
+
+            return 0.0
+        except Exception as e:
+            logger.warning("⚠️ [OPENCV INTRO DETECTOR] Lỗi quét intro card: %s", e)
+            return 0.0
 
     @classmethod
     def auto_detect_core_boundaries(
@@ -1422,10 +1483,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         blur_box_radius = max(6, min(14, int(blur_mh // 5))) if blur_mh > 0 else 10
 
-        # 3. Phân Đoạn Hook & Scenes
+        # 3. Phân Đoạn Hook & Scenes (Loại Bỏ Thẻ Cảnh Báo / Warning / Intro Cards)
         hook_info = gemini_plan.get("hook", {})
         hook_start = float(hook_info.get("start_sec", 0.0))
         hook_end = float(hook_info.get("end_sec", 3.5))
+
+        # Phát hiện thẻ giới thiệu / cảnh báo nội dung từ Gemini Plan:
+        intro_info = gemini_plan.get("intro_outro_inspection", {})
+        gemini_trim = float(intro_info.get("trim_start_sec") or intro_info.get("intro_card_end_sec") or 0.0)
+
+        # Lớp bảo vệ OpenCV Fail-safe: Tự động quét tìm thẻ cảnh báo / intro card nếu hook_start < 1.5s
+        opencv_card_end = 0.0
+        if hook_start < 1.5:
+            try:
+                opencv_card_end = cls.detect_intro_card_boundary(source_video, max_scan_sec=3.8)
+            except Exception as e:
+                logger.warning("⚠️ [INTRO CARD DETECT] Không quét được OpenCV card: %s", e)
+
+        card_boundary = max(gemini_trim, opencv_card_end)
+        if card_boundary > 0.3 and hook_start < card_boundary:
+            logger.info("🛡️ [CLEAN HOOK GUARD] Phát hiện thẻ cảnh báo/Intro Card rác (0.0s -> %.2fs). Tự động dời Hook_start từ %.2fs lên %.2fs sạch 100%%!", card_boundary, hook_start, card_boundary)
+            hook_orig_dur = max(2.5, hook_end - hook_start)
+            hook_start = card_boundary
+            hook_end = hook_start + hook_orig_dur
+
         hook_dur = max(0.0, hook_end - hook_start)
 
         raw_scenes = gemini_plan.get("scenes", [])
@@ -1434,6 +1515,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for sc in raw_scenes:
             c_range = sc.get("clean_range", sc.get("raw_range", [0, 0]))
             st, en = float(c_range[0]), float(c_range[1])
+
+            # Loại bỏ mọi phân cảnh rơi vào dải Intro Card / Warning Card đầu video:
+            if card_boundary > 0.3 and en <= card_boundary + 0.1:
+                logger.info("🛡️ [CLEAN SCENE GUARD] Bỏ qua cảnh rác %s nằm trọn trong thẻ cảnh báo đầu video (%.2fs - %.2fs <= %.2fs)", sc.get("id"), st, en, card_boundary)
+                continue
+            if card_boundary > 0.3 and st < card_boundary:
+                st = card_boundary
+
             # Tránh trùng lặp cảnh Hook trong thân video: Hook đã đặt riêng ở 00:00
             if options.get("keep_original_hook", True) and hook_dur >= 0.5:
                 if en <= hook_end + 0.2:
@@ -1754,11 +1843,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         clip_files = []
         total_brolls = len(clean_scenes)
+        use_smart_cut = bool(options.get("smart_transition_cutout", True))
+
         for idx, sc in enumerate(clean_scenes):
             c_file = os.path.join(work_dir, f"broll_{idx:03d}.mp4")
             sc_start = float(sc.get("start", 0.0))
             sc_end = float(sc.get("end", 0.0))
-            sc_dur = max(0.08, sc_end - sc_start)
+
+            # Smart Transition Cutout: Triệt tiêu 100% hiện tượng "dính 1 frame" chuyển cảnh (flash trắng, cut bleed)
+            # Cắt lùi vào trong 0.08s ở đầu cảnh và co 0.08s ở cuối cảnh để chỉ lấy footage ổn định tuyệt đối
+            if use_smart_cut and (sc_end - sc_start) > 0.5:
+                pure_start = sc_start + 0.08
+                pure_end = max(pure_start + 0.25, sc_end - 0.08)
+            else:
+                pure_start = sc_start
+                pure_end = sc_end
+
+            sc_dur = max(0.08, pure_end - pure_start)
             pts_speed = float(elastic_pts_map.get(idx, 1.0))
             out_clip_dur = max(0.04, sc_dur * pts_speed)
             mirror_filter = ",hflip" if mirror_map.get(idx, False) else ""
@@ -1774,7 +1875,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
                 cmd_c = [
                     "ffmpeg", "-y",
-                    "-ss", f"{sc_start:.3f}", "-t", f"{sc_dur:.3f}",
+                    "-ss", f"{pure_start:.3f}", "-t", f"{sc_dur:.3f}",
                     "-i", source_video,
                     "-filter_complex", fc_clip,
                     "-map", "[vout]",
@@ -1792,7 +1893,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
                 cmd_c = [
                     "ffmpeg", "-y",
-                    "-ss", f"{sc_start:.3f}", "-t", f"{sc_dur:.3f}",
+                    "-ss", f"{pure_start:.3f}", "-t", f"{sc_dur:.3f}",
                     "-i", source_video,
                     "-vf", vf_clip,
                     "-an",
@@ -1801,7 +1902,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     "-t", f"{out_clip_dur:.3f}",
                     c_file
                 ]
-            logger.info("✂️ [B-ROLL %d/%d] Đang dựng clip B-Roll %03d: %.2fs -> %.2fs (dur=%.2fs)...", idx + 1, total_brolls, idx, sc_start, sc_end, sc_dur)
+            logger.info("✂️ [B-ROLL %d/%d] Đang dựng clip B-Roll %03d: %.2fs -> %.2fs (pure=%.2fs)...", idx + 1, total_brolls, idx, pure_start, pure_end, sc_dur)
             res_c = subprocess.run(cmd_c, capture_output=True, text=True, creationflags=flags)
             if res_c.returncode != 0 or not os.path.isfile(c_file):
                 logger.error("❌ [B-ROLL %03d] Lỗi cắt B-Roll: %s", idx, res_c.stderr)
