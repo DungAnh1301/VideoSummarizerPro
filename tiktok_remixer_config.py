@@ -28,7 +28,7 @@ DEFAULT_TIKTOK_REMIXER_CONFIG = {
     
     # 4. Re-mix chống bản quyền
     "shuffle_broll": True,                # Ghép cảnh theo storyboard đạo diễn của Gemini
-    "mirror_broll": False,                # Tắt lật gương mặc định (giữ hướng camera tự nhiên, tránh chóng mặt)
+    "mirror_broll": True,                 # Lật gương phản chiếu ngẫu nhiên (hflip)
     "overlay_sub_on_blur_zone": True,     # Đè Sub mới đè kín lên dải che Sub cũ (Xóa 100% dấu vết đối thủ)
     "blur_bg_916": True,                  # Tạo nền mờ 9:16 điện ảnh phía sau lõi video sạch
     

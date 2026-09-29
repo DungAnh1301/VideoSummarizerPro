@@ -1446,16 +1446,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # 5. Tốc độ video B-Roll (Giữ tự nhiên 1.0x để xem êm ái, không giật cục)
         elastic_pts_map = {idx: 1.0 for idx in range(len(clean_scenes))}
 
-        # 6. Lật Gương Phản Chiếu:
-        # Triệt tiêu tình trạng lật gương ngẫu nhiên 45% làm nhân vật đảo chiều liên tục gây chóng mặt buồn nôn.
-        # Mặc định giữ nguyên chiều camera tự nhiên (False). Chỉ lật khi người dùng chủ động yêu cầu trong options ("force_mirror")
+        # 6. Lật Gương Phản Chiếu Ngẫu Nhiên (Theo cấu hình tích chọn mirror_broll trên giao diện):
+        # Người dùng có checkbox "Lật gương phản chiếu" trên UI, nếu tích chọn thì random lật gương để chống quét bản quyền, nếu bỏ tích thì giữ nguyên góc máy gốc
         mirror_map = {idx: False for idx in range(len(clean_scenes))}
-        if options.get("force_mirror", False):
-            for idx in range(len(clean_scenes)):
-                mirror_map[idx] = True
-            logger.info("🪞 [MIRROR] Lật gương toàn bộ thân video theo tùy chọn người dùng.")
+        if options.get("mirror_broll", True) and clean_scenes:
+            mirror_count = min(len(clean_scenes), max(1, int(round(len(clean_scenes) * 0.35))))
+            for m_idx in random.sample(range(len(clean_scenes)), mirror_count):
+                mirror_map[m_idx] = True
+            for idx, sc in enumerate(clean_scenes):
+                if sc.get("is_variant", False):
+                    mirror_map[idx] = True
+            logger.info("🪞 [MIRROR] Đã lật gương ngẫu nhiên %d/%d cảnh theo tùy chọn cấu hình.", sum(1 for v in mirror_map.values() if v), len(clean_scenes))
         else:
-            logger.info("🪞 [MIRROR] Giữ nguyên hướng nhìn tự nhiên của nhân vật và góc quay, không lật gương ngẫu nhiên.")
+            logger.info("🪞 [MIRROR] Bỏ qua lật gương (người dùng đã tắt tùy chọn mirror_broll trên giao diện).")
 
 
         # 7. Xây dựng Title Banner Mới Bằng PIL
