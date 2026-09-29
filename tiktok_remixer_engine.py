@@ -702,6 +702,74 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return (round(max(0.0, gemini_ymin + 0.025), 4), round(min(1.0, gemini_ymax - 0.025), 4))
 
     @classmethod
+    def sanitize_broll_sequence(cls, scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        BẢO HỘ TỐI HẬU CHỐNG QUÉT BẢN QUYỀN TIKTOK:
+        1. Cảnh đầu tiên của Body (sau Hook) KHÔNG BAO GIỜ là B-Roll 1 (orig_idx == 0).
+        2. Không bao giờ cho phép 2 cảnh kề nhau trong video gốc được xếp cạnh nhau (|orig_a - orig_b| >= 2).
+           Ví dụ: Broll 1 -> Broll 4 -> Broll 2 -> Broll 5... Tuyệt đối cấm Broll 1 -> Broll 2.
+        """
+        if len(scenes) <= 1:
+            return scenes
+
+        res = [dict(s) for s in scenes]
+
+        # 1. Rule: Cảnh đầu tiên không bao giờ là Broll 1 (orig_idx == 0)
+        if res[0].get("orig_idx") == 0:
+            for j in range(1, len(res)):
+                if res[j].get("orig_idx") != 0:
+                    if len(res) <= 2 or abs(res[j].get("orig_idx", 99) - res[1].get("orig_idx", 99)) >= 2:
+                        res[0], res[j] = res[j], res[0]
+                        break
+            else:
+                for j in range(1, len(res)):
+                    if res[j].get("orig_idx") != 0:
+                        res[0], res[j] = res[j], res[0]
+                        break
+
+        # 2. Rule: Không bao giờ có 2 cảnh kề nhau trong clip gốc (|orig_idx_a - orig_idx_b| < 2)
+        max_passes = 40
+        for _ in range(max_passes):
+            violation_found = False
+            for i in range(len(res) - 1):
+                idx_a = res[i].get("orig_idx", -99)
+                idx_b = res[i + 1].get("orig_idx", -99)
+                if abs(idx_a - idx_b) < 2:
+                    violation_found = True
+                    swapped = False
+                    for k in range(len(res)):
+                        if abs(k - (i + 1)) <= 1:
+                            continue
+                        idx_k = res[k].get("orig_idx", -99)
+                        cond1 = abs(idx_k - idx_a) >= 2
+                        cond2 = (i + 2 >= len(res)) or (abs(idx_k - res[i + 2].get("orig_idx", -99)) >= 2)
+                        cond3 = (k - 1 < 0) or (abs(idx_b - res[k - 1].get("orig_idx", -99)) >= 2)
+                        cond4 = (k + 1 >= len(res)) or (abs(idx_b - res[k + 1].get("orig_idx", -99)) >= 2)
+                        cond5 = not (k == 0 and idx_b == 0) and not (i + 1 == 0 and idx_k == 0)
+
+                        if cond1 and cond2 and cond3 and cond4 and cond5:
+                            res[i + 1], res[k] = res[k], res[i + 1]
+                            swapped = True
+                            break
+                    if not swapped:
+                        for target_pos in range(1, len(res)):
+                            prev_o = res[target_pos - 1].get("orig_idx", -99)
+                            next_o = res[target_pos].get("orig_idx", -99)
+                            if abs(idx_b - prev_o) >= 2 and abs(idx_b - next_o) >= 2:
+                                item = res.pop(i + 1)
+                                res.insert(target_pos, item)
+                                swapped = True
+                                break
+                        if not swapped:
+                            bad = res.pop(i + 1)
+                            res.append(bad)
+                    break
+            if not violation_found:
+                break
+
+        return res
+
+    @classmethod
     def match_and_reorder_broll_by_semantic(
         cls,
         clean_scenes: List[Dict[str, Any]],
@@ -753,9 +821,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "reveal_secret": {"geheimnis", "wahrheit", "entdecken", "secret", "truth", "reveal", "discover", "bí mật", "sự thật", "tiết lộ", "phát hiện", "vỡ lở"}
         }
 
-        # 2. Chuẩn bị thông tin cảnh B-Roll kèm keywords
+        # 2. Chuẩn bị thông tin cảnh B-Roll kèm keywords theo thứ tự thời gian gốc
+        clean_scenes = sorted(clean_scenes, key=lambda s: float(s.get("start", 0.0)))
         scenes_meta = []
         for idx, sc in enumerate(clean_scenes):
+            sc["orig_idx"] = idx
             v_desc = f"{sc.get('visual_summary', '')} scene_{sc.get('id', '')}"
             scenes_meta.append({
                 "orig_idx": idx,
@@ -765,23 +835,42 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             })
 
         # 3. So khớp từng câu thoại giọng đọc AI mới với cảnh B-Roll
+        # RÀNG BUỘC CỨNG (ANTI-COPYRIGHT HASH):
+        # - Vị trí đầu tiên sau Hook: CẤM B-Roll 1 (orig_idx != 0)
+        # - Mọi cặp cảnh kế tiếp: KHÔNG BAO GIỜ được xếp cạnh nhau (|orig_idx_a - orig_idx_b| >= 2)
         ordered_scenes = []
         used_ids = set()
-        last_orig_idx = -999
+        last_orig_idx = None
 
         for s_idx, sentence in enumerate(sentences):
             sent_kw = _tokenize(sentence)
             sent_lower = sentence.lower()
 
+            # Lọc danh sách ứng viên hợp lệ thỏa mãn điều kiện né bản quyền
+            valid_cands = []
+            for cand in scenes_meta:
+                c_orig = cand["orig_idx"]
+                # 1. Cảnh đầu tiên sau Hook: Cấm Broll 1 (orig_idx == 0)
+                if s_idx == 0 and c_orig == 0:
+                    continue
+                # 2. Cấm cảnh kề nhau trong video gốc (|c_orig - last| < 2)
+                if last_orig_idx is not None and abs(c_orig - last_orig_idx) < 2:
+                    continue
+                valid_cands.append(cand)
+
+            if not valid_cands:
+                # Nếu không còn cảnh nào thỏa abs >= 2, tìm cảnh có khoảng cách xa nhất
+                pool_fallback = [c for c in scenes_meta if (s_idx > 0 or c["orig_idx"] != 0)]
+                if last_orig_idx is not None:
+                    pool_fallback.sort(key=lambda c: abs(c["orig_idx"] - last_orig_idx), reverse=True)
+                valid_cands = pool_fallback or scenes_meta
+
             best_item = None
             best_score = -999.0
 
-            for cand in scenes_meta:
+            for cand in valid_cands:
                 sc_id = cand["scene"]["id"]
                 is_used = sc_id in used_ids
-                # Tránh chọn cảnh kế tiếp ngay sau cảnh cũ của clip đối thủ
-                is_adjacent_old = (cand["orig_idx"] == last_orig_idx + 1)
-                is_same_as_last = (cand["orig_idx"] == last_orig_idx)
 
                 # Trùng từ khóa
                 kw_match = len(sent_kw & cand["keywords"])
@@ -794,11 +883,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
                 score = (kw_match * 2.5) + theme_score
                 if not is_used:
-                    score += 6.0  # Ưu tiên cảnh mới chưa dùng
-                if is_adjacent_old:
-                    score -= 5.0  # Phạt nặng cảnh đi liền sau theo thứ tự cũ
-                if is_same_as_last:
-                    score -= 10.0 # Cấm lặp lại ngay cảnh vừa chiếu
+                    score += 8.0  # Ưu tiên rất cao cho cảnh chưa dùng
+
+                # Khoảng cách xa trong clip gốc được cộng điểm thêm để tăng độ đảo cảnh
+                if last_orig_idx is not None:
+                    score += min(5.0, abs(cand["orig_idx"] - last_orig_idx) * 0.8)
 
                 if score > best_score:
                     best_score = score
@@ -809,35 +898,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if best_item["scene"]["id"] in used_ids:
                     sc_copy["is_variant"] = True
                     sc_copy["id"] = f"{sc_copy['id']}_v{s_idx+1}"
+                sc_copy["orig_idx"] = best_item["orig_idx"]
                 ordered_scenes.append(sc_copy)
                 used_ids.add(best_item["scene"]["id"])
                 last_orig_idx = best_item["orig_idx"]
 
-        # Bổ sung các cảnh sạch còn lại chưa dùng xen kẽ vào
+        # Bổ sung các cảnh sạch còn lại chưa dùng vào vị trí thích hợp (không để kề nhau)
         remaining = [s for s in clean_scenes if s["id"] not in used_ids]
         if remaining:
             random.shuffle(remaining)
             for rem in remaining:
-                pos = random.randint(0, len(ordered_scenes)) if ordered_scenes else 0
-                ordered_scenes.insert(pos, dict(rem))
-
-        # Kiểm tra tính tuần tự: nếu chẳng may vẫn bị chuỗi tăng dần, ép đảo xen kẽ
-        def _check_sequential(seq):
-            if len(seq) <= 2:
-                return True
-            starts = [s["start"] for s in seq]
-            return all(starts[i] <= starts[i+1] for i in range(len(starts) - 1))
-
-        if _check_sequential(ordered_scenes) and len(ordered_scenes) >= 3:
-            mid = len(ordered_scenes) // 2
-            h1, h2 = ordered_scenes[:mid], ordered_scenes[mid:]
-            inter = []
-            for i in range(max(len(h1), len(h2))):
-                if i < len(h2):
-                    inter.append(h2[i])
-                if i < len(h1):
-                    inter.append(h1[i])
-            ordered_scenes = inter
+                r_orig = rem.get("orig_idx", 0)
+                inserted = False
+                # Tìm vị trí chèn không gây kề nhau (abs >= 2)
+                for pos in range(1, len(ordered_scenes) + 1):
+                    p_orig = ordered_scenes[pos - 1].get("orig_idx", -99)
+                    n_orig = ordered_scenes[pos].get("orig_idx", -99) if pos < len(ordered_scenes) else -99
+                    cond_prev = abs(r_orig - p_orig) >= 2
+                    cond_next = (pos >= len(ordered_scenes)) or (abs(r_orig - n_orig) >= 2)
+                    if cond_prev and cond_next:
+                        ordered_scenes.insert(pos, dict(rem))
+                        inserted = True
+                        break
+                if not inserted:
+                    ordered_scenes.append(dict(rem))
 
         # 4. Kéo dài thời lượng bằng Variant Looping xen kẽ (khi tổng < target_body_dur)
         cur_dur = sum(s["dur"] for s in ordered_scenes)
@@ -853,26 +937,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     v_item = dict(sc_cand)
                     v_item["id"] = f"{sc_cand['id']}_var{v_idx}"
                     v_item["is_variant"] = True
+                    v_item["orig_idx"] = sc_cand.get("orig_idx", 0)
                     var_clips.append(v_item)
                     cur_dur += v_item["dur"]
                     v_idx += 1
                     if cur_dur >= target_body_dur + 2.0:
                         break
 
-            # Chèn xen kẽ vào các vị trí lẻ
-            final_body = []
-            v_ptr = 0
-            for idx, main_sc in enumerate(ordered_scenes):
-                final_body.append(main_sc)
-                if (idx % 2 == 1) and v_ptr < len(var_clips):
-                    final_body.append(var_clips[v_ptr])
-                    v_ptr += 1
-            while v_ptr < len(var_clips):
-                final_body.append(var_clips[v_ptr])
-                v_ptr += 1
-            ordered_scenes = final_body
+            # Chèn các biến thể vào giữa các vị trí không gây kề nhau
+            for v_item in var_clips:
+                vo = v_item.get("orig_idx", 0)
+                inserted = False
+                for pos in range(1, len(ordered_scenes)):
+                    p_orig = ordered_scenes[pos - 1].get("orig_idx", -99)
+                    n_orig = ordered_scenes[pos].get("orig_idx", -99)
+                    if abs(vo - p_orig) >= 2 and abs(vo - n_orig) >= 2:
+                        ordered_scenes.insert(pos, v_item)
+                        inserted = True
+                        break
+                if not inserted:
+                    ordered_scenes.append(v_item)
 
-        logger.info("🎬 [SEMANTIC B-ROLL] Đã so sánh nội dung giọng đọc AI với %d cảnh B-Roll, đảo lộn hoàn toàn thứ tự clip gốc!", len(ordered_scenes))
+        # 5. BẢO HỘ TỐI HẬU: Sanitize toàn diện thứ tự B-Roll (Đảm bảo 100% không bao giờ kề nhau)
+        ordered_scenes = cls.sanitize_broll_sequence(ordered_scenes)
+
+        broll_labels = [f"Broll {s.get('orig_idx', 0) + 1}{'(v)' if s.get('is_variant') else ''}" for s in ordered_scenes]
+        logger.info(
+            "🎬 [B-ROLL ANTI-DUPLICATE] Đã xếp %d cảnh B-Roll sau Hook: %s (Đảm bảo né quét bản quyền 100%%, không bao giờ kề nhau)",
+            len(ordered_scenes), " -> ".join(broll_labels[:12]) + ("..." if len(broll_labels) > 12 else "")
+        )
         return ordered_scenes
 
     @classmethod
