@@ -1599,9 +1599,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         body_concat_list = os.path.join(work_dir, "body_clips.txt")
 
         clip_files = []
+        total_brolls = len(clean_scenes)
         for idx, sc in enumerate(clean_scenes):
             c_file = os.path.join(work_dir, f"broll_{idx:03d}.mp4")
-            pts_speed = elastic_pts_map.get(idx, 1.0)
+            sc_start = float(sc.get("start", 0.0))
+            sc_end = float(sc.get("end", 0.0))
+            sc_dur = max(0.08, sc_end - sc_start)
+            pts_speed = float(elastic_pts_map.get(idx, 1.0))
+            out_clip_dur = max(0.04, sc_dur * pts_speed)
             mirror_filter = ",hflip" if mirror_map.get(idx, False) else ""
             zoom_var_filter = ",crop=iw*0.90:ih*0.90,scale=iw:ih" if sc.get("is_variant", False) else ""
 
@@ -1610,20 +1615,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
                     f"split=2[c_raw][c_to_blur];"
                     f"[c_to_blur]boxblur=28:15[c_blurred];"
-                    f"color=c=black:s={crop_w}x{crop_h}:r=25[mbg];"
-                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25[mfg];"
+                    f"color=c=black:s={crop_w}x{crop_h}:r=25:d={sc_dur + 0.5:.3f}[mbg];"
+                    f"color=c=white:s={blur_mw}x{blur_mh}:r=25:d={sc_dur + 0.5:.3f}[mfg];"
                     f"[mbg][mfg]overlay={blur_mx}:{blur_my},boxblur=10:3,scale={crop_w}:{crop_h}[msoft];"
-                    f"[c_raw][c_blurred][msoft]maskedmerge,"
+                    f"[c_raw][c_blurred][msoft]maskedmerge=shortest=1,"
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}[vout]"
                 )
                 cmd_c = [
-                    "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
+                    "ffmpeg", "-y",
+                    "-ss", f"{sc_start:.3f}", "-t", f"{sc_dur:.3f}",
                     "-i", source_video,
                     "-filter_complex", fc_clip,
                     "-map", "[vout]",
                     "-an",
                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                     "-r", "25", "-pix_fmt", "yuv420p",
+                    "-t", f"{out_clip_dur:.3f}",
+                    "-shortest",
                     c_file
                 ]
             else:
@@ -1632,14 +1640,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"setpts={pts_speed:.4f}*PTS{mirror_filter}{zoom_var_filter}"
                 )
                 cmd_c = [
-                    "ffmpeg", "-y", "-ss", f"{sc['start']:.3f}", "-to", f"{sc['end']:.3f}",
+                    "ffmpeg", "-y",
+                    "-ss", f"{sc_start:.3f}", "-t", f"{sc_dur:.3f}",
                     "-i", source_video,
                     "-vf", vf_clip,
                     "-an",
                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
                     "-r", "25", "-pix_fmt", "yuv420p",
+                    "-t", f"{out_clip_dur:.3f}",
                     c_file
                 ]
+            logger.info("✂️ [B-ROLL %d/%d] Đang dựng clip B-Roll %03d: %.2fs -> %.2fs (dur=%.2fs)...", idx + 1, total_brolls, idx, sc_start, sc_end, sc_dur)
             subprocess.run(cmd_c, capture_output=True, creationflags=flags)
             if os.path.isfile(c_file):
                 clip_files.append(c_file)
