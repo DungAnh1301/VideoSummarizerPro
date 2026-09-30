@@ -73,6 +73,8 @@ Requirements:
   replay graphic, or similar edit hides the central subject/action or covers a large part of the
   frame (roughly 25% or more). A tense event viewers cannot clearly see is unusable. Select the
   nearest clear moment immediately before or after it instead.
+- ZERO TOLERANCE FOR ADS & SPONSORS: Strictly forbid selecting any shot or hook that contains
+  paid promotion, sponsorship pitches, discount promo codes, merch store plugs, or brand deals.
 - Start with a strong curiosity-driven hook.
 - Keep cause and effect easy to follow.
 - Increase intensity as the source events escalate.
@@ -199,6 +201,56 @@ class AIProcessor:
             }
         except (TypeError, ValueError):
             return None
+
+    @classmethod
+    def is_hook_clean(cls, start: float, end: float, unusable_ranges: list = None,
+                      transcript_cues: list = None, reason: str = "") -> tuple:
+        """Kiểm tra mốc hook có dính quảng cáo (sponsor/ad) hoặc bị che mờ (censor/blur/unusable) không."""
+        # 1. Kiểm tra lý do (reason) của AI
+        r_low = (reason or "").lower()
+        ad_keywords = [
+            "sponsor", "advertis", "commercial", "promo", "discount", "code",
+            "patreon", "merch", "quảng cáo", "tài trợ", "mã giảm giá",
+            "censor", "blur", "che mờ", "làm mờ", "mosaic",
+            "hardcoded", "subtitle", "text overlay", "ticker", "banner",
+            "watermark", "che chữ", "phụ đề cứng", "chữ đè", "talking head"
+        ]
+        for kw in ad_keywords:
+            if kw in r_low:
+                return False, f"Lý do hook chứa từ khóa vi phạm: '{kw}'"
+
+        # 2. Kiểm tra trùng vùng unusable_visual_ranges (vùng bị che mờ/logo/graphic)
+        for b in (unusable_ranges or []):
+            if not isinstance(b, dict):
+                continue
+            b_s = float(b.get("start_sec", b.get("start", 0.0)))
+            b_e = float(b.get("end_sec", b.get("end", b_s)))
+            overlap = min(end, b_e) - max(start, b_s)
+            if overlap > 0.5:
+                b_reason = b.get("reason", "vùng bị che/unusable")
+                return False, f"Trùng {overlap:.1f}s với vùng bị che: {b_reason} ({b_s:.1f}s - {b_e:.1f}s)"
+
+        # 3. Kiểm tra transcript cues có chứa từ khóa quảng cáo/tài trợ trong khoảng [start, end]
+        if transcript_cues:
+            sponsor_words = [
+                "sponsor", "sponsored", "advertisement", "promo code", "discount code",
+                "use code", "link in description", "link in the description", "patreon",
+                "merch", "nordvpn", "expressvpn", "surfshark", "manscaped", "raid shadow",
+                "hellofresh", "betterhelp", "factor meals", "ag1", "quảng cáo", "tài trợ",
+                "censor", "blur"
+            ]
+            for cue in transcript_cues:
+                if not isinstance(cue, dict):
+                    continue
+                c_s = float(cue.get("start", 0.0))
+                c_e = float(cue.get("end", c_s))
+                if max(start, c_s) < min(end, c_e):
+                    c_text = str(cue.get("text", "")).lower()
+                    for sw in sponsor_words:
+                        if sw in c_text:
+                            return False, f"Thoại tại {c_s:.1f}s chứa quảng cáo: '{sw}'"
+
+        return True, "Sạch"
 
     @classmethod
     def build_dynamic_prompts(cls, storytelling_hint: str, source_text: str,
@@ -570,6 +622,12 @@ SEGMENT CONTRACT:
   branding, warning text, giant captions, censor/blur screens, graphic-content cards, subscribe
   panels, or replay overlays that obscure the main action. Heatmap rank never overrides visual
   usability; use the nearest clear candidate showing the same event.
+- STRICT ANTI-TALKING-HEAD DIRECTIVE: A shot of a person sitting at a desk, looking into the camera,
+  or talking into a microphone (Talking Head / Interview / Podcast face) IS NOT A CLIMAX OR ACTION SHOT!
+  Never assign talking-head shots as visual_refs for 'climax', 'turning_point', 'escalation', or 'hook'
+  when B-roll, on-scene footage, physical motion, machinery, bodycam, dashcam, or incident action exists in the video!
+  SHOW, DON'T TELL: If the narrator is talking about a dramatic event, select the timestamp where the EVENT ITSELF
+  IS VISIBLY HAPPENING on screen, NEVER the timestamp of the narrator's face talking about it!
 
 SELECTED HIGHLIGHTS (text metadata only; no images):
 {highlight_block if compact_highlights else "[]"}
@@ -580,7 +638,15 @@ SOURCE TRANSCRIPT:
 </source_transcript>
 
 GEMINI NATIVE HOOK:
-{f'''While inspecting the video for the narration, also select exactly one strongest continuous {hook_duration:.3f}-second native-audio hook. Inspect the whole proxy once. Prefer decisive action, impact, confrontation, reveal or powerful reaction; avoid intros, setup, driving, talking in cars and aftermath when stronger action exists. Reject any interval where channel branding, a warning card, giant text, a graphic overlay, censor blur, a subscribe panel or a replay graphic hides the central subject/action or covers a large part of the frame, even when that interval is dramatic or highly ranked. Choose the nearest clear moment before or after the event instead. Timestamp must match this proxy timeline ({source_duration:.3f}s total). Return it in hook_selection.''' if hook_duration > 0 else 'Do not add hook_selection.'}
+{f'''While inspecting the video for the narration, also select exactly one strongest continuous {hook_duration:.3f}-second native-audio hook. Inspect the whole proxy once.
+- PREFER: Decisive peak physical action, impact, confrontation, shocking visual reveal, or high-intensity mechanical/human movement.
+- STRICTLY REJECT ADVERTISEMENTS & SPONSORS: NEVER select an advertisement, sponsor segment, brand pitch, commercial endorsement, merch plug, Patreon promo, or discount code pitch (e.g. host talking about/holding sponsor products like NordVPN, Raid, Manscaped, HelloFresh, or saying "sponsored by", "use code", "link in description"). Choosing an ad/sponsor is a FATAL FAILURE.
+- STRICTLY REJECT TEXT OVERLAYS & HARDCODED CAPTIONS (ĐOẠN BỊ CHE CHỮ): NEVER select any interval where hardcoded subtitles, giant burned-in text banners, warning text cards, crawling news tickers, watermarks, or graphic text overlays cover or obscure the screen or the subject. The hook footage MUST be visually clean without distracting text covering the scene.
+- STRICTLY REJECT CENSORED / BLURRED INTERVALS (ĐOẠN BỊ CHE MỜ): NEVER select any interval containing censor blur, pixelation, mosaic effects, blackouts, or warning banners covering faces, subjects, or action. The hook MUST BE 100% VISUALLY CLEAN and UNBLURRED.
+- STRICTLY REJECT TALKING HEADS: DO NOT pick a person sitting and talking to the camera / microphone. A hook MUST show actual physical event/action, NOT someone sitting and explaining or storytelling!
+- STRICTLY AVOID: Channel intros, logos, title cards, talking in cars, dead air, or after-event explanations.
+- MUST NOT overlap with ANY interval in unusable_visual_ranges.
+Timestamp must match this proxy timeline ({source_duration:.3f}s total). Return it in hook_selection.''' if hook_duration > 0 else 'Do not add hook_selection.'}
 
 Return JSON only:
 {{"title":"rewritten title comparable to source length","story_promise":"specific promised event","required_payoff":"specific visible resolution","unusable_visual_ranges":[{{"start_sec":12.0,"end_sec":18.0,"reason":"giant channel graphic obscures action"}}],"hook_selection":{{"start_sec":0.0,"end_sec":{hook_duration:.3f},"reason":"brief visible reason","confidence":0.0}},"segments":[{{"id":"V01","beat_type":"climax","required":true,"visual_refs":[],"source_start":0.0,"source_end":6.0,"source_hint":"distinctive source words or visible action","visual_subject":"exact visible action/person","narration":"voice-over text"}}]}}"""
@@ -1117,21 +1183,70 @@ Return JSON only:
         if unusable_visual_ranges:
             logger.info("🚫 [VISUAL FILTER] Gemini loại %d vùng hình bị che/logo/graphic.",
                         len(unusable_visual_ranges))
+        script, title, segments = cls.parse_script_payload_detailed(raw)
         hook_duration = float(context.get("gemini_hook_duration", 0.0) or 0.0)
         if hook_duration > 0.0:
             hook = cls.extract_hook_selection(
                 raw, float(context.get("video_duration", 0.0) or 0.0), hook_duration
             )
+            # Nạp cues transcript nếu có để kiểm tra từ khóa quảng cáo/tài trợ
+            srt_path = os.path.join(specific_dir, "caption.srt")
+            cues = []
+            if os.path.isfile(srt_path):
+                try:
+                    from part_pruner_ai import _parse_srt_cues
+                    cues = _parse_srt_cues(srt_path)
+                except Exception:
+                    pass
+
+            is_valid = False
+            reject_msg = ""
             if hook:
+                is_valid, reject_msg = cls.is_hook_clean(
+                    start=hook["start_sec"],
+                    end=hook["end_sec"],
+                    unusable_ranges=unusable_visual_ranges,
+                    transcript_cues=cues,
+                    reason=hook.get("reason", "")
+                )
+
+            if hook and is_valid:
                 with open(os.path.join(specific_dir, "gemini_hook_selection.json"), "w", encoding="utf-8") as stream:
                     json.dump(hook, stream, ensure_ascii=False, indent=2)
                 logger.info(
-                    "🎯 [HOOK GEMINI] Đã nhận mốc %.2fs ngay trong cùng request viết kịch bản.",
+                    "🎯 [HOOK GEMINI] Đã nhận mốc sạch %.2fs ngay trong cùng request viết kịch bản.",
                     hook["start_sec"],
                 )
             else:
-                logger.warning("⚠️ [HOOK GEMINI] Response không có mốc hợp lệ; sẽ dùng bộ dò local.")
-        script, title, segments = cls.parse_script_payload_detailed(raw)
+                if hook and not is_valid:
+                    logger.warning("🚫 [HOOK REJECTED] Mốc hook do AI chọn (%.2fs–%.2fs) bị từ chối: %s!",
+                                   hook["start_sec"], hook["end_sec"], reject_msg)
+
+                # Tự động tìm mốc phân cảnh cao trào sạch từ segments (beat_type: climax, turning_point, escalation)
+                replacement_hook = None
+                for seg in segments or []:
+                    b_type = str(seg.get("beat_type", "")).lower()
+                    if b_type in ("climax", "turning_point", "escalation", "payoff", "hook"):
+                        cand_s = float(seg.get("source_start", 0.0))
+                        cand_e = cand_s + hook_duration
+                        c_ok, _ = cls.is_hook_clean(cand_s, cand_e, unusable_visual_ranges, cues, seg.get("source_hint", ""))
+                        v_dur = float(context.get("video_duration", 0.0) or 0.0)
+                        if c_ok and (v_dur <= 0 or cand_e <= v_dur):
+                            replacement_hook = {
+                                "start_sec": round(cand_s, 3),
+                                "end_sec": round(cand_e, 3),
+                                "reason": f"Tự động thay thế bằng phân cảnh {b_type} sạch: {seg.get('visual_subject', '')[:50]}",
+                                "confidence": 0.95
+                            }
+                            break
+
+                if replacement_hook:
+                    with open(os.path.join(specific_dir, "gemini_hook_selection.json"), "w", encoding="utf-8") as stream:
+                        json.dump(replacement_hook, stream, ensure_ascii=False, indent=2)
+                    logger.info("✅ [HOOK GEMINI TỰ ĐỘNG THAY THẾ] Đã chuyển sang phân cảnh sạch: %.2fs–%.2fs (%s)",
+                                replacement_hook["start_sec"], replacement_hook["end_sec"], replacement_hook["reason"])
+                else:
+                    logger.warning("⚠️ [HOOK GEMINI] Không tìm thấy mốc sạch trong kịch bản; sẽ dùng bộ dò local.")
         if len((script or "").strip()) < 20:
             clean_raw = re.sub(r"```(?:json)?\s*|\s*```", "", str(raw or "")).strip()
             if len(clean_raw) >= 30 and not clean_raw.startswith("{"):

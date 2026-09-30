@@ -2045,17 +2045,41 @@ class PartSplitterFrame(ttk.Frame):
         self.after(0, self._refresh_queue_table)
         self.log("🤖 Gemini AI đang phân tích toàn diện (Tinh lược, bẫy tò mò, săn hook)...")
 
-        prune_target = (
+        # Cơ chế bảo vệ mốc 1 phút: Tính toán thời lượng thô tối thiểu mỗi Part cần có để sau speedup vẫn >= 61s
+        speed_factor = max(1.0, float(cfg.get("speed", cfg.get("source_speed", 1.05))))
+        min_final_dur = max(61.0, float(cfg.get("min_part_duration_sec", 60.0)))
+        needed_raw_per_part = min_final_dur * speed_factor
+        p_count = max(2, int(cfg.get("part_count", 4)))
+        min_clean_dur_needed = p_count * needed_raw_per_part
+        max_allowable_prune = max(0.0, total_dur - min_clean_dur_needed)
+
+        nominal_prune = (
             total_dur * (cfg.get("prune_percent", 20.0) / 100.0)
             if cfg.get("prune_mode") == "percent"
             else cfg.get("prune_minutes", 15.0) * 60.0
         )
 
+        prune_target = nominal_prune
+        if cfg.get("prune_enabled") and nominal_prune > max_allowable_prune:
+            prune_target = max_allowable_prune
+            actual_pct = (prune_target / total_dur) * 100.0 if total_dur > 0 else 0.0
+            req_str = f"{cfg.get('prune_percent', 20.0):.0f}%" if cfg.get("prune_mode") == "percent" else f"{cfg.get('prune_minutes', 15.0):.1f}m"
+            self.log(
+                f"🛡️ [BẢO VỆ MỐC 1 PHÚT] Cắt {req_str} sẽ làm video còn lại quá ngắn, khiến {p_count} Part sau khi tăng tốc {speed_factor:.2f}x bị dưới 60s!\n"
+                f"   ↳ Hệ thống tự động bù/hạ mức cắt xuống {actual_pct:.1f}% ({prune_target:.1f}s) "
+                f"để giữ lại ít nhất {min_clean_dur_needed:.1f}s, cam kết 100% các Part xuất xưởng đều > 1 phút!"
+            )
+
+        ai_cfg = dict(cfg)
+        ai_cfg["min_part_duration_sec"] = needed_raw_per_part
+        ai_cfg["source_speed"] = speed_factor
+        ai_cfg["speed"] = speed_factor
+
         ai_plan = PartPrunerAI.analyze_and_plan(
             video_path=video_path,
             srt_path=srt_path,
             total_duration=total_dur,
-            part_count=cfg.get("part_count", 4),
+            part_count=p_count,
             target_prune_sec=prune_target if cfg.get("prune_enabled") else 0.0,
             hook_target_sec=cfg.get("hook_target_sec", 6.0),
             gemini_client=None,
@@ -2063,7 +2087,7 @@ class PartSplitterFrame(ttk.Frame):
             api_key=cfg.get("gemini_api_key", ""),
             auto_title=cfg.get("auto_regenerate_title", True),
             part_prefix=cfg.get("part_label_prefix", "Part"),
-            config=cfg,
+            config=ai_cfg,
             job_dir=work_dir,
             log_fn=self.log
         )
@@ -2090,16 +2114,16 @@ class PartSplitterFrame(ttk.Frame):
         clean_dur = probe_duration_sec(cleaned_video)
         self.log(f"⏱️ Thời lượng video sạch sau tinh lược: {clean_dur:.1f}s ({clean_dur/60:.1f} phút)")
 
-        # 5. Ánh xạ mốc chia Part sang timeline của video sạch & bảo đảm mỗi Part >= 60s
+        # 5. Ánh xạ mốc chia Part sang timeline của video sạch & bảo đảm mỗi Part >= 61s sau khi speed
         mapped_splits = [
             PartSplitterEngine.map_orig_to_clean_time(pt, keep_ranges)
             for pt in ai_plan.get("part_splits", [])
         ]
-        min_p_dur = max(60.0, float(cfg.get("min_part_duration_sec", 60.0)))
+        min_p_dur = needed_raw_per_part
         sanitized_splits = PartSplitterEngine.sanitize_part_splits(
             splits=mapped_splits,
             total_duration=clean_dur,
-            part_count=cfg.get("part_count", 4),
+            part_count=p_count,
             min_part_dur=min_p_dur
         )
         self.log(f"📍 Điểm chia Part trên video sạch: {[round(s, 1) for s in sanitized_splits]}")

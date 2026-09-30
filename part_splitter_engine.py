@@ -154,13 +154,20 @@ class PartSplitterEngine:
         part_count: int,
         min_part_dur: float = 60.0
     ) -> List[float]:
-        """Đảm bảo các mốc cắt chia Part hợp lý, giữ trọn nội dung kịch bản và mỗi Part >= 60s."""
+        """Đảm bảo các mốc cắt chia Part hợp lý, giữ trọn nội dung kịch bản và mỗi Part >= min_part_dur."""
         total_dur = float(total_duration)
-        min_part_dur = max(60.0, float(min_part_dur))
-        if total_dur <= min_part_dur * 1.5:
+        min_part_dur = max(10.0, float(min_part_dur))
+        if total_dur <= min_part_dur * 1.2:
             return []
         
         needed = max(1, part_count - 1)
+
+        # Nếu tổng thời lượng nhỏ hơn part_count * min_part_dur (video hơi sát ngưỡng),
+        # chia đều tuyệt đối để mỗi part có thời lượng tối đa bằng nhau
+        if total_dur < part_count * min_part_dur:
+            step = total_dur / float(part_count)
+            return [round(step * i, 2) for i in range(1, part_count)]
+
         raw_splits = sorted([float(s) for s in splits if 0.0 < float(s) < total_dur])
 
         # Nếu không có mốc nào hoặc số mốc không đủ, phân bổ đều làm mốc cơ bản
@@ -168,7 +175,7 @@ class PartSplitterEngine:
             step = total_dur / float(part_count)
             raw_splits = [round(step * i, 2) for i in range(1, part_count)]
 
-        # Rà soát từng mốc: tôn trọng 100% mốc cắt phân cảnh và cliffhanger của AI, chỉ đảm bảo mỗi part >= min_part_dur (60s)
+        # Rà soát từng mốc: tôn trọng mốc cắt phân cảnh và cliffhanger của AI, nhưng ràng buộc chặt chẽ min_part_dur cho mọi Part
         final_splits = []
         last_t = 0.0
         for i, pt in enumerate(raw_splits):

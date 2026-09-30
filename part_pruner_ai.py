@@ -163,7 +163,10 @@ class PartPrunerAI:
 
         config = config or {}
         part_count = max(2, int(config.get("part_count", 4)))
-        min_part_dur = max(10.0, float(config.get("min_part_duration_sec", 60.0)))
+        speed = max(1.0, float(config.get("speed", config.get("source_speed", 1.05))))
+        min_final_dur = max(61.0, float(config.get("min_part_duration_sec", 60.0)))
+        # Thời lượng thô tối thiểu mỗi part cần có trên video sạch để sau khi tăng tốc (speedup) vẫn >= 61.0s (> 1 phút)
+        min_part_dur = min_final_dur * speed
         prune_enabled = bool(config.get("prune_enabled", True))
         prune_mode = str(config.get("prune_mode", "percent"))
         prune_percent = float(config.get("prune_percent", 20.0))
@@ -194,17 +197,32 @@ class PartPrunerAI:
         else:
             _log("⚠️ [AI CHIA PART] Không có transcript SRT, AI sẽ tính toán theo mốc thời gian video.")
 
-        # 2. Tính toán hạn ngạch prune mục tiêu
+        # 2. Tính toán hạn ngạch prune mục tiêu kèm CƠ CHẾ BẢO VỆ MỐC 1 PHÚT SAU TĂNG TỐC
         target_prune_sec = 0.0
         prune_min_sec = 0.0
         prune_max_sec = 0.0
-        if prune_enabled and total_duration > min_part_dur * 2:
+        min_clean_dur_needed = part_count * min_part_dur
+        max_allowable_prune_sec = max(0.0, total_duration - min_clean_dur_needed)
+
+        if prune_enabled and total_duration > min_part_dur:
             if prune_mode == "minutes":
-                target_prune_sec = min(total_duration * 0.70, prune_minutes * 60.0)
+                nominal_prune = min(total_duration * 0.70, prune_minutes * 60.0)
             else:
-                target_prune_sec = total_duration * (prune_percent / 100.0)
-            prune_min_sec = target_prune_sec * (1.0 - prune_tol)
-            prune_max_sec = target_prune_sec * (1.0 + prune_tol)
+                nominal_prune = total_duration * (prune_percent / 100.0)
+
+            # Nếu người dùng cắt quá tay (ví dụ cắt 80%), tự động bù/hạ mức cắt xuống để đảm bảo video sạch đủ dài
+            if nominal_prune > max_allowable_prune_sec:
+                target_prune_sec = max_allowable_prune_sec
+                actual_pct = (target_prune_sec / total_duration) * 100.0 if total_duration > 0 else 0.0
+                _log(
+                    f"🛡️ [BẢO VỆ 1 PHÚT] Cắt {prune_percent:.0f}% ({nominal_prune:.1f}s) sẽ làm {part_count} Part sau khi tăng tốc {speed:.2f}x bị dưới 60s!\n"
+                    f"   ↳ Tự động điều chỉnh mức cắt xuống {actual_pct:.1f}% ({target_prune_sec:.1f}s) để giữ lại tối thiểu {min_clean_dur_needed:.1f}s video sạch."
+                )
+            else:
+                target_prune_sec = nominal_prune
+
+            prune_min_sec = max(0.0, target_prune_sec * (1.0 - prune_tol))
+            prune_max_sec = min(max_allowable_prune_sec, target_prune_sec * (1.0 + prune_tol))
 
         hook_min_sec = hook_target_sec * (1.0 - hook_tol)
         hook_max_sec = hook_target_sec * (1.0 + hook_tol)
@@ -222,12 +240,15 @@ class PartPrunerAI:
             "If the video starts with a show intro, channel bumper, or logo sequence, ALWAYS create a prune segment starting from 0.0s to the end of that intro. "
             f"Target total pruned duration: {target_prune_sec:.1f}s (Allowed range: {prune_min_sec:.1f}s to {prune_max_sec:.1f}s). "
             "If pruning is disabled or video is short, return empty prune_plan.\n"
-            "3. CLIFFHANGER PART SPLITS: Provide exactly {part_count - 1} cut timestamps. Each split MUST land on a "
+            f"3. CLIFFHANGER PART SPLITS: Provide exactly {part_count - 1} cut timestamps. Each split MUST land on a "
             "high-tension Cliffhanger or curiosity trap (e.g. right before a reveal, decision, or shocking event) "
             "so the viewer is desperate to watch the next Part. "
-            f"Each Part must be at least {min_part_dur:.1f}s long.\n"
+            f"CRITICAL: Each Part MUST be at least {min_part_dur:.1f}s long in raw time (so that after post-processing speedup of {speed:.2f}x it is strictly >= 60.0s).\n"
             f"4. HOOKS: A Hook must be {hook_min_sec:.1f}s ~ {hook_max_sec:.1f}s long, showing the absolute peak moment "
-            "cut abruptly right before the payoff.\n"
+            "cut abruptly right before the payoff. CRITICAL: NEVER select an advertisement/sponsor pitch (tránh quảng cáo), "
+            "hardcoded subtitles/text overlays (tránh đoạn bị che chữ/banner), censor blur/pixelation (tránh đoạn bị che mờ), "
+            "or a talking head (person sitting and talking to camera/mic). The hook MUST be 100% visually clean, "
+            "unblurred, text-free, and focused on main physical action/incident.\n"
             "5. OUTPUT FORMAT: Output strictly valid JSON without explanation, markdown fences or extra text."
         )
 
@@ -236,7 +257,7 @@ VIDEO SPECIFICATIONS:
 - Original Title: {original_title or "Untitled"}
 - Total Duration: {total_duration:.1f} seconds ({total_duration/60.0:.2f} minutes)
 - Requested Part Count: {part_count}
-- Minimum Part Duration: {min_part_dur:.1f} seconds
+- Minimum Part Duration: {min_part_dur:.1f} seconds (Required to guarantee > 1 minute after {speed:.2f}x speedup)
 - Pruning Enabled: {prune_enabled}
 - Target Prune Duration: {target_prune_sec:.1f}s (Range: {prune_min_sec:.1f}s ~ {prune_max_sec:.1f}s)
 - Hook Target Duration: {hook_target_sec:.1f}s (Range: {hook_min_sec:.1f}s ~ {hook_max_sec:.1f}s)
