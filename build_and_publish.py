@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.63"
+VERSION = "1.3.97"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.63: Khắc phục triệt để lỗi FFmpeg render vô tận (treo hàng chục phút) ở bước Hook và Body: khống chế thời lượng nền đen, gắn shortest=1 và loop 1 cho banner overlay, render siêu tốc chỉ vài giây."
+NOTES = "Bản phát hành v1.3.97: Khắc phục lỗi chia Part bị hụt dưới 1 phút (tự động điều chỉnh theo tốc độ render speed, giới hạn prune an toàn tránh cắt cụt), và cấm triệt để quảng cáo/che chữ/che mờ/talking head khi Gemini chọn Hook."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
