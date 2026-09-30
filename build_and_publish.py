@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.97"
+VERSION = "1.3.98"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.97: Khắc phục lỗi chia Part bị hụt dưới 1 phút (tự động điều chỉnh theo tốc độ render speed, giới hạn prune an toàn tránh cắt cụt), và cấm triệt để quảng cáo/che chữ/che mờ/talking head khi Gemini chọn Hook."
+NOTES = "Bản phát hành v1.3.98: Tối ưu cơ chế tự khởi động lại ứng dụng sau khi cập nhật bằng Windows Shell API (os.startfile), triệt tiêu hoàn toàn lỗi 0xc0000142 của cmd.exe."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

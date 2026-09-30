@@ -108,7 +108,13 @@ def apply_update(package: Path, target_version: str, pid: int, runtime_update: b
 
     launcher = root / "Chay_App.bat"
     if launcher.is_file():
-        subprocess.Popen(["cmd.exe", "/c", "start", "", str(launcher)], cwd=str(root))
+        if os.name == "nt":
+            try:
+                os.startfile(str(launcher))
+            except Exception:
+                subprocess.Popen(["cmd.exe", "/c", "start", "", str(launcher)], cwd=str(root))
+        else:
+            subprocess.Popen([str(launcher)], cwd=str(root))
 
 
 def main() -> int:
