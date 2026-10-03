@@ -206,6 +206,12 @@ class AIProcessor:
     def is_hook_clean(cls, start: float, end: float, unusable_ranges: list = None,
                       transcript_cues: list = None, reason: str = "") -> tuple:
         """Kiểm tra mốc hook có dính quảng cáo (sponsor/ad) hoặc bị che mờ (censor/blur/unusable) không."""
+        try:
+            start_f = float(start)
+            end_f = float(end)
+        except (TypeError, ValueError):
+            return False, "Mốc thời gian hook không hợp lệ"
+
         # 1. Kiểm tra lý do (reason) của AI
         r_low = (reason or "").lower()
         ad_keywords = [
@@ -223,9 +229,14 @@ class AIProcessor:
         for b in (unusable_ranges or []):
             if not isinstance(b, dict):
                 continue
-            b_s = float(b.get("start_sec", b.get("start", 0.0)))
-            b_e = float(b.get("end_sec", b.get("end", b_s)))
-            overlap = min(end, b_e) - max(start, b_s)
+            try:
+                raw_b_s = b.get("start_sec") if b.get("start_sec") is not None else b.get("start")
+                b_s = float(raw_b_s if raw_b_s is not None else 0.0)
+                raw_b_e = b.get("end_sec") if b.get("end_sec") is not None else b.get("end")
+                b_e = float(raw_b_e if raw_b_e is not None else b_s)
+            except (TypeError, ValueError):
+                continue
+            overlap = min(end_f, b_e) - max(start_f, b_s)
             if overlap > 0.5:
                 b_reason = b.get("reason", "vùng bị che/unusable")
                 return False, f"Trùng {overlap:.1f}s với vùng bị che: {b_reason} ({b_s:.1f}s - {b_e:.1f}s)"
@@ -242,9 +253,14 @@ class AIProcessor:
             for cue in transcript_cues:
                 if not isinstance(cue, dict):
                     continue
-                c_s = float(cue.get("start", 0.0))
-                c_e = float(cue.get("end", c_s))
-                if max(start, c_s) < min(end, c_e):
+                try:
+                    raw_c_s = cue.get("start")
+                    c_s = float(raw_c_s if raw_c_s is not None else 0.0)
+                    raw_c_e = cue.get("end")
+                    c_e = float(raw_c_e if raw_c_e is not None else c_s)
+                except (TypeError, ValueError):
+                    continue
+                if max(start_f, c_s) < min(end_f, c_e):
                     c_text = str(cue.get("text", "")).lower()
                     for sw in sponsor_words:
                         if sw in c_text:
@@ -729,6 +745,16 @@ Return JSON only:
                 refs = segment.get("visual_refs") or segment.get("refs") or []
                 if isinstance(refs, str):
                     refs = [refs]
+                s_start = segment.get("source_start")
+                try:
+                    s_start = float(s_start) if s_start is not None else None
+                except (TypeError, ValueError):
+                    s_start = None
+                s_end = segment.get("source_end")
+                try:
+                    s_end = float(s_end) if s_end is not None else None
+                except (TypeError, ValueError):
+                    s_end = None
                 cleaned.append({
                     "id": str(segment.get("id") or f"V{index:02d}"),
                     "visual_refs": [str(ref) for ref in refs if str(ref).strip()],
@@ -736,8 +762,8 @@ Return JSON only:
                     "visual_subject": str(segment.get("visual_subject") or "").strip(),
                     "beat_type": str(segment.get("beat_type") or "").strip().lower(),
                     "required": bool(segment.get("required", False)),
-                    "source_start": segment.get("source_start"),
-                    "source_end": segment.get("source_end"),
+                    "source_start": s_start,
+                    "source_end": s_end,
                     "narration": narration,
                 })
             if cleaned:
@@ -1222,23 +1248,100 @@ Return JSON only:
                     logger.warning("🚫 [HOOK REJECTED] Mốc hook do AI chọn (%.2fs–%.2fs) bị từ chối: %s!",
                                    hook["start_sec"], hook["end_sec"], reject_msg)
 
-                # Tự động tìm mốc phân cảnh cao trào sạch từ segments (beat_type: climax, turning_point, escalation)
+                # 1. Thử trượt cửa sổ (window shifting) ra trước hoặc sau vùng bị che nếu độ lệch nhỏ (<= 5s)
                 replacement_hook = None
-                for seg in segments or []:
-                    b_type = str(seg.get("beat_type", "")).lower()
-                    if b_type in ("climax", "turning_point", "escalation", "payoff", "hook"):
-                        cand_s = float(seg.get("source_start", 0.0))
-                        cand_e = cand_s + hook_duration
-                        c_ok, _ = cls.is_hook_clean(cand_s, cand_e, unusable_visual_ranges, cues, seg.get("source_hint", ""))
-                        v_dur = float(context.get("video_duration", 0.0) or 0.0)
-                        if c_ok and (v_dur <= 0 or cand_e <= v_dur):
-                            replacement_hook = {
-                                "start_sec": round(cand_s, 3),
-                                "end_sec": round(cand_e, 3),
-                                "reason": f"Tự động thay thế bằng phân cảnh {b_type} sạch: {seg.get('visual_subject', '')[:50]}",
-                                "confidence": 0.95
-                            }
-                            break
+                v_dur = float(context.get("video_duration", 0.0) or 0.0)
+                if hook:
+                    h_start = float(hook.get("start_sec", 0.0) or 0.0)
+                    h_end = float(hook.get("end_sec", h_start + hook_duration) or (h_start + hook_duration))
+                    overlapping_ranges = []
+                    for b in (unusable_visual_ranges or []):
+                        if not isinstance(b, dict):
+                            continue
+                        try:
+                            b_s = float(b.get("start_sec") if b.get("start_sec") is not None else b.get("start", 0.0))
+                            b_e = float(b.get("end_sec") if b.get("end_sec") is not None else b.get("end", b_s))
+                        except (TypeError, ValueError):
+                            continue
+                        if min(h_end, b_e) - max(h_start, b_s) > 0.1:
+                            overlapping_ranges.append((b_s, b_e))
+
+                    if overlapping_ranges:
+                        min_b_s = min(r[0] for r in overlapping_ranges)
+                        max_b_e = max(r[1] for r in overlapping_ranges)
+                        # Thử trượt lùi về trước vùng che
+                        shift_before_s = max(0.0, min_b_s - hook_duration)
+                        shift_before_e = shift_before_s + hook_duration
+                        if shift_before_s >= 0.0 and abs(shift_before_s - h_start) <= 5.0:
+                            ok_before, _ = cls.is_hook_clean(shift_before_s, shift_before_e, unusable_visual_ranges, cues, hook.get("reason", ""))
+                            if ok_before:
+                                replacement_hook = {
+                                    "start_sec": round(shift_before_s, 3),
+                                    "end_sec": round(shift_before_e, 3),
+                                    "reason": f"Trượt mốc hook an toàn trước vùng bị che: {hook.get('reason', '')}",
+                                    "confidence": 0.92
+                                }
+
+                        # Nếu chưa được, thử trượt tới sau vùng che
+                        if not replacement_hook:
+                            shift_after_s = max_b_e
+                            shift_after_e = shift_after_s + hook_duration
+                            if (v_dur <= 0 or shift_after_e <= v_dur) and abs(shift_after_s - h_start) <= 5.0:
+                                ok_after, _ = cls.is_hook_clean(shift_after_s, shift_after_e, unusable_visual_ranges, cues, hook.get("reason", ""))
+                                if ok_after:
+                                    replacement_hook = {
+                                        "start_sec": round(shift_after_s, 3),
+                                        "end_sec": round(shift_after_e, 3),
+                                        "reason": f"Trượt mốc hook an toàn sau vùng bị che: {hook.get('reason', '')}",
+                                        "confidence": 0.92
+                                    }
+
+                # 2. Nếu không trượt được, tự động tìm mốc phân cảnh cao trào sạch từ segments (beat_type: climax, turning_point, escalation)
+                if not replacement_hook:
+                    cand_by_id = {}
+                    for c in (highlight_candidates or []):
+                        if isinstance(c, dict) and "id" in c:
+                            cand_by_id[str(c["id"])] = c
+
+                    for seg in segments or []:
+                        b_type = str(seg.get("beat_type", "")).lower()
+                        if b_type in ("climax", "turning_point", "escalation", "payoff", "hook"):
+                            cand_s = None
+                            raw_s = seg.get("source_start")
+                            if raw_s is not None:
+                                try:
+                                    cand_s = float(raw_s)
+                                except (TypeError, ValueError):
+                                    cand_s = None
+
+                            if cand_s is None:
+                                for r in (seg.get("visual_refs") or []):
+                                    ref_id = str(r).strip()
+                                    if ref_id in cand_by_id:
+                                        c_start = cand_by_id[ref_id].get("start")
+                                        if c_start is None:
+                                            c_start = cand_by_id[ref_id].get("start_sec")
+                                        if c_start is not None:
+                                            try:
+                                                cand_s = float(c_start)
+                                                break
+                                            except (TypeError, ValueError):
+                                                pass
+
+                            if cand_s is None:
+                                continue
+
+                            cand_e = cand_s + hook_duration
+                            c_ok, _ = cls.is_hook_clean(cand_s, cand_e, unusable_visual_ranges, cues, seg.get("source_hint", ""))
+                            v_dur = float(context.get("video_duration", 0.0) or 0.0)
+                            if c_ok and (v_dur <= 0 or cand_e <= v_dur):
+                                replacement_hook = {
+                                    "start_sec": round(cand_s, 3),
+                                    "end_sec": round(cand_e, 3),
+                                    "reason": f"Tự động thay thế bằng phân cảnh {b_type} sạch: {seg.get('visual_subject', '')[:50]}",
+                                    "confidence": 0.95
+                                }
+                                break
 
                 if replacement_hook:
                     with open(os.path.join(specific_dir, "gemini_hook_selection.json"), "w", encoding="utf-8") as stream:

@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.98"
+VERSION = "1.3.99"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.98: Tối ưu cơ chế tự khởi động lại ứng dụng sau khi cập nhật bằng Windows Shell API (os.startfile), triệt tiêu hoàn toàn lỗi 0xc0000142 của cmd.exe."
+NOTES = "Bản phát hành v1.3.99: Khắc phục triệt để lỗi TypeError float() NoneType khi AI chọn Hook bị dính vùng cấm/che chữ; bổ sung cơ chế trượt cửa sổ thời gian (Window Shifting) và tự động tra cứu mốc video sạch từ visual_refs."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

@@ -74,8 +74,8 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(PROMPT_BUILDER_VERSION, "voice-matrix-v22-multimarket")
         self.assertIn("VISUAL USABILITY OVERRIDES", DYNAMIC_WRITER_SYSTEM_PROMPT)
         self.assertIn("Heatmap rank never overrides visual", user_prompt)
-        self.assertIn("nearest clear moment", user_prompt)
-        self.assertIn("censor blur", user_prompt)
+        self.assertIn("nearest clear candidate", user_prompt)
+        self.assertIn("censor blur", user_prompt.lower())
 
     def test_unusable_visual_ranges_are_parsed_and_merged(self):
         raw = json.dumps({
@@ -89,6 +89,51 @@ class HookModeTests(unittest.TestCase):
         self.assertEqual(len(ranges), 1)
         self.assertEqual(ranges[0]["start_sec"], 12.0)
         self.assertEqual(ranges[0]["end_sec"], 18.0)
+
+    def test_is_hook_clean_handles_none_values_gracefully(self):
+        ok, _ = AIProcessor.is_hook_clean(
+            start=10.0,
+            end=18.0,
+            unusable_ranges=[{"start_sec": None, "end_sec": None, "reason": None}],
+            transcript_cues=[{"start": None, "end": None, "text": None}],
+            reason="Action impact"
+        )
+        self.assertTrue(ok)
+
+    def test_hook_replacement_handles_none_source_start(self):
+        raw = json.dumps({
+            "title": "A Great Title",
+            "hook_selection": {"start_sec": 12.0, "end_sec": 18.0, "reason": "impact"},
+            "unusable_visual_ranges": [{"start_sec": 10.0, "end_sec": 20.0, "reason": "sponsor"}],
+            "segments": [
+                {
+                    "id": "V01",
+                    "beat_type": "climax",
+                    "source_start": None,
+                    "source_end": None,
+                    "visual_refs": ["H02"],
+                    "visual_subject": "Decisive victory",
+                    "narration": "He won the match definitively in front of thousands of screaming fans after a dramatic and hard fought battle that kept everyone on the edge of their seats."
+                }
+            ]
+        })
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(AIProcessor, "summarize_content", return_value=raw):
+                AIProcessor.summarize_and_save(
+                    model_name="test-model",
+                    api_key="fake-key",
+                    prompt="test",
+                    source_text="test text",
+                    specific_dir=folder,
+                    source_context={"video_duration": 120, "gemini_hook_duration": 8},
+                    highlight_candidates=[{"id": "H02", "start": 35.0, "end": 45.0}]
+                )
+            hook_file = os.path.join(folder, "gemini_hook_selection.json")
+            self.assertTrue(os.path.isfile(hook_file))
+            with open(hook_file, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertEqual(saved["start_sec"], 35.0)
+            self.assertEqual(saved["end_sec"], 43.0)
 
     def test_parse_script_payload_repairs_missing_script_from_segments(self):
         raw = json.dumps({
