@@ -779,56 +779,13 @@ class ProfessionalVideoApp:
         )
         self.random_broll_mirror_chk.pack(side=tk.LEFT, padx=(16, 0))
 
-        # Hàng 4: Quét lưới AI xóa logo & sub cũ + Slider độ mờ 10-100%
-        anti_copyright_row = ttk.Frame(f3)
-        anti_copyright_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(1, 1))
         self.scramble_original_audio_var = tk.BooleanVar(value=False)
+        self.gemini_grid_inspector_var = tk.BooleanVar(value=False)
 
-        self.gemini_grid_inspector_var = tk.BooleanVar(
-            value=bool(self.config.get("gemini_grid_inspector", True))
-        )
-        self.gemini_grid_inspector_chk = ttk.Checkbutton(
-            anti_copyright_row,
-            text="🔍 Quét lưới AI xóa logo & sub cũ",
-            variable=self.gemini_grid_inspector_var,
-        )
-        self.gemini_grid_inspector_chk.pack(side=tk.LEFT)
-
-        ttk.Label(anti_copyright_row, text="Độ mờ che:").pack(side=tk.LEFT, padx=(14, 4))
-        self.qc_blur_strength_var = tk.IntVar(
-            value=int(self.config.get("qc_blur_strength", 75))
-        )
-        self.qc_blur_strength_lbl = ttk.Label(
-            anti_copyright_row,
-            text=f"{self.qc_blur_strength_var.get()}%",
-            font=("Segoe UI", 9, "bold"),
-            foreground="#2563EB",
-            width=5
-        )
-        def _on_qc_blur_slider(val):
-            try:
-                v = int(float(val))
-                self.qc_blur_strength_var.set(v)
-                self.qc_blur_strength_lbl.config(text=f"{v}%")
-            except Exception:
-                pass
-
-        self.qc_blur_scale = ttk.Scale(
-            anti_copyright_row,
-            from_=10,
-            to=100,
-            value=self.qc_blur_strength_var.get(),
-            orient=tk.HORIZONTAL,
-            length=110,
-            command=_on_qc_blur_slider
-        )
-        self.qc_blur_scale.pack(side=tk.LEFT, padx=(0, 2))
-        self.qc_blur_strength_lbl.pack(side=tk.LEFT)
-
-        # Hàng 5: Xóa thư mục tạm sau xuất (mặc định tắt — an toàn)
+        # Hàng 4: Xóa thư mục tạm sau xuất (mặc định tắt — an toàn)
         self.cleanup_temp_var = tk.BooleanVar(value=bool(self.config.get("cleanup_temp_after_export", False)))
         cleanup_row = ttk.Frame(f3)
-        cleanup_row.grid(row=5, column=0, columnspan=6, sticky=tk.W, pady=(1, 1))
+        cleanup_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(1, 1))
         self.cleanup_temp_chk = ttk.Checkbutton(
             cleanup_row,
             text="Xóa thư mục tạm sau khi xuất video",

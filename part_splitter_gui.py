@@ -122,7 +122,7 @@ class PartSplitterFrame(ttk.Frame):
         self.subtle_zoom_var = tk.BooleanVar(value=bool(c.get("apply_subtle_zoom", True)))
         self.random_mirror_var = tk.BooleanVar(value=bool(c.get("random_mirror", False)))
         self.part_prefix_var = tk.StringVar(value=c.get("part_label_prefix", "Part"))
-        self.gemini_grid_inspector_var = tk.BooleanVar(value=bool(c.get("gemini_grid_inspector", True)))
+        self.gemini_grid_inspector_var = tk.BooleanVar(value=False)
         self.qc_blur_strength_var = tk.IntVar(value=int(c.get("qc_blur_strength", 75)))
         self.cleanup_temp_var = tk.BooleanVar(value=bool(c.get("cleanup_temp_after_export", False)))
 
@@ -530,41 +530,9 @@ class PartSplitterFrame(ttk.Frame):
             foreground="#1E40AF", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
-        # Hàng 4: Quét lưới AI xóa logo & sub cũ + Slider độ mờ 10-100%
+        # Hàng 4: Xóa thư mục tạm sau khi xuất video
         clean_row = ttk.Frame(f3)
         clean_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
-        ttk.Checkbutton(
-            clean_row, text="🔍 Quét lưới AI xóa logo & sub cũ", variable=self.gemini_grid_inspector_var
-        ).pack(side=tk.LEFT, padx=(0, 6))
-
-        ttk.Label(clean_row, text="Độ mờ che:").pack(side=tk.LEFT, padx=(6, 4))
-        self.qc_blur_strength_lbl = ttk.Label(
-            clean_row,
-            text=f"{self.qc_blur_strength_var.get()}%",
-            font=("Segoe UI", 9, "bold"),
-            foreground="#2563EB",
-            width=5
-        )
-        def _on_ps_qc_blur(val):
-            try:
-                v = int(float(val))
-                self.qc_blur_strength_var.set(v)
-                self.qc_blur_strength_lbl.config(text=f"{v}%")
-            except Exception:
-                pass
-
-        self.qc_blur_scale = ttk.Scale(
-            clean_row,
-            from_=10,
-            to=100,
-            value=self.qc_blur_strength_var.get(),
-            orient=tk.HORIZONTAL,
-            length=100,
-            command=_on_ps_qc_blur
-        )
-        self.qc_blur_scale.pack(side=tk.LEFT, padx=(0, 2))
-        self.qc_blur_strength_lbl.pack(side=tk.LEFT, padx=(0, 10))
-
         ttk.Checkbutton(
             clean_row, text="Xóa thư mục tạm sau khi xuất video", variable=self.cleanup_temp_var
         ).pack(side=tk.LEFT)
@@ -2181,89 +2149,8 @@ class PartSplitterFrame(ttk.Frame):
         self.log(f"📁 [THƯ MỤC XUẤT] Thư mục riêng cho video: {video_out_dir}")
 
         # 6.5. Single-Pass AI QC: Quét AI 1 lần duy nhất trên toàn bộ timeline của cleaned_video
-        # Thay vì gọi Gemini 4 lần độc lập cho 4 part (mất 2-3 phút), quét 1 lần (15-20s) rồi phân bổ cho từng part!
-        enable_gemini_qc = bool(cfg.get("gemini_grid_inspector", True))
+        enable_gemini_qc = False
         master_blurs = []
-        if enable_gemini_qc:
-            from antigravity_processor import AntigravityProcessor
-            api_key = str(cfg.get("gemini_api_key") or cfg.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
-            has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())
-            if has_ai_service:
-                try:
-                    from ai_processor import AIProcessor
-                    from editor_processor import EditorProcessor
-                    clean_dur = probe_duration_sec(cleaned_video)
-
-                    qc_master_dir = os.path.join(work_dir, "qc_frames_master")
-                    os.makedirs(qc_master_dir, exist_ok=True)
-
-                    # Trích xuất 12-16 frames trên toàn video sạch bằng Fast Direct Seek song song siêu tốc (<1-2s thay vì 50s)
-                    n_kfs = 14
-                    sample_times = [((i + 0.5) / float(n_kfs)) * clean_dur for i in range(n_kfs)]
-                    qc_vf = EditorProcessor._build_qc_vf_filter(cfg, input_label="[0:v]")
-
-                    def _extract_master_kf(item_tuple):
-                        k_idx, k_t = item_tuple
-                        out_fp = os.path.join(qc_master_dir, f"frame_{k_idx:04d}.jpg")
-                        cmd_kf = [
-                            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                            "-ss", f"{k_t:.2f}",
-                            "-i", cleaned_video,
-                            "-vframes", "1",
-                            "-filter_complex", f"{qc_vf};[vout]scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2[outkf]",
-                            "-map", "[outkf]",
-                            out_fp
-                        ]
-                        try:
-                            from part_splitter_engine import _ff_run
-                            _ff_run(cmd_kf, log_fn=None, timeout=20)
-                        except Exception:
-                            pass
-
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, os.cpu_count() or 4)) as kf_pool:
-                        list(kf_pool.map(_extract_master_kf, enumerate(sample_times)))
-
-                    frame_files = sorted([os.path.join(qc_master_dir, f) for f in os.listdir(qc_master_dir) if f.endswith(".jpg")])
-                    if frame_files:
-                        self.log(f"⚡ [AI QC SINGLE-PASS] Quét toàn bộ video ({clean_dur:.1f}s) qua {len(frame_files)} keyframes...")
-                        n_frames = len(frame_files)
-                        step_dur = clean_dur / float(n_frames)
-                        kf_items = []
-                        for idx, fp in enumerate(frame_files):
-                            st = idx * step_dur
-                            en = min(clean_dur, (idx + 1) * step_dur)
-                            kf_items.append({
-                                "path": fp,
-                                "start_sec": max(0.0, st),
-                                "end_sec": min(clean_dur, en),
-                                "sample_sec": (st + en) / 2.0
-                            })
-
-                        model_name = str(cfg.get("gemini_model") or cfg.get("ai_model") or "")
-                        detected_items = AIProcessor.inspect_90s_grid_for_copyright(
-                            api_key=api_key, model_name=model_name,
-                            duration_sec=clean_dur,
-                            keyframes=kf_items
-                        )
-                        if detected_items:
-                            master_blurs = EditorProcessor.refine_detection_boxes_with_opencv(
-                                detected_items, qc_master_dir, duration_sec=clean_dur
-                            )
-                            self.log(f"✅ [AI QC SINGLE-PASS] Đã phát hiện {len(master_blurs)} vùng logo/sub/máu cần che trên toàn video.")
-                        else:
-                            master_blurs = []
-                except Exception as qc_err:
-                    self.log(f"⚠️ [AI QC SINGLE-PASS] Không thể quét toàn cục ({qc_err}), fallback sang quét từng part.")
-                    master_blurs = None
-                finally:
-                    qc_master_candidate = os.path.join(work_dir, "qc_frames_master")
-                    if os.path.isdir(qc_master_candidate):
-                        try:
-                            shutil.rmtree(qc_master_candidate, ignore_errors=True)
-                        except Exception:
-                            pass
-        else:
-            master_blurs = []
 
         # Phân bổ các vùng mờ về từng part theo mốc start/end của part
         parts_blurs_map = {}

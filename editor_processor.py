@@ -3083,7 +3083,7 @@ class EditorProcessor:
             hook_duration=hook_duration,
         )
 
-        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
+        enable_gemini_qc = False
         watermark_blurs = []
         if enable_gemini_qc:
             try:

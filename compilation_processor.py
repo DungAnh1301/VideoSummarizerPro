@@ -2258,8 +2258,7 @@ class CompilationProcessor:
         3. Tinh chỉnh box bằng OpenCV, xây dựng bộ lọc kính mờ clustered delogo/gblur.
         4. Lắp ráp Subtitle, Title Banner và Badge No. X ĐÈ LÊN TRÊN CÙNG sau kính mờ QC.
         """
-        from editor_processor import EditorProcessor
-        enable_gemini_qc = bool(post_options.get("gemini_grid_inspector", True))
+        enable_gemini_qc = False
         from antigravity_processor import AntigravityProcessor
         api_key = str(post_options.get("gemini_api_key") or post_options.get("api_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "")
         has_ai_service = bool(api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or AntigravityProcessor.executable())

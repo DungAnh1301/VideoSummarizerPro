@@ -118,7 +118,7 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "sub_margin_v": 100,
     "sub_color": "&HFFFFFF&",
     "sub_outline_color": "&H000000&",
-    "gemini_grid_inspector": True,        # Quét lưới AI xóa logo & sub cũ
+    "gemini_grid_inspector": False,       # Quét lưới AI xóa logo & sub cũ (Đã tắt)
     "qc_blur_strength": 75,               # Độ mờ che logo / sub AI (10% - 100%)
     "cleanup_temp_after_export": False,
 

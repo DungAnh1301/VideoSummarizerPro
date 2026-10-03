@@ -808,8 +808,8 @@ class PartSplitterEngine:
             config=cfg
         )
 
-        # 4.1 Quét kiểm duyệt AI xóa logo, sub cũ, banner, vết máu (Gemini Grid Inspector)
-        enable_gemini_qc = bool(cfg.get("gemini_grid_inspector", True))
+        # 4.1 Quét kiểm duyệt AI xóa logo (Đã tắt/loại bỏ để tối ưu hiệu năng)
+        enable_gemini_qc = False
         curr_v_label = "vout"
         clean_chain_str = ""
         part_dur = probe_duration_sec(raw_part)
