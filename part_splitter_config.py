@@ -14,21 +14,7 @@ from typing import Dict, Any, List
 CONFIG_FILE_NAME = "config_part_splitter.json"
 
 DEFAULT_PART_CONFIG: Dict[str, Any] = {
-    # 0. Chế độ làm (Workflow Mode)
-    "workflow_mode": "single",            # 'single' (1 video đơn lẻ) hoặc 'compilation' (tuyển tập playlist top countdown)
-    "playlist_url": "",                   # URL YouTube Playlist
-    "compilation_source_path": "",
-    "compilation_clip_count": 5,          # Số clip bốc ra từ playlist làm Top Highlight
-    "compilation_target_duration": 180.0, # Tổng thời lượng mong muốn (giây), AI sẽ tinh lược đoạn thừa từng clip
-    "compilation_duration_tolerance": 0.20, # Linh hoạt +-20% thời lượng tổng theo nhịp cao trào
-    "playlist_title_y_pos": 160,          # Vị trí trên cùng màn hình cho Tên Playlist
-    "clip_badge_y_pos": 960,              # Vị trí giữa màn hình cho No. X : Tên video
-    "compilation_title_style": "clean_original",
-    "compilation_enable_teaser": False,
-    "compilation_teaser_duration": 3.0,
-    "compilation_rank_by": "views",       # 'views', 'likes', hoặc 'random'
-
-    # 0.1 Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ)
+    # 0. Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ)
     "editing_mode": "viral_condensed",          # 'viral_condensed' (Chế độ đối thủ mới) hoặc 'classic_linear' (Kiểu cũ)
     "target_part_duration": 90.0,               # Thời lượng mục tiêu mỗi Part (75s - 95s)
     "min_part_duration": 70.0,                  # Thời lượng tối thiểu
@@ -196,19 +182,12 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Cấu hình Chia Part hoàn toàn độc lập với Tóm Tắt Video, không thừa kế ngầm để tránh ghi đè chéo
-
-    # Nếu zoom_percent khác 100%, tự động bật zoom_in
-    try:
-        zv = float(config.get("zoom_percent", 100.0) or 100.0)
-        if abs(zv - 100.0) >= 0.1:
-            config["zoom_in"] = True
-    except Exception:
-        pass
-
-    # Tự động cứu lại cấu hình từ update_backup nếu bị mất do update bản cũ
-    if _recover_from_backup_if_needed(base_dir, config):
-        save_part_config(config, config_path)
+    # Dọn dẹp các trường tàn dư cũ của chế độ compilation
+    for comp_key in ("workflow_mode", "playlist_url", "compilation_source_path", "compilation_clip_count",
+                     "compilation_target_duration", "compilation_duration_tolerance", "playlist_title_y_pos",
+                     "clip_badge_y_pos", "compilation_title_style", "compilation_enable_teaser",
+                     "compilation_teaser_duration", "compilation_rank_by"):
+        config.pop(comp_key, None)
 
     # Đảm bảo kiểu dữ liệu an toàn
     try:

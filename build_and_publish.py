@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.101"
+VERSION = "1.3.102"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.101: Nâng cấp toàn diện Chế độ 2 (Chia Part) thành 'Đạo diễn AI Thích Ứng Mở' chuẩn đối thủ triệu view TikTok. Tích hợp quy trình 3-Pass AI (Showrunner -> Pacing Micro-cuts 2-8s + Hook 2-3s -> QC Lời thoại chống nuốt chữ), đóng gói layout 9:16 + Nền Blur chuyển động, dán Thẻ Trắng Tiêu Đề Gốc YouTube và Nút Bo Tròn PART X, chuẩn hóa âm thanh -14 LUFS."
+NOTES = "Bản phát hành v1.3.102: Loại bỏ hoàn toàn 100% tính năng Tuyển tập TOP Countdown khỏi Chế độ 2 (Chia Part); sửa triệt để lỗi đè chữ ở Tab 3; cập nhật bảng hàng đợi hiển thị cột Chế độ 3-Pass AI & Thời lượng; reset thông số mặc định về chuẩn đẹp (Tốc độ 1.0x, -14 LUFS, Zoom 100%)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
