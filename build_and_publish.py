@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.100"
+VERSION = "1.3.101"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.100: Loại bỏ hoàn toàn tính năng Quét lưới AI xóa logo & sub cũ khỏi giao diện và pipeline; tăng tốc render và dọn dẹp giao diện sạch sẽ, ưu tiên dùng Studio Crop/Blur Mask chuẩn xác."
+NOTES = "Bản phát hành v1.3.101: Nâng cấp toàn diện Chế độ 2 (Chia Part) thành 'Đạo diễn AI Thích Ứng Mở' chuẩn đối thủ triệu view TikTok. Tích hợp quy trình 3-Pass AI (Showrunner -> Pacing Micro-cuts 2-8s + Hook 2-3s -> QC Lời thoại chống nuốt chữ), đóng gói layout 9:16 + Nền Blur chuyển động, dán Thẻ Trắng Tiêu Đề Gốc YouTube và Nút Bo Tròn PART X, chuẩn hóa âm thanh -14 LUFS."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -42,7 +42,7 @@ files = [
     "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
     "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.example.json",
     "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",
-    "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md"
+    "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md", "PLAN_CHE_DO_2.md"
 ]
 for fname in files:
     src = os.path.join(ROOT, fname)

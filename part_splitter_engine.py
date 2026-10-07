@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageColor
+from PIL import Image, ImageDraw, ImageColor, ImageFont
 
 from font_manager import FontManager
 
@@ -548,6 +548,362 @@ class PartSplitterEngine:
         return parts_info
 
     @classmethod
+    def render_competitor_top_card(
+        cls,
+        title_text: str,
+        video_w: int = 1080,
+        output_png: str = "",
+        config: Dict[str, Any] = None
+    ) -> str:
+        """Render Thẻ Trắng bo góc chứa Tiêu đề gốc YouTube chuẩn phong cách đối thủ triệu view:
+        - Nền trắng tinh khôi bo góc mềm mại (radius 22px).
+        - Chữ đen slate-900 nét căng, tự ngắt dòng.
+        - Đường viền xám nhẹ tinh tế.
+        """
+        if not output_png:
+            output_png = os.path.join(tempfile.gettempdir(), f"top_card_{time.time_ns()}.png")
+
+        clean_title = (title_text or "Video Title").strip()
+        # Loại bỏ các tiền tố kiểu "Part 1:", "Tập 1:" nếu có
+        clean_title = re.sub(r'^(?:Part|Tập|Chapter|Phần)\s*\d+[:\-.]*\s*', '', clean_title, flags=re.IGNORECASE).strip()
+
+        card_w = int(video_w * 0.88)  # ~950px
+        font_size = 36 if len(clean_title) < 70 else (32 if len(clean_title) < 120 else 28)
+        font = FontManager.get_banner_font(clean_title, font_size)
+
+        # Ngắt dòng vừa khít bề rộng card (trừ lề 60px)
+        max_text_w = card_w - 60
+        words = clean_title.split()
+        lines = []
+        cur = []
+        for w in words:
+            cand = " ".join(cur + [w])
+            bbox = font.getbbox(cand)
+            if (bbox[2] - bbox[0]) <= max_text_w or not cur:
+                cur.append(w)
+            else:
+                lines.append(" ".join(cur))
+                cur = [w]
+        if cur:
+            lines.append(" ".join(cur))
+        # Tối đa 3 dòng để không che khuất màn hình
+        if len(lines) > 3:
+            lines = lines[:2] + [lines[2] + "..."]
+        wrapped_text = "\n".join(lines)
+
+        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        d_dummy = ImageDraw.Draw(dummy)
+        bbox = d_dummy.multiline_textbbox((0, 0), wrapped_text, font=font, align="center", spacing=10)
+
+        pad_y = 20
+        text_h = bbox[3] - bbox[1]
+        card_h = int(text_h + pad_y * 2 + 10)
+
+        img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Vẽ hộp bo góc trắng mềm mại với viền xám nhẹ
+        draw.rounded_rectangle(
+            [(0, 0), (card_w, card_h)],
+            radius=22,
+            fill=(255, 255, 255, 250),
+            outline=(226, 232, 240, 255),
+            width=2
+        )
+
+        # Vẽ chữ đen slate-900 ở chính giữa card
+        text_x = (card_w - (bbox[2] - bbox[0])) / 2.0 - bbox[0]
+        text_y = pad_y - bbox[1]
+        draw.multiline_text(
+            (text_x, text_y),
+            wrapped_text,
+            font=font,
+            fill=(15, 23, 42, 255),
+            align="center",
+            spacing=10
+        )
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
+        img.save(output_png, "PNG")
+        return output_png
+
+    @classmethod
+    def render_competitor_bottom_badge(
+        cls,
+        part_index: int,
+        prefix: str = "PART",
+        video_w: int = 1080,
+        output_png: str = ""
+    ) -> str:
+        """Render Nút Trắng hình Viên Thuốc in chữ 'PART X' chuẩn đối thủ:
+        - Nền trắng tinh bo tròn dạng pill badge.
+        - Chữ đen in hoa nổi bật.
+        """
+        if not output_png:
+            output_png = os.path.join(tempfile.gettempdir(), f"bottom_badge_{time.time_ns()}.png")
+
+        p_text = f"{(prefix or 'PART').upper()} {part_index}"
+        font_size = 40
+        font = FontManager.get_banner_font(p_text, font_size)
+
+        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        d_dummy = ImageDraw.Draw(dummy)
+        bbox = d_dummy.textbbox((0, 0), p_text, font=font)
+
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+        badge_w = max(240, int(text_w + 70))
+        badge_h = 70
+
+        img = Image.new("RGBA", (badge_w, badge_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Viên thuốc bo tròn bán kính badge_h / 2
+        draw.rounded_rectangle(
+            [(0, 0), (badge_w, badge_h)],
+            radius=int(badge_h / 2),
+            fill=(255, 255, 255, 252),
+            outline=(226, 232, 240, 255),
+            width=2
+        )
+
+        # Vẽ text đen giữa viên thuốc
+        tx = (badge_w - text_w) / 2.0 - bbox[0]
+        ty = (badge_h - text_h) / 2.0 - bbox[1]
+        draw.text(
+            (tx, ty),
+            p_text,
+            font=font,
+            fill=(15, 23, 42, 255)
+        )
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
+        img.save(output_png, "PNG")
+        return output_png
+
+    @classmethod
+    def build_condensed_part_video(
+        cls,
+        source_video: str,
+        cuts: List[Dict[str, Any]],
+        hook: Optional[Dict[str, Any]] = None,
+        output_path: str = "",
+        log_fn: Optional[Callable[[str], None]] = None,
+        work_dir: str = ""
+    ) -> str:
+        """Cắt nối Micro-Cuts (2.0s - 8.0s) từ video gốc:
+        - Áp dụng Punch-in Zoom (115%) cho các shot được chỉ định punch_in=True.
+        - Áp dụng Micro-Crossfade Audio (10ms) tại các điểm nối để triệt tiêu 100% tiếng pop/click.
+        - Đưa Hook (2-3s) lên giây 00:00 đầu video nếu có.
+        """
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
+        if not output_path:
+            work_dir = work_dir or tempfile.gettempdir()
+            output_path = os.path.join(work_dir, f"condensed_{time.time_ns()}.mp4")
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+        # Chuẩn bị danh sách phân đoạn: Hook lên trước, sau đó là cuts
+        segments = []
+        if hook and isinstance(hook, dict):
+            h_s = float(hook.get("start", 0.0))
+            h_e = float(hook.get("end", 0.0))
+            if h_e > h_s + 1.0:
+                segments.append({
+                    "start": round(h_s, 2),
+                    "end": round(h_e, 2),
+                    "punch_in": False,
+                    "is_hook": True
+                })
+
+        for c in cuts or []:
+            try:
+                s = float(c.get("start", 0.0))
+                e = float(c.get("end", 0.0))
+                if e > s + 0.8:
+                    segments.append({
+                        "start": round(s, 2),
+                        "end": round(e, 2),
+                        "punch_in": bool(c.get("punch_in", False)),
+                        "is_hook": False
+                    })
+            except Exception:
+                pass
+
+        if not segments:
+            _log("⚠️ Không có cuts nào hợp lệ, sao chép video gốc.")
+            shutil.copyfile(source_video, output_path)
+            return output_path
+
+        _log(f"✂️ [MICRO-CUTS] Đang cắt nối {len(segments)} phân đoạn (bao gồm {1 if hook else 0} Hook)...")
+
+        # Xây dựng FFmpeg filter_complex
+        v_filters = []
+        a_filters = []
+        concat_inputs = []
+
+        for i, seg in enumerate(segments):
+            s = seg["start"]
+            e = seg["end"]
+            dur = max(0.5, e - s)
+            p_in = seg["punch_in"]
+
+            # Video: Trim + setpts + Punch-in zoom 115% nếu cần
+            if p_in:
+                v_filters.append(
+                    f"[0:v]trim=start={s:.2f}:end={e:.2f},setpts=PTS-STARTPTS,"
+                    f"crop=iw/1.15:ih/1.15:(iw-ow)/2:(ih-oh)/2,scale=1920:1080,setsar=1[v{i}]"
+                )
+            else:
+                v_filters.append(
+                    f"[0:v]trim=start={s:.2f}:end={e:.2f},setpts=PTS-STARTPTS,scale=1920:1080,setsar=1[v{i}]"
+                )
+
+            # Audio: Trim + asetpts + Micro-fade 10ms (triệt tiêu 100% pop/click)
+            fade_d = min(0.015, dur * 0.1)
+            fade_out_st = max(0.0, dur - fade_d)
+            a_filters.append(
+                f"[0:a]atrim=start={s:.2f}:end={e:.2f},asetpts=PTS-STARTPTS,"
+                f"afade=t=in:st=0:d={fade_d:.3f},afade=t=out:st={fade_out_st:.3f}:d={fade_d:.3f}[a{i}]"
+            )
+
+            concat_inputs.append(f"[v{i}][a{i}]")
+
+        n_segs = len(segments)
+        filter_str = (
+            ";".join(v_filters) + ";" +
+            ";".join(a_filters) + ";" +
+            "".join(concat_inputs) + f"concat=n={n_segs}:v=1:a=1[vout][aout]"
+        )
+
+        enc_name, enc_opts = get_best_video_encoder()
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", source_video,
+            "-filter_complex", filter_str,
+            "-map", "[vout]", "-map", "[aout]",
+            "-c:v", enc_name, *enc_opts,
+            "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+            output_path
+        ]
+        _ff_run(cmd, log_fn=log_fn, timeout=1800, label="micro_cuts")
+        _log(f"✅ [MICRO-CUTS] Hoàn thành cắt nối: {output_path} ({probe_duration_sec(output_path):.1f}s)")
+        return output_path
+
+    @classmethod
+    def apply_competitor_visual_packaging(
+        cls,
+        condensed_video: str,
+        output_final: str,
+        master_title: str,
+        part_index: int,
+        part_prefix: str = "PART",
+        config: Dict[str, Any] = None,
+        log_fn: Optional[Callable[[str], None]] = None,
+        work_dir: str = ""
+    ) -> str:
+        """Đóng gói chuẩn 1:1 Đối thủ triệu view:
+        - Canvas 9:16 (1080x1920)
+        - Nền Gaussian Blur trên/dưới mờ ảo
+        - Khung giữa 16:9 sắc nét không biến dạng
+        - Top Card: Thẻ trắng bo góc in Title gốc YouTube (Y ~ 140)
+        - Bottom Badge: Nút trắng viên thuốc 'PART X' (Y ~ 1700)
+        - Audio Normalization -14 LUFS (đanh rõ, sống động)
+        """
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
+        config = config or {}
+        work_dir = work_dir or os.path.dirname(os.path.abspath(condensed_video))
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
+
+        enable_top = bool(config.get("competitor_top_card", True))
+        enable_bottom = bool(config.get("competitor_bottom_badge", True))
+        top_y = int(config.get("top_card_y_pos", 140))
+        bottom_y = int(config.get("bottom_badge_y_pos", 1700))
+
+        _log(f"📦 [ĐÓNG GÓI ĐỐI THỦ] Canvas 9:16 | Nền Blur | Top Card ({enable_top}) | Bottom Badge ({enable_bottom}) | Audio -14 LUFS...")
+
+        # 1. Render Top Card & Bottom Badge PNGs
+        top_png = ""
+        if enable_top:
+            top_png = os.path.join(work_dir, f"_top_card_{part_index}_{time.time_ns()}.png")
+            cls.render_competitor_top_card(master_title, video_w=1080, output_png=top_png, config=config)
+
+        bottom_png = ""
+        if enable_bottom:
+            bottom_png = os.path.join(work_dir, f"_bottom_badge_{part_index}_{time.time_ns()}.png")
+            cls.render_competitor_bottom_badge(part_index, prefix=part_prefix, video_w=1080, output_png=bottom_png)
+
+        # 2. Xây dựng filter graph FFmpeg
+        inputs = ["-i", condensed_video]
+        filter_parts = []
+
+        # Nền blur: scale to fill 1080x1920 rồi phủ boxblur
+        filter_parts.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg]")
+        # Tiền cảnh: scale 1080:-2 đặt chính giữa dọc
+        filter_parts.append("[0:v]scale=1080:-2:flags=lanczos[fg]")
+        filter_parts.append("[bg][fg]overlay=0:(1920-h)/2[base_canvas]")
+
+        curr_v = "base_canvas"
+        in_idx = 1
+
+        if top_png and os.path.isfile(top_png):
+            inputs.extend(["-i", top_png])
+            filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay=(W-w)/2:{top_y}[v_top]")
+            curr_v = "v_top"
+            in_idx += 1
+
+        if bottom_png and os.path.isfile(bottom_png):
+            inputs.extend(["-i", bottom_png])
+            filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay=(W-w)/2:{bottom_y}[v_bot]")
+            curr_v = "v_bot"
+            in_idx += 1
+
+        # Audio filter: Chuẩn hóa -14 LUFS đanh rõ
+        audio_filter = "loudnorm=I=-14:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100"
+
+        filter_complex_str = ";".join(filter_parts) + f";[0:a]{audio_filter}[aout]"
+
+        enc_name, enc_opts = get_best_video_encoder()
+        cmd = [
+            "ffmpeg", "-y",
+            *inputs,
+            "-filter_complex", filter_complex_str,
+            "-map", f"[{curr_v}]", "-map", "[aout]",
+            "-c:v", enc_name, *enc_opts,
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+            output_final
+        ]
+
+        try:
+            _ff_run(cmd, log_fn=log_fn, timeout=1800, label="competitor_pack")
+        finally:
+            for p in (top_png, bottom_png):
+                if p and os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+
+        _log(f"🎉 [ĐÓNG GÓI HOÀN TẤT] Video Part {part_index}: {os.path.basename(output_final)} ({probe_duration_sec(output_final):.1f}s)")
+        return output_final
+
+    @classmethod
     def render_banner_image(
         cls,
         title_text: str,
@@ -763,6 +1119,44 @@ class PartSplitterEngine:
         os.makedirs(temp_dir, exist_ok=True)
         if output_final:
             os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
+
+        # KIỂM TRA CHẾ ĐỘ ĐỐI THỦ (VIRAL CONDENSED / 3-PASS AI DIRECTOR)
+        editing_mode = str(cfg.get("editing_mode", "viral_condensed")).strip()
+        enable_competitor = bool(cfg.get("enable_competitor_layout", True))
+        cuts = part_info.get("cuts") if isinstance(part_info, dict) else kwargs.get("cuts")
+
+        if (editing_mode == "viral_condensed" or cuts) and enable_competitor:
+            _log(f"🎬 [HẬU KỲ ĐỐI THỦ] Áp dụng quy chuẩn Đạo Diễn AI & Đóng gói thị giác 1:1 cho Part {p_idx}...")
+            source_for_packaging = raw_part
+
+            # 1. Nếu có cuts kịch bản từ Đạo Diễn AI, cắt nối micro-cuts trước
+            if cuts:
+                condensed_path = os.path.join(temp_dir, f"part_{p_idx}_condensed.mp4")
+                hook_data = hook_info or (part_info.get("hook") if isinstance(part_info, dict) else None)
+                src_vid = source_video or kwargs.get("source_video") or raw_part
+                cls.build_condensed_part_video(
+                    source_video=src_vid,
+                    cuts=cuts,
+                    hook=hook_data,
+                    output_path=condensed_path,
+                    log_fn=log_fn,
+                    work_dir=temp_dir
+                )
+                source_for_packaging = condensed_path
+
+            # 2. Đóng gói thị giác 1:1 đối thủ (Canvas 9:16 + Nền Blur + Top Card + Bottom Badge + -14 LUFS)
+            master_title = str(kwargs.get("master_title") or cfg.get("master_title") or p_title)
+            final_rendered = cls.apply_competitor_visual_packaging(
+                condensed_video=source_for_packaging,
+                output_final=output_final,
+                master_title=master_title,
+                part_index=p_idx,
+                part_prefix=part_prefix,
+                config=cfg,
+                log_fn=log_fn,
+                work_dir=temp_dir
+            )
+            return final_rendered
 
         # 2. Xây dựng Filter Complex chuẩn 100% theo EditorProcessor của Tóm Tắt Video
         from editor_processor import EditorProcessor

@@ -102,7 +102,9 @@ class PartSplitterFrame(ttk.Frame):
 
         # --- Tab 2: AI Gemini & Chiến Lược Chia Part ---
         self.google_status_var = tk.StringVar(value="● Đang kiểm tra phiên Google...")
-        self.gemini_model_var = tk.StringVar(value=c.get("gemini_model", "gemini-2.5-flash"))
+        self.editing_mode_var = tk.StringVar(value=c.get("editing_mode", "viral_condensed"))
+        self.target_part_duration_var = tk.DoubleVar(value=float(c.get("target_part_duration", 90.0)))
+        self.gemini_model_var = tk.StringVar(value=c.get("gemini_model", "gemini-3.8-flash-high"))
         self.gemini_api_key_var = tk.StringVar(value=c.get("gemini_api_key", ""))
         self.auto_title_var = tk.BooleanVar(value=bool(c.get("auto_regenerate_title", True)))
 
@@ -112,10 +114,13 @@ class PartSplitterFrame(ttk.Frame):
         self.prune_minutes_var = tk.DoubleVar(value=float(c.get("prune_minutes", 15.0)))
         self.prune_range_label_var = tk.StringVar()
 
-        self.part_count_var = tk.IntVar(value=int(c.get("part_count", 4)))
+        self.part_count_var = tk.IntVar(value=int(c.get("part_count", 6)))
 
-        # --- Tab 3: Hậu kỳ Video Gốc ---
-        self.source_speed_var = tk.DoubleVar(value=float(c.get("source_speed", 1.05)))
+        # --- Tab 3: Hậu kỳ Video Gốc (Đóng gói chuẩn đối thủ) ---
+        self.enable_competitor_layout_var = tk.BooleanVar(value=bool(c.get("enable_competitor_layout", True)))
+        self.competitor_top_card_var = tk.BooleanVar(value=bool(c.get("competitor_top_card", True)))
+        self.competitor_bottom_badge_var = tk.BooleanVar(value=bool(c.get("competitor_bottom_badge", True)))
+        self.source_speed_var = tk.DoubleVar(value=float(c.get("source_speed", 1.0)))
         self.blur_var = tk.BooleanVar(value=bool(c.get("blur_bg", True)))
         self.zoom_var = tk.BooleanVar(value=bool(c.get("zoom_in", False)))
         self.capcut_limiter_var = tk.BooleanVar(value=bool(c.get("apply_capcut_limiter", True)))
@@ -256,10 +261,18 @@ class PartSplitterFrame(ttk.Frame):
         self.btn_browse_folder = ttk.Button(local_btn_row, text="📁 Folder", command=self._browse_source_folder, style="Tool.TButton")
         self.btn_browse_folder.pack(side=tk.LEFT)
 
-        # Hàng 1.3: Kiểu Hook & Nút Hook Studio
-        hook_row = ttk.Frame(self.single_mode_frame)
-        hook_row.grid(row=3, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(4, 2))
-        ttk.Label(hook_row, text="Kiểu hook:").pack(side=tk.LEFT, padx=(0, 6))
+        # Hàng 1.3: Thông báo Hook AI Đối Thủ (Chế độ 3-Pass)
+        self.viral_hook_notice = ttk.Label(
+            self.single_mode_frame,
+            text="✨ [ĐẠO DIỄN AI 3-PASS] Trưởng phòng dựng tự động quét tìm Hook đỉnh cao nhất (2-3s) đưa lên giây 00:00 của mỗi Part.",
+            foreground="#2563EB", font=("Segoe UI Semibold", 8)
+        )
+        self.viral_hook_notice.grid(row=3, column=0, columnspan=6, sticky=tk.W, padx=2, pady=(4, 2))
+
+        # Hàng 1.4: Kiểu Hook & Nút Hook Studio (Classic Linear dự phòng)
+        self.hook_row = ttk.Frame(self.single_mode_frame)
+        self.hook_row.grid(row=4, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(2, 2))
+        ttk.Label(self.hook_row, text="Kiểu hook:").pack(side=tk.LEFT, padx=(0, 6))
 
         for label, val in (
             ("Tự chọn mốc", "native"),
@@ -268,29 +281,29 @@ class PartSplitterFrame(ttk.Frame):
             ("Hook AI", "ai"),
         ):
             ttk.Radiobutton(
-                hook_row, text=label, variable=self.hook_mode_var, value=val,
+                self.hook_row, text=label, variable=self.hook_mode_var, value=val,
                 command=self.on_hook_mode_change
             ).pack(side=tk.LEFT, padx=(0, 8))
 
         self.btn_hook_studio = ttk.Button(
-            hook_row, text="🛠 Hook Studio", command=self.open_custom_hook_studio_popup, style="Tool.TButton"
+            self.hook_row, text="🛠 Hook Studio", command=self.open_custom_hook_studio_popup, style="Tool.TButton"
         )
         self.btn_hook_studio.pack(side=tk.RIGHT, padx=(4, 0))
 
-        # Hàng 1.4: Thời lượng Hook & Mốc Hook
-        time_row = ttk.Frame(self.single_mode_frame)
-        time_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, padx=2, pady=2)
-        ttk.Label(time_row, text="Mốc hook:").pack(side=tk.LEFT, padx=(0, 4))
-        self.hook_time_entry = ttk.Entry(time_row, width=8)
+        # Hàng 1.5: Thời lượng Hook & Mốc Hook (Classic Linear)
+        self.time_row = ttk.Frame(self.single_mode_frame)
+        self.time_row.grid(row=5, column=0, columnspan=6, sticky=tk.W, padx=2, pady=2)
+        ttk.Label(self.time_row, text="Mốc hook:").pack(side=tk.LEFT, padx=(0, 4))
+        self.hook_time_entry = ttk.Entry(self.time_row, width=8)
         self.hook_time_entry.pack(side=tk.LEFT, padx=(0, 8))
         self.hook_time_entry.insert(0, self.config.get("hook_time", "11:55"))
 
-        ttk.Label(time_row, text="Thời lượng chuẩn:").pack(side=tk.LEFT, padx=(0, 4))
-        self.hook_spin = ttk.Spinbox(time_row, from_=2.0, to=30.0, increment=0.5, textvariable=self.hook_duration_var, width=5)
+        ttk.Label(self.time_row, text="Thời lượng chuẩn:").pack(side=tk.LEFT, padx=(0, 4))
+        self.hook_spin = ttk.Spinbox(self.time_row, from_=2.0, to=30.0, increment=0.5, textvariable=self.hook_duration_var, width=5)
         self.hook_spin.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(time_row, text="giây").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(self.time_row, text="giây").pack(side=tk.LEFT, padx=(0, 10))
 
-        self.lbl_hook_calc = ttk.Label(time_row, textvariable=self.hook_range_label_var, foreground="#2563EB", font=("Segoe UI Semibold", 9))
+        self.lbl_hook_calc = ttk.Label(self.time_row, textvariable=self.hook_range_label_var, foreground="#2563EB", font=("Segoe UI Semibold", 9))
         self.lbl_hook_calc.pack(side=tk.LEFT)
 
         # ==================== KHUNG 2: TUYỂN TẬP PLAYLIST YOUTUBE ====================
@@ -395,7 +408,7 @@ class PartSplitterFrame(ttk.Frame):
         ttk.Label(sub_row, text="Mô hình AI:").pack(side=tk.LEFT, padx=(2, 4))
         self.model_cb = ttk.Combobox(
             sub_row, textvariable=self.gemini_model_var,
-            values=["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.8-flash-high"],
+            values=["gemini-3.8-flash-high", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"],
             width=20, state="readonly"
         )
         self.model_cb.pack(side=tk.LEFT, padx=(0, 10))
@@ -408,38 +421,57 @@ class PartSplitterFrame(ttk.Frame):
             sub_row, text="☑ Tự đặt lại Tiêu đề Viral theo đúng ngôn ngữ gốc", variable=self.auto_title_var
         ).pack(side=tk.LEFT)
 
-        # Hàng 1: Cấu hình Tinh Lược (Pruning +-20%) - Dành cho 1 video đơn lẻ
-        self.prune_box = ttk.LabelFrame(f2, text="  ✂️ CẤU HÌNH TINH LƯỢC VIDEO THỪA (PRUNING)  ", padding=6)
-        self.prune_box.grid(row=1, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 6))
-        self.prune_box.columnconfigure(2, weight=1)
+        # Hàng 1: CHẾ ĐỘ BIÊN TẬP (MỚI)
+        self.editor_mode_box = ttk.LabelFrame(f2, text="  🎬 CHẾ ĐỘ BIÊN TẬP  ", padding=7)
+        self.editor_mode_box.grid(row=1, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 6))
 
-        ttk.Checkbutton(
-            self.prune_box, text="☑ Bật tính năng lược đoạn thừa / mở đầu lan man / quảng cáo",
-            variable=self.prune_enabled_var
-        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-
-        mode_row = ttk.Frame(self.prune_box)
-        mode_row.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=2)
-        ttk.Radiobutton(mode_row, text="Lược theo tỷ lệ %:", variable=self.prune_mode_var, value="percent").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Spinbox(mode_row, from_=5.0, to=80.0, increment=5.0, textvariable=self.prune_percent_var, width=5).pack(side=tk.LEFT, padx=4)
-        ttk.Label(mode_row, text="%    |    Lược theo số phút:").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Radiobutton(mode_row, text="", variable=self.prune_mode_var, value="minutes").pack(side=tk.LEFT)
-        ttk.Spinbox(mode_row, from_=1.0, to=60.0, increment=1.0, textvariable=self.prune_minutes_var, width=5).pack(side=tk.LEFT, padx=4)
-        ttk.Label(mode_row, text="phút").pack(side=tk.LEFT)
-
-        ttk.Label(self.prune_box, textvariable=self.prune_range_label_var, foreground="#16825D", font=("Segoe UI Semibold", 9)).grid(
-            row=2, column=0, columnspan=3, sticky=tk.W, pady=(2, 0)
+        em_radio_row = ttk.Frame(self.editor_mode_box)
+        em_radio_row.pack(fill=tk.X, pady=(2, 6))
+        self.rb_viral_condensed = ttk.Radiobutton(
+            em_radio_row, text="🔘 Dựng Tinh Hoa Đối Thủ (3-Pass AI Director) ⭐ (Khuyên dùng)",
+            variable=self.editing_mode_var, value="viral_condensed",
+            command=self.on_editing_mode_change
         )
+        self.rb_viral_condensed.pack(side=tk.LEFT, padx=(2, 16))
 
-        # Hàng 2: Cấu hình Chia Part & Cliffhanger (+-50%) - Dành cho 1 video đơn lẻ
-        self.split_box = ttk.LabelFrame(f2, text="  📍 QUY TẮC CHIA PART & BẪY TÒ MÒ (CLIFFHANGER)  ", padding=6)
-        self.split_box.grid(row=2, column=0, columnspan=6, sticky=tk.EW, padx=2, pady=(0, 4))
-        s_row = ttk.Frame(self.split_box)
-        s_row.pack(fill=tk.X, pady=4)
-        ttk.Label(s_row, text="Số Part cần chia:").pack(side=tk.LEFT, padx=(0, 6))
-        self.part_count_spin = ttk.Spinbox(s_row, from_=2, to=20, increment=1, textvariable=self.part_count_var, width=5)
-        self.part_count_spin.pack(side=tk.LEFT, padx=4)
-        ttk.Label(s_row, text="Parts (Mỗi Part đảm bảo > 1.0 phút, dao động ±50% tại điểm Cliffhanger)").pack(side=tk.LEFT, padx=8)
+        self.rb_classic_linear = ttk.Radiobutton(
+            em_radio_row, text="⚪ Cắt Khúc Cơ Bản (Classic Linear - Kiểu cũ)",
+            variable=self.editing_mode_var, value="classic_linear",
+            command=self.on_editing_mode_change
+        )
+        self.rb_classic_linear.pack(side=tk.LEFT)
+
+        # Khung tham số cho Dựng Tinh Hoa Đối Thủ (3-Pass AI Director)
+        self.viral_settings_frame = ttk.Frame(self.editor_mode_box)
+        self.viral_settings_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(self.viral_settings_frame, text="Số Part cần chia:").pack(side=tk.LEFT, padx=(2, 4))
+        self.part_count_spin = ttk.Spinbox(
+            self.viral_settings_frame, from_=2, to=20, increment=1,
+            textvariable=self.part_count_var, width=5
+        )
+        self.part_count_spin.pack(side=tk.LEFT, padx=(0, 14))
+
+        ttk.Label(self.viral_settings_frame, text="Thời lượng mỗi Part:").pack(side=tk.LEFT, padx=(0, 4))
+        self.target_dur_spin = ttk.Spinbox(
+            self.viral_settings_frame, from_=60.0, to=300.0, increment=5.0,
+            textvariable=self.target_part_duration_var, width=6
+        )
+        self.target_dur_spin.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(self.viral_settings_frame, text="giây").pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Label(
+            self.viral_settings_frame,
+            text="(Chuẩn đối thủ 75s – 95s: Đạo Diễn AI lọc 80% râu ria, chọn Hook 2-3s đưa lên đầu & micro-cuts thoại mượt)",
+            foreground="#2563EB", font=("Segoe UI Semibold", 8)
+        ).pack(side=tk.LEFT)
+
+        # Khung tham số dự phòng cho Cắt Khúc Cơ Bản (Classic Linear)
+        self.classic_settings_frame = ttk.Frame(self.editor_mode_box)
+        ttk.Label(
+            self.classic_settings_frame,
+            text="✂️ Classic: Cắt đoạn thẳng theo mốc thời gian cliffhanger (không micro-cuts)",
+            foreground="#64748B", font=("Segoe UI", 8)
+        ).pack(side=tk.LEFT, padx=2)
 
         # Khung thông tin riêng cho chế độ Tuyển tập Playlist YouTube
         self.compilation_tab2_box = ttk.LabelFrame(f2, text="  🏆 AI TUYỂN TẬP PLAYLIST (TOP HIGHLIGHT)  ", padding=8)
@@ -494,9 +526,35 @@ class PartSplitterFrame(ttk.Frame):
         self.scale_h_spin.grid(row=1, column=5, sticky=tk.W, padx=3, pady=3)
         self.scale_h_spin.set(self.config.get("scale_h", 100))
 
-        # Hàng 2: CapCut Limiter, Subtle Zoom, Lật gương hình ảnh
+        # Hàng 2: KHUNG ĐÓNG GÓI CHUẨN ĐỐI THỦ TRIỆU VIEW (COMPETITOR LAYOUT)
+        self.competitor_box = ttk.LabelFrame(f3, text="  🌟 ĐÓNG GÓI CHUẨN ĐỐI THỦ TRIỆU VIEW (COMPETITOR LAYOUT)  ", padding=6)
+        self.competitor_box.grid(row=2, column=0, columnspan=6, sticky=tk.EW, pady=(3, 3))
+
+        c_row1 = ttk.Frame(self.competitor_box)
+        c_row1.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            c_row1, text="☑ Canvas 9:16 + Nền Gaussian Blur trên/dưới",
+            variable=self.enable_competitor_layout_var
+        ).pack(side=tk.LEFT, padx=(2, 12))
+        ttk.Checkbutton(
+            c_row1, text="☑ In Top Card: Thẻ trắng bo góc lấy Title gốc YouTube",
+            variable=self.competitor_top_card_var
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        c_row2 = ttk.Frame(self.competitor_box)
+        c_row2.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            c_row2, text="☑ In Bottom Badge: Nút trắng viên thuốc 'PART X'",
+            variable=self.competitor_bottom_badge_var
+        ).pack(side=tk.LEFT, padx=(2, 12))
+        ttk.Label(
+            c_row2, text="🔊 Chuẩn âm lượng thoại: -14 LUFS (đanh rõ, sống động trên điện thoại)",
+            foreground="#16825D", font=("Segoe UI Semibold", 8)
+        ).pack(side=tk.LEFT)
+
+        # Hàng 2.5: CapCut Limiter, Subtle Zoom, Lật gương hình ảnh
         effects_row = ttk.Frame(f3)
-        effects_row.grid(row=2, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
+        effects_row.grid(row=3, column=0, columnspan=6, sticky=tk.EW, pady=(3, 2))
         ttk.Checkbutton(
             effects_row, text="☑ CapCut Limiter +20dB (Compressor chuẩn)", variable=self.capcut_limiter_var
         ).pack(side=tk.LEFT, padx=(0, 10))
@@ -698,18 +756,24 @@ class PartSplitterFrame(ttk.Frame):
             self.hook_duration_var.set(float(c.get("hook_target_sec", 6.0)))
             self.output_dir_var.set(c.get("output_dir", "output/parts"))
 
-            self.gemini_model_var.set(c.get("gemini_model", "gemini-2.5-flash"))
+            self.gemini_model_var.set(c.get("gemini_model", "gemini-3.8-flash-high"))
             self.gemini_api_key_var.set(c.get("gemini_api_key", ""))
             self.auto_title_var.set(bool(c.get("auto_regenerate_title", True)))
+
+            self.editing_mode_var.set(c.get("editing_mode", "viral_condensed"))
+            self.target_part_duration_var.set(float(c.get("target_part_duration", 90.0)))
+            self.enable_competitor_layout_var.set(bool(c.get("enable_competitor_layout", True)))
+            self.competitor_top_card_var.set(bool(c.get("competitor_top_card", True)))
+            self.competitor_bottom_badge_var.set(bool(c.get("competitor_bottom_badge", True)))
 
             self.prune_enabled_var.set(bool(c.get("prune_enabled", True)))
             self.prune_mode_var.set(c.get("prune_mode", "percent"))
             self.prune_percent_var.set(float(c.get("prune_percent", 20.0)))
             self.prune_minutes_var.set(float(c.get("prune_minutes", 15.0)))
 
-            self.part_count_var.set(int(c.get("part_count", 4)))
+            self.part_count_var.set(int(c.get("part_count", 6)))
 
-            spd = float(c.get("speed") or c.get("source_speed") or 1.05)
+            spd = float(c.get("speed") or c.get("source_speed") or 1.0)
             self.source_speed_var.set(spd)
             if hasattr(self, "audio_boost_spin"):
                 self.audio_boost_spin.set(float(c.get("audio_boost", 20.0)))
@@ -832,6 +896,12 @@ class PartSplitterFrame(ttk.Frame):
         c["gemini_api_key"] = self.gemini_api_key_var.get().strip()
         c["auto_regenerate_title"] = bool(self.auto_title_var.get())
 
+        c["editing_mode"] = self.editing_mode_var.get() if hasattr(self, "editing_mode_var") else "viral_condensed"
+        c["target_part_duration"] = float(self.target_part_duration_var.get()) if hasattr(self, "target_part_duration_var") else 90.0
+        c["enable_competitor_layout"] = bool(self.enable_competitor_layout_var.get()) if hasattr(self, "enable_competitor_layout_var") else True
+        c["competitor_top_card"] = bool(self.competitor_top_card_var.get()) if hasattr(self, "competitor_top_card_var") else True
+        c["competitor_bottom_badge"] = bool(self.competitor_bottom_badge_var.get()) if hasattr(self, "competitor_bottom_badge_var") else True
+
         c["prune_enabled"] = bool(self.prune_enabled_var.get())
         c["prune_mode"] = self.prune_mode_var.get()
         c["prune_percent"] = float(self.prune_percent_var.get())
@@ -839,7 +909,7 @@ class PartSplitterFrame(ttk.Frame):
 
         c["part_count"] = int(self.part_count_var.get())
 
-        spd_val = float(self.source_speed_var.get() or 1.05)
+        spd_val = float(self.source_speed_var.get() or 1.0)
         c["source_speed"] = spd_val
         c["speed"] = spd_val
         if hasattr(self, "audio_boost_spin"):
@@ -989,6 +1059,28 @@ class PartSplitterFrame(ttk.Frame):
         if hasattr(self, "hook_time_entry"):
             self.hook_time_entry.config(state=tk.NORMAL if m == "native" else tk.DISABLED)
 
+    def on_editing_mode_change(self):
+        """Chuyển đổi giữa Dựng Tinh Hoa Đối Thủ (3-Pass AI) và Cắt Khúc Cơ Bản (Classic Linear)."""
+        m = self.editing_mode_var.get() if hasattr(self, "editing_mode_var") else "viral_condensed"
+        is_viral = (m == "viral_condensed")
+        if hasattr(self, "viral_settings_frame") and hasattr(self, "classic_settings_frame"):
+            if is_viral:
+                self.viral_settings_frame.pack(fill=tk.X, pady=2)
+                self.classic_settings_frame.pack_forget()
+            else:
+                self.viral_settings_frame.pack_forget()
+                self.classic_settings_frame.pack(fill=tk.X, pady=2)
+
+        if hasattr(self, "viral_hook_notice") and hasattr(self, "hook_row") and hasattr(self, "time_row"):
+            if is_viral:
+                self.viral_hook_notice.grid()
+                self.hook_row.grid_remove()
+                self.time_row.grid_remove()
+            else:
+                self.viral_hook_notice.grid_remove()
+                self.hook_row.grid()
+                self.time_row.grid()
+
     def on_workflow_mode_change(self):
         mode = self.workflow_mode_var.get() if hasattr(self, "workflow_mode_var") else "single"
         if mode == "compilation":
@@ -998,11 +1090,9 @@ class PartSplitterFrame(ttk.Frame):
             if hasattr(self, "compilation_mode_frame"):
                 self.compilation_mode_frame.grid()
 
-            # Tab 2: AI & Chiến lược (Ẩn prune %/phút & quy tắc chia part, hiện khung AI Tuyển tập)
-            if hasattr(self, "prune_box"):
-                self.prune_box.grid_remove()
-            if hasattr(self, "split_box"):
-                self.split_box.grid_remove()
+            # Tab 2: AI & Chiến lược (Ẩn Khung Biên tập, hiện khung AI Tuyển tập)
+            if hasattr(self, "editor_mode_box"):
+                self.editor_mode_box.grid_remove()
             if hasattr(self, "compilation_tab2_box"):
                 self.compilation_tab2_box.grid()
 
@@ -1018,19 +1108,19 @@ class PartSplitterFrame(ttk.Frame):
             if hasattr(self, "single_mode_frame"):
                 self.single_mode_frame.grid()
 
-            # Tab 2: AI & Chiến lược (Hiện lại prune %/phút & quy tắc chia part)
+            # Tab 2: AI & Chiến lược (Hiện lại Khung Biên tập)
             if hasattr(self, "compilation_tab2_box"):
                 self.compilation_tab2_box.grid_remove()
-            if hasattr(self, "prune_box"):
-                self.prune_box.grid()
-            if hasattr(self, "split_box"):
-                self.split_box.grid()
+            if hasattr(self, "editor_mode_box"):
+                self.editor_mode_box.grid()
 
             # Tab 3: Hậu kỳ (Hiện lại tiền tố nhãn part)
             if hasattr(self, "compilation_prefix_info_row"):
                 self.compilation_prefix_info_row.grid_remove()
             if hasattr(self, "prefix_row"):
                 self.prefix_row.grid()
+
+        self.on_editing_mode_change()
 
     def on_comp_source_type_change(self):
         src_type = self.comp_source_type_var.get() if hasattr(self, "comp_source_type_var") else "playlist"
@@ -2038,10 +2128,22 @@ class PartSplitterFrame(ttk.Frame):
                 f"để giữ lại ít nhất {min_clean_dur_needed:.1f}s, cam kết 100% các Part xuất xưởng đều > 1 phút!"
             )
 
+        # Xác định raw_title của video
+        raw_title = ""
+        if source_mode == "youtube" and "meta" in locals() and isinstance(meta, dict):
+            raw_title = meta.get("title", "")
+        if not raw_title and video_path:
+            raw_title = os.path.splitext(os.path.basename(video_path))[0]
+        if not raw_title:
+            raw_title = job.get("name", "")
+
         ai_cfg = dict(cfg)
         ai_cfg["min_part_duration_sec"] = needed_raw_per_part
         ai_cfg["source_speed"] = speed_factor
         ai_cfg["speed"] = speed_factor
+
+        editing_mode = str(cfg.get("editing_mode", "viral_condensed")).strip()
+        self.log(f"🎬 Chế độ biên tập: {'Dựng Tinh Hoa Đối Thủ (3-Pass AI)' if editing_mode == 'viral_condensed' else 'Cắt Khúc Cơ Bản (Classic Linear)'}")
 
         ai_plan = PartPrunerAI.analyze_and_plan(
             video_path=video_path,
@@ -2051,89 +2153,89 @@ class PartSplitterFrame(ttk.Frame):
             target_prune_sec=prune_target if cfg.get("prune_enabled") else 0.0,
             hook_target_sec=cfg.get("hook_target_sec", 6.0),
             gemini_client=None,
-            model_name=cfg.get("gemini_model", "gemini-2.5-flash"),
+            model_name=cfg.get("gemini_model", "gemini-3.8-flash-high"),
             api_key=cfg.get("gemini_api_key", ""),
             auto_title=cfg.get("auto_regenerate_title", True),
             part_prefix=cfg.get("part_label_prefix", "Part"),
             config=ai_cfg,
             job_dir=work_dir,
+            original_title=raw_title,
             log_fn=self.log
         )
 
-        self.log(f"🎯 Tiêu đề Viral (ngôn ngữ gốc): {ai_plan.get('master_title', 'Video')}")
-        self.log(f"✂️ AI đề xuất lược {len(ai_plan.get('prune_plan', []))} đoạn thừa")
-        self.log(f"📍 Điểm chia Part Cliffhanger: {ai_plan.get('part_splits', [])}")
+        self.log(f"🎯 Tiêu đề Viral (ngôn ngữ gốc): {ai_plan.get('master_title', raw_title or 'Video')}")
 
-        # 4. Cắt bỏ đoạn thừa & Ghép video gốc sạch
         cleaned_video = video_path
-        keep_ranges = [(0.0, total_dur)]
-        if cfg.get("prune_enabled") and ai_plan.get("prune_plan"):
-            job["status"] = "Đang tinh lược video..."
+        if editing_mode == "viral_condensed" and ai_plan.get("parts"):
+            # CHẾ ĐỘ DỰNG TINH HOA ĐỐI THỦ: Dùng trực tiếp kịch bản micro-cuts của 3-Pass AI
+            parts_info = ai_plan["parts"]
+            self.log(f"🎬 [3-PASS DIRECTOR] Nhận kịch bản {len(parts_info)} Parts micro-cuts chuẩn đối thủ!")
+        else:
+            # CHẾ ĐỘ CẮT KHÚC CƠ BẢN (CLASSIC LINEAR): Tinh lược theo dải mốc thời gian
+            self.log(f"✂️ AI đề xuất lược {len(ai_plan.get('prune_plan', []))} đoạn thừa")
+            self.log(f"📍 Điểm chia Part Cliffhanger: {ai_plan.get('part_splits', [])}")
+
+            # 4. Cắt bỏ đoạn thừa & Ghép video gốc sạch
+            keep_ranges = [(0.0, total_dur)]
+            if cfg.get("prune_enabled") and ai_plan.get("prune_plan"):
+                job["status"] = "Đang tinh lược video..."
+                self.after(0, self._refresh_queue_table)
+                self.log("✂️ Đang áp dụng FFmpeg concat stream cắt bỏ đoạn thừa...")
+                clean_out = os.path.join(work_dir, "cleaned_source.mp4")
+                cleaned_video, keep_ranges = PartSplitterEngine.prune_and_build_cleaned_source(
+                    source_video=video_path,
+                    drop_ranges=ai_plan.get("prune_plan", []),
+                    output_clean=clean_out,
+                    log_fn=self.log
+                )
+
+            clean_dur = probe_duration_sec(cleaned_video)
+            self.log(f"⏱️ Thời lượng video sạch sau tinh lược: {clean_dur:.1f}s ({clean_dur/60:.1f} phút)")
+
+            # 5. Ánh xạ mốc chia Part sang timeline của video sạch
+            mapped_splits = [
+                PartSplitterEngine.map_orig_to_clean_time(pt, keep_ranges)
+                for pt in ai_plan.get("part_splits", [])
+            ]
+            min_p_dur = needed_raw_per_part
+            sanitized_splits = PartSplitterEngine.sanitize_part_splits(
+                splits=mapped_splits,
+                total_duration=clean_dur,
+                part_count=p_count,
+                min_part_dur=min_p_dur
+            )
+            self.log(f"📍 Điểm chia Part trên video sạch: {[round(s, 1) for s in sanitized_splits]}")
+
+            # 6. Tinh chỉnh các mốc cắt với Scene Transitions & Silence Gap
+            job["status"] = "Soát mốc OpenCV & Audio..."
             self.after(0, self._refresh_queue_table)
-            self.log("✂️ Đang áp dụng FFmpeg concat stream cắt bỏ đoạn thừa...")
-            clean_out = os.path.join(work_dir, "cleaned_source.mp4")
-            cleaned_video, keep_ranges = PartSplitterEngine.prune_and_build_cleaned_source(
-                source_video=video_path,
-                drop_ranges=ai_plan.get("prune_plan", []),
-                output_clean=clean_out,
+            refined_splits = PartSplitterEngine.refine_cuts_with_opencv_and_audio(
+                ai_cuts=sanitized_splits,
+                scene_map=None,
+                srt_cues=cues,
+                tolerance=0.5,
+                radius=0.5,
                 log_fn=self.log
             )
 
-        clean_dur = probe_duration_sec(cleaned_video)
-        self.log(f"⏱️ Thời lượng video sạch sau tinh lược: {clean_dur:.1f}s ({clean_dur/60:.1f} phút)")
-
-        # 5. Ánh xạ mốc chia Part sang timeline của video sạch & bảo đảm mỗi Part >= 61s sau khi speed
-        mapped_splits = [
-            PartSplitterEngine.map_orig_to_clean_time(pt, keep_ranges)
-            for pt in ai_plan.get("part_splits", [])
-        ]
-        min_p_dur = needed_raw_per_part
-        sanitized_splits = PartSplitterEngine.sanitize_part_splits(
-            splits=mapped_splits,
-            total_duration=clean_dur,
-            part_count=p_count,
-            min_part_dur=min_p_dur
-        )
-        self.log(f"📍 Điểm chia Part trên video sạch: {[round(s, 1) for s in sanitized_splits]}")
-
-        # 6. Tinh chỉnh các mốc cắt với Scene Transitions & Silence Gap
-        job["status"] = "Soát mốc OpenCV & Audio..."
-        self.after(0, self._refresh_queue_table)
-        refined_splits = PartSplitterEngine.refine_cuts_with_opencv_and_audio(
-            ai_cuts=sanitized_splits,
-            scene_map=None,
-            srt_cues=cues,
-            tolerance=0.5,
-            radius=0.5,
-            log_fn=self.log
-        )
-
-        # 7. Chia Part
-        job["status"] = "Đang chia Part..."
-        self.after(0, self._refresh_queue_table)
-        self.log(f"📂 Đang chia video thành {cfg.get('part_count', 4)} part...")
-        parts_info = PartSplitterEngine.split_into_parts(
-            clean_video=cleaned_video,
-            cut_points=refined_splits,
-            output_dir=work_dir,
-            part_label_prefix=cfg.get("part_label_prefix", "Part"),
-            part_titles=ai_plan.get("part_titles", []),
-            log_fn=self.log
-        )
+            # 7. Chia Part thô
+            job["status"] = "Đang chia Part..."
+            self.after(0, self._refresh_queue_table)
+            self.log(f"📂 Đang chia video thành {len(refined_splits) + 1} part...")
+            parts_info = PartSplitterEngine.split_into_parts(
+                clean_video=cleaned_video,
+                cut_points=refined_splits,
+                output_dir=work_dir,
+                part_label_prefix=cfg.get("part_label_prefix", "Part"),
+                part_titles=ai_plan.get("part_titles", []),
+                log_fn=self.log
+            )
 
         # Xác định tên thư mục riêng cho video này trong output_dir (mỗi video 1 thư mục riêng biệt)
         def _sanitize_folder_name(name: str, max_len: int = 120) -> str:
             s = re.sub(r'[\\/:*?"<>|\r\n\t]', '_', str(name or "")).strip()
             s = re.sub(r'\s+', ' ', s)
             return s[:max_len].strip(". _-")
-
-        raw_title = ""
-        if source_mode == "youtube" and "meta" in locals() and isinstance(meta, dict):
-            raw_title = meta.get("title", "")
-        if not raw_title and video_path:
-            raw_title = os.path.splitext(os.path.basename(video_path))[0]
-        if not raw_title:
-            raw_title = job.get("name", "")
 
         ai_master = str(ai_plan.get("master_title") or "").strip()
         if ai_master and ai_master.lower() not in ("video", "unknown title", "video_task"):
@@ -2195,37 +2297,50 @@ class PartSplitterFrame(ttk.Frame):
 
         # 7. Ráp Hook, Hậu kỳ CapCut Limiter, Tốc độ, Subtle Zoom & Banner
         # Render song song (Dual GPU nếu card >= 6GB VRAM, hoặc 1 Part tuần tự nếu card yếu/iGPU/CPU)
-        job["status"] = "Hậu kỳ CapCut & Banner..."
+        if editing_mode == "viral_condensed":
+            job["status"] = "[Render] Engine: Cắt nối micro-cuts & dán Top Card/Bottom Badge..."
+        else:
+            job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
         part_prefix = str(cfg.get("part_label_prefix", "Part")).strip() or "Part"
 
         def _render_one_part(i_idx: int, p_item: Any) -> tuple[int, str]:
-            raw_part = p_item["raw_path"] if isinstance(p_item, dict) else str(p_item)
+            raw_part = p_item.get("raw_path", "") if isinstance(p_item, dict) else str(p_item)
             part_title = (p_item.get("title") if isinstance(p_item, dict) else None) or (
                 ai_plan.get("part_titles", [])[i_idx] if i_idx < len(ai_plan.get("part_titles", [])) else f"{part_prefix} {i_idx+1}"
             )
             final_out = os.path.join(video_out_dir, f"{part_prefix} {i_idx+1}.mp4")
 
-            hook_range = None
-            if cfg.get("hook_mode") == "individual":
-                ind_hooks = ai_plan.get("hooks", {}).get("individual_hooks", [])
-                if i_idx < len(ind_hooks):
-                    hook_range = ind_hooks[i_idx]
-            elif cfg.get("hook_mode") == "shared":
-                hook_range = ai_plan.get("hooks", {}).get("global_hook")
+            hook_range = p_item.get("hook") if isinstance(p_item, dict) and p_item.get("hook") else None
+            if not hook_range:
+                if cfg.get("hook_mode") == "individual":
+                    ind_hooks = ai_plan.get("hooks", {}).get("individual_hooks", [])
+                    if i_idx < len(ind_hooks):
+                        hook_range = ind_hooks[i_idx]
+                elif cfg.get("hook_mode") == "shared":
+                    hook_range = ai_plan.get("hooks", {}).get("global_hook")
 
             p_blurs = parts_blurs_map.get(i_idx, None) if master_blurs is not None else None
+            part_cuts = p_item.get("cuts") if isinstance(p_item, dict) else None
 
-            self.log(f"🎬 Bắt đầu hậu kỳ {part_prefix} {i_idx+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.05)}x, Banner...")
+            if editing_mode == "viral_condensed":
+                self.log(f"🎬 [Render] Engine: Cắt nối micro-cuts & dán Top Card/Bottom Badge cho {part_prefix} {i_idx+1}/{len(parts_info)}...")
+            else:
+                self.log(f"🎬 Bắt đầu hậu kỳ {part_prefix} {i_idx+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.0)}x, Banner...")
+
             PartSplitterEngine.apply_part_hook_and_postprocessing(
                 raw_part_path=raw_part,
+                part_info=p_item if isinstance(p_item, dict) else {"raw_path": raw_part, "index": i_idx + 1, "title": part_title},
                 hook_time_range=hook_range,
-                speed=cfg.get("source_speed", 1.05),
+                source_video=video_path,
+                cuts=part_cuts,
+                speed=cfg.get("source_speed", 1.0),
                 apply_limiter=cfg.get("apply_capcut_limiter", True),
                 apply_subtle_zoom=cfg.get("apply_subtle_zoom", True),
                 part_label_prefix=part_prefix,
                 part_index=i_idx + 1,
                 part_title=part_title,
+                master_title=ai_plan.get("master_title", raw_title),
                 output_final=final_out,
                 config=cfg,
                 log_fn=self.log,

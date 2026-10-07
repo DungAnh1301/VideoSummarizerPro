@@ -28,6 +28,16 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "compilation_teaser_duration": 3.0,
     "compilation_rank_by": "views",       # 'views', 'likes', hoặc 'random'
 
+    # 0.1 Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ)
+    "editing_mode": "viral_condensed",          # 'viral_condensed' (Chế độ đối thủ mới) hoặc 'classic_linear' (Kiểu cũ)
+    "target_part_duration": 90.0,               # Thời lượng mục tiêu mỗi Part (75s - 95s)
+    "min_part_duration": 70.0,                  # Thời lượng tối thiểu
+    "max_part_duration": 110.0,                 # Thời lượng tối đa
+    "keep_original_speed": True,                # Mặc định giữ tốc độ 1.0x chuẩn gốc
+    "enable_competitor_layout": True,           # Bật layout chuẩn đối thủ
+    "competitor_top_card": True,                # In title gốc trên Card trắng bo góc
+    "competitor_bottom_badge": True,            # In nút viên thuốc PART X
+
     # 1. Nguồn & Hook
     "source_mode": "youtube",             # 'youtube' hoặc 'local'
     "youtube_url": "https://www.youtube.com/watch?v=...",
@@ -40,12 +50,12 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "hook_tolerance": 0.50,               # Dao động +-50% (3s ~ 9s)
 
     # 2. Cấu hình chia Part & Cliffhanger
-    "part_count": 4,
+    "part_count": 6,
     "min_part_duration_sec": 60.0,
     "part_tolerance": 0.50,               # Dao động +-50%
     "auto_regenerate_title": True,        # AI tự động đặt lại tiêu đề viral theo ngôn ngữ gốc
     "gemini_auth_mode": "antigravity",    # 'antigravity' hoặc 'api_key'
-    "gemini_model": "gemini-2.5-flash",
+    "gemini_model": "gemini-3.8-flash-high",
     "gemini_api_key": "",
 
     # 3. Cấu hình tinh lược (Prune)
@@ -57,8 +67,8 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
 
     # 5. Hậu kỳ video (Đồng bộ 100% với Tóm Tắt Video)
     "part_label_prefix": "Part",          # Tiền tố: 'Part', 'Teil', 'Partie', 'Часть', 'Tập'...
-    "source_speed": 1.05,                 # Tốc độ video (1.05x - 1.20x)
-    "speed": 1.05,
+    "source_speed": 1.0,                  # Mặc định giữ tốc độ 1.0x chuẩn gốc
+    "speed": 1.0,
     "audio_boost": 6.0,
     "apply_capcut_limiter": True,         # Áp dụng CapCut Limiter +20dB
     "apply_subtle_zoom": True,            # Subtle Zoom (1.03x) lách bản quyền
@@ -202,7 +212,18 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
 
     # Đảm bảo kiểu dữ liệu an toàn
     try:
-        config["part_count"] = max(2, int(config.get("part_count", 4)))
+        config["editing_mode"] = str(config.get("editing_mode", "viral_condensed"))
+        if config["editing_mode"] not in ("viral_condensed", "classic_linear"):
+            config["editing_mode"] = "viral_condensed"
+        config["target_part_duration"] = max(30.0, min(600.0, float(config.get("target_part_duration", 90.0))))
+        config["min_part_duration"] = max(20.0, min(500.0, float(config.get("min_part_duration", 70.0))))
+        config["max_part_duration"] = max(40.0, min(600.0, float(config.get("max_part_duration", 110.0))))
+        config["keep_original_speed"] = bool(config.get("keep_original_speed", True))
+        config["enable_competitor_layout"] = bool(config.get("enable_competitor_layout", True))
+        config["competitor_top_card"] = bool(config.get("competitor_top_card", True))
+        config["competitor_bottom_badge"] = bool(config.get("competitor_bottom_badge", True))
+
+        config["part_count"] = max(2, int(config.get("part_count", 6)))
         config["min_part_duration_sec"] = max(10.0, float(config.get("min_part_duration_sec", 60.0)))
         config["part_tolerance"] = max(0.05, min(0.90, float(config.get("part_tolerance", 0.50))))
         config["prune_percent"] = max(1.0, min(90.0, float(config.get("prune_percent", 20.0))))
@@ -211,8 +232,8 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
         config["hook_target_sec"] = max(2.0, min(30.0, float(config.get("hook_target_sec", 6.0))))
         config["hook_duration"] = float(config.get("hook_duration", 6.0))
         config["hook_tolerance"] = max(0.10, min(0.80, float(config.get("hook_tolerance", 0.50))))
-        config["source_speed"] = max(1.0, min(2.0, float(config.get("source_speed", 1.05))))
-        config["speed"] = float(config.get("speed", 1.05))
+        config["source_speed"] = max(0.5, min(3.0, float(config.get("source_speed", 1.0))))
+        config["speed"] = float(config.get("speed", 1.0))
     except Exception:
         pass
 
