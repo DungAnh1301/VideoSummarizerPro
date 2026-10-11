@@ -158,14 +158,17 @@ def _recover_from_backup_if_needed(base_dir: Path, config: Dict[str, Any]) -> bo
             with open(c, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if data.get("saved_configs") and len(data["saved_configs"]) > 0:
-                config["saved_configs"] = data["saved_configs"]
-                if data.get("selected_config"):
-                    config["selected_config"] = data["selected_config"]
-                for key in ("gemini_api_key", "output_dir", "part_label_prefix", "source_speed", "audio_boost"):
-                    if data.get(key) and not config.get(key):
-                        config[key] = data[key]
-                print(f"♻️ [PART SPLITTER] Đã tự động khôi phục {len(data['saved_configs'])} cấu hình chia part từ bản sao lưu: {c}")
-                return True
+                clean_saved = {k: v for k, v in data["saved_configs"].items() if str(k).strip().lower() not in ("test", "test_config", "demo", "sample")}
+                if clean_saved:
+                    config["saved_configs"] = clean_saved
+                    sel = str(data.get("selected_config", "")).strip()
+                    if sel in clean_saved and sel.lower() not in ("test", "test_config", "demo", "sample"):
+                        config["selected_config"] = sel
+                    for key in ("gemini_api_key", "output_dir"):
+                        if data.get(key) and not config.get(key):
+                            config[key] = data[key]
+                    print(f"♻️ [PART SPLITTER] Đã tự động khôi phục {len(clean_saved)} cấu hình chia part từ bản sao lưu: {c}")
+                    return True
         except Exception:
             pass
     return False
@@ -196,34 +199,113 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
 
     # KHỬ TOÀN BỘ CÁC GIÁ TRỊ TEST TÀN DƯ (Defense-in-depth)
     dirty = False
+
+    # 1. Khử toàn bộ cấu hình con named configs có tên "test"
+    saved = config.get("saved_configs")
+    if isinstance(saved, dict):
+        test_keys = [k for k in saved if k.strip().lower() in ("test", "test_config", "demo", "sample")]
+        for tk in test_keys:
+            saved.pop(tk, None)
+            dirty = True
+        config["saved_configs"] = saved
+
+    if str(config.get("selected_config", "")).strip().lower() in ("test", "test_config", "demo", "sample") or config.get("selected_config") not in config.get("saved_configs", {}):
+        config["selected_config"] = ""
+        dirty = True
+
+    # 2. Khử các giá trị test mốc hook và URL
     if config.get("hook_time") == "11:55":
         config["hook_time"] = "00:00"
         dirty = True
     if str(config.get("youtube_url", "")).strip() == "https://www.youtube.com/watch?v=...":
         config["youtube_url"] = ""
         dirty = True
-    if config.get("blur_mask_y") == 861 and config.get("blur_mask_x") == 20:
+
+    # 3. Khử giá trị test blur mask
+    if (config.get("blur_mask_y") == 861 and config.get("blur_mask_x") == 20) or config.get("blur_mask_h", 0) > 800:
         config["blur_mask_x"] = 0
         config["blur_mask_y"] = 0
         config["blur_mask_w"] = 0
         config["blur_mask_h"] = 0
         config["use_blur_mask"] = False
         dirty = True
-    if config.get("zoom_percent") == 115.0 and config.get("zoom_in") is True:
+
+    # 4. Khử giá trị test zoom / scale / speed bất thường (ví dụ: zoom 178%, scale dọc 170%, speed 1.2)
+    try:
+        z_val = float(config.get("zoom_percent", 100.0))
+        if z_val > 125.0 or z_val == 115.0:
+            config["zoom_percent"] = 100.0
+            config["zoom_in"] = False
+            dirty = True
+    except Exception:
         config["zoom_percent"] = 100.0
         config["zoom_in"] = False
         dirty = True
-    if config.get("sub_size", 0) <= 20 or config.get("sub_style_type") == "tiktok_slim":
-        config["sub_style_type"] = "safe_zone_arial"
-        config["sub_size"] = 48
-        config["sub_outline"] = 3.5
-        config["sub_shadow"] = 1.5
-        config["sub_margin_v"] = 420
-        config["sub_color"] = "&H00FFFFFF&"
-        config["sub_outline_color"] = "&H00000000&"
+
+    try:
+        sw = float(config.get("scale_w", 100.0))
+        sh = float(config.get("scale_h", 100.0))
+        if sw > 125.0 or sh > 125.0 or sw < 80.0 or sh < 80.0:
+            config["scale_w"] = 100.0
+            config["scale_h"] = 100.0
+            dirty = True
+    except Exception:
+        config["scale_w"] = 100.0
+        config["scale_h"] = 100.0
         dirty = True
-    if config.get("part_label_prefix") == "Part":
+
+    try:
+        spd = float(config.get("source_speed", 1.0))
+        if spd != 1.0:
+            config["source_speed"] = 1.0
+            config["speed"] = 1.0
+            dirty = True
+    except Exception:
+        config["source_speed"] = 1.0
+        config["speed"] = 1.0
+        dirty = True
+
+    try:
+        if float(config.get("audio_boost", 6.0)) > 15.0:
+            config["audio_boost"] = 6.0
+            dirty = True
+    except Exception:
+        config["audio_boost"] = 6.0
+        dirty = True
+
+    if config.get("use_crop") is True and (config.get("crop_h") == 978 or config.get("crop_h") == 1080):
+        config["use_crop"] = False
+        config["crop_w"] = 1920
+        config["crop_h"] = 1080
+        dirty = True
+    if config.get("random_mirror") is True:
+        config["random_mirror"] = False
+        dirty = True
+
+    # 5. Khử giá trị test sub & nhãn Part
+    try:
+        sub_sz = int(config.get("sub_size", 48))
+        sub_mg = int(config.get("sub_margin_v", 420))
+        if sub_sz <= 35 or sub_mg < 200 or config.get("sub_style_type") == "tiktok_slim":
+            config["sub_style_type"] = "safe_zone_arial"
+            config["sub_size"] = 48
+            config["sub_outline"] = 3.5
+            config["sub_shadow"] = 1.5
+            config["sub_margin_v"] = 420
+            config["sub_color"] = "&H00FFFFFF&"
+            config["sub_outline_color"] = "&H00000000&"
+            dirty = True
+    except Exception:
+        pass
+
+    if str(config.get("part_label_prefix", "")).strip().lower() == "part":
         config["part_label_prefix"] = "PART"
+        dirty = True
+
+    # 6. Khử bộ lọc màu test
+    if config.get("color_look") in ("8K", "HDR"):
+        config["color_look"] = "Không lọc"
+        config["color_look_stack"] = []
         dirty = True
 
     if dirty and os.path.isfile(path):

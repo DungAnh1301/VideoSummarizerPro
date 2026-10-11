@@ -71,12 +71,15 @@ class PartSplitterFrame(ttk.Frame):
         self._refresh_named_config_list()
         self._load_queue_from_disk()
         self._refresh_queue_table()
-        sel_name = self.config.get("selected_config", "")
-        if sel_name and sel_name in self.config.get("saved_configs", {}):
+        sel_name = str(self.config.get("selected_config", "")).strip()
+        if sel_name and sel_name.lower() not in ("test", "test_config", "demo", "sample") and sel_name in self.config.get("saved_configs", {}):
             try:
                 self.on_named_config_selected(_event=object())
             except Exception:
                 pass
+        else:
+            self.config["selected_config"] = ""
+            self._refresh_named_config_list()
 
     def _init_variables(self):
         """Khởi tạo toàn bộ biến trạng thái giao diện theo đúng PLAN_CHIA_PART.md & PLAN_CHE_DO_2.md."""
@@ -116,7 +119,7 @@ class PartSplitterFrame(ttk.Frame):
         self.capcut_limiter_var = tk.BooleanVar(value=bool(c.get("apply_capcut_limiter", True)))
         self.subtle_zoom_var = tk.BooleanVar(value=bool(c.get("apply_subtle_zoom", True)))
         self.random_mirror_var = tk.BooleanVar(value=bool(c.get("random_mirror", False)))
-        self.part_prefix_var = tk.StringVar(value=c.get("part_label_prefix", "Part"))
+        self.part_prefix_var = tk.StringVar(value=c.get("part_label_prefix", "PART"))
         self.gemini_grid_inspector_var = tk.BooleanVar(value=False)
         self.qc_blur_strength_var = tk.IntVar(value=int(c.get("qc_blur_strength", 75)))
         self.cleanup_temp_var = tk.BooleanVar(value=bool(c.get("cleanup_temp_after_export", False)))
@@ -407,7 +410,7 @@ class PartSplitterFrame(ttk.Frame):
 
         self.zoom_spin = ttk.Spinbox(f3, from_=100, to=300, increment=5, width=6)
         self.zoom_spin.grid(row=1, column=1, sticky=tk.W, padx=3, pady=3)
-        self.zoom_spin.set(self.config.get("zoom_percent", 115))
+        self.zoom_spin.set(self.config.get("zoom_percent", 100))
 
         ttk.Label(f3, text="Scale ngang:").grid(row=1, column=2, sticky=tk.W, pady=2, padx=(8, 2))
         self.scale_w_spin = ttk.Spinbox(f3, from_=50, to=300, increment=5, width=6)
@@ -641,7 +644,7 @@ class PartSplitterFrame(ttk.Frame):
             self.capcut_limiter_var.set(bool(c.get("apply_capcut_limiter", True)))
             self.subtle_zoom_var.set(bool(c.get("apply_subtle_zoom", True)))
             self.random_mirror_var.set(bool(c.get("random_mirror", False)))
-            self.part_prefix_var.set(c.get("part_label_prefix", "Part"))
+            self.part_prefix_var.set(c.get("part_label_prefix", "PART"))
             self.gemini_grid_inspector_var.set(bool(c.get("gemini_grid_inspector", True)))
             if hasattr(self, "qc_blur_strength_var"):
                 b_val = int(c.get("qc_blur_strength", 75))
@@ -725,7 +728,7 @@ class PartSplitterFrame(ttk.Frame):
         c["apply_capcut_limiter"] = bool(self.capcut_limiter_var.get())
         c["apply_subtle_zoom"] = bool(self.subtle_zoom_var.get())
         c["random_mirror"] = bool(self.random_mirror_var.get())
-        c["part_label_prefix"] = self.part_prefix_var.get().strip() or "Part"
+        c["part_label_prefix"] = self.part_prefix_var.get().strip() or "PART"
         c["gemini_grid_inspector"] = bool(self.gemini_grid_inspector_var.get())
         if hasattr(self, "qc_blur_strength_var"):
             c["qc_blur_strength"] = int(self.qc_blur_strength_var.get())
@@ -743,14 +746,21 @@ class PartSplitterFrame(ttk.Frame):
         return {k: deepcopy(v) for k, v in self.config.items() if k not in excluded}
 
     def _refresh_named_config_list(self, select_name: str = ""):
-        names = list(self.config.get("saved_configs", {}).keys())
+        saved = self.config.get("saved_configs", {})
+        if isinstance(saved, dict):
+            for bad_key in [k for k in saved if k.strip().lower() in ("test", "test_config", "demo", "sample")]:
+                saved.pop(bad_key, None)
+        names = list(saved.keys())
         name = select_name or self.config.get("selected_config", "")
+        if str(name).strip().lower() in ("test", "test_config", "demo", "sample") or name not in names:
+            name = ""
+            self.config["selected_config"] = ""
         if hasattr(self, "named_config_cb"):
             self.named_config_cb["values"] = names
-            self.named_config_cb.set(name if name in names else "")
+            self.named_config_cb.set(name)
         if hasattr(self, "named_config_name_entry"):
             self.named_config_name_entry.delete(0, tk.END)
-            if name in names:
+            if name:
                 self.named_config_name_entry.insert(0, name)
 
     def save_named_config(self):
