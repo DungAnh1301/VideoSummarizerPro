@@ -92,6 +92,7 @@ class PartSplitterFrame(ttk.Frame):
         # --- Tab 2: AI Gemini & Chiến Lược Chia Part ---
         self.google_status_var = tk.StringVar(value="● Đang kiểm tra phiên Google...")
         self.editing_mode_var = tk.StringVar(value=c.get("editing_mode", "viral_condensed"))
+        self.genre_var = tk.StringVar(value=c.get("genre", "reality"))
         self.target_part_duration_var = tk.DoubleVar(value=float(c.get("target_part_duration", 90.0)))
         self.gemini_model_var = tk.StringVar(value=c.get("gemini_model", "gemini-3.8-flash-high"))
         self.gemini_api_key_var = tk.StringVar(value=c.get("gemini_api_key", ""))
@@ -354,11 +355,19 @@ class PartSplitterFrame(ttk.Frame):
             textvariable=self.target_part_duration_var, width=6
         )
         self.target_dur_spin.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Label(self.viral_settings_frame, text="giây").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(self.viral_settings_frame, text="giây").pack(side=tk.LEFT, padx=(0, 12))
+
+        ttk.Label(self.viral_settings_frame, text="Thể loại:").pack(side=tk.LEFT, padx=(0, 4))
+        self.genre_cb = ttk.Combobox(
+            self.viral_settings_frame, textvariable=self.genre_var,
+            values=["reality", "gaming", "storytelling", "movie_recap"],
+            width=12, state="readonly"
+        )
+        self.genre_cb.pack(side=tk.LEFT, padx=(0, 8))
 
         ttk.Label(
             self.viral_settings_frame,
-            text="(Chuẩn Hollywood: Đạo Diễn 1, 2, 3 tự động chia 4-5 cảnh cốt lõi ~20s/cảnh, Motion Blur xfade, Whoosh SFX, BGM Tension & Sub Safe Zone)",
+            text="(4-5 cảnh/Part, Whoosh SFX, BGM Tension & Safe Zone Sub)",
             foreground="#2563EB", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
@@ -602,6 +611,7 @@ class PartSplitterFrame(ttk.Frame):
             self.auto_title_var.set(bool(c.get("auto_regenerate_title", True)))
 
             self.editing_mode_var.set(c.get("editing_mode", "viral_condensed"))
+            self.genre_var.set(c.get("genre", "reality"))
             self.target_part_duration_var.set(float(c.get("target_part_duration", 90.0)))
             self.enable_competitor_layout_var.set(bool(c.get("enable_competitor_layout", True)))
             self.competitor_top_card_var.set(bool(c.get("competitor_top_card", True)))
@@ -671,6 +681,7 @@ class PartSplitterFrame(ttk.Frame):
         c["auto_regenerate_title"] = bool(self.auto_title_var.get())
 
         c["editing_mode"] = self.editing_mode_var.get() if hasattr(self, "editing_mode_var") else "viral_condensed"
+        c["genre"] = self.genre_var.get() if hasattr(self, "genre_var") else "reality"
         c["target_part_duration"] = float(self.target_part_duration_var.get()) if hasattr(self, "target_part_duration_var") else 90.0
         c["enable_competitor_layout"] = bool(self.enable_competitor_layout_var.get()) if hasattr(self, "enable_competitor_layout_var") else True
         c["competitor_top_card"] = bool(self.competitor_top_card_var.get()) if hasattr(self, "competitor_top_card_var") else True

@@ -84,6 +84,19 @@ class PartDirectorAI:
                 "Thể loại tóm tắt phim: Nhịp dồn dập, chuyển cảnh theo từng nhịp hành động. "
                 "Loại bỏ 100% cảnh đi bộ hay thừa thãi, chỉ giữ các xung đột gay cấn và nút thắt."
             )
+        },
+        "gaming": {
+            "label": "Gaming & Esports / Streamer Highlight & Thử thách",
+            "pacing": "intense_gaming",
+            "scene_count": 5,
+            "scene_dur": 19.0,
+            "instructions": (
+                "Thể loại Game & Streamer: Tiết tấu dồn dập, kịch tính cao độ. "
+                "Cắt bỏ 100% thời gian đi bộ, nhặt đồ, chạy map nhạt nhẽo; chỉ giữ các pha giao tranh (combat/clutch), "
+                "đánh trùm (boss fight), lỗi hài hước (fails/troll), và phản ứng sốc/rage của streamer. "
+                "Khi streamer hét lên, ăn mừng hoặc bị tiêu diệt bất ngờ: PUNCH ZOOM (1.18x) vào biểu cảm/khoảnh khắc đó. "
+                "Cliffhanger Part: Cắt ngay trước đòn chí mạng của Boss hoặc tình huống sống còn!"
+            )
         }
     }
 
