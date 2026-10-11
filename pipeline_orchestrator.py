@@ -140,6 +140,8 @@ class PipelineOrchestrator:
 
         exported_parts = []
         part_prefix = str(config.get("part_label_prefix", "PART")).strip() or "PART"
+        if not part_prefix or part_prefix.lower() in ("part", "tập", "tap") or "tập" in part_prefix.lower():
+            part_prefix = "PART"
 
         # -------------------------------------------------------------
         # BƯỚC 3 & 4: SẢN XUẤT TỪNG PART (ĐẠO DIỄN 2, 3 & ĐỘI NGŨ CREW)

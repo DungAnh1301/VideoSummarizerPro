@@ -206,24 +206,24 @@ class VisualEditorEngine:
                 if not seg_files:
                     continue
 
-            # Ghép các shots của cảnh này thành video cảnh
-            concat_list = os.path.join(work_dir, f"sc_{sc_idx:02d}_concat.txt")
-            with open(concat_list, "w", encoding="utf-8") as f:
-                for sf in seg_files:
-                    f.write(f"file '{sf}'\n")
+                # Ghép các shots của cảnh này thành video cảnh
+                concat_list = os.path.join(work_dir, f"sc_{sc_idx:02d}_concat.txt")
+                with open(concat_list, "w", encoding="utf-8") as f:
+                    for sf in seg_files:
+                        f.write(f"file '{sf}'\n")
 
-            sc_video = os.path.join(work_dir, f"scene_{sc_idx + 1}.mp4")
-            concat_cmd = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0", "-i", concat_list,
-                "-c", "copy",
-                sc_video
-            ]
-            _ff_run(concat_cmd, log_fn=None, timeout=120, label=f"sc_{sc_idx}")
-            sc_dur = probe_duration_sec(sc_video)
-            scene_files.append(sc_video)
-            scene_durations.append(sc_dur)
-            _log(f"   ✓ Cảnh {sc_idx + 1}/{len(scenes)} ({sc_dur:.1f}s): {sc_name}")
+                sc_video = os.path.join(work_dir, f"scene_{sc_idx + 1}.mp4")
+                concat_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0", "-i", concat_list,
+                    "-c", "copy",
+                    sc_video
+                ]
+                _ff_run(concat_cmd, log_fn=None, timeout=120, label=f"sc_{sc_idx}")
+                sc_dur = probe_duration_sec(sc_video)
+                scene_files.append(sc_video)
+                scene_durations.append(sc_dur)
+                _log(f"   ✓ Cảnh {sc_idx + 1}/{len(scenes)} ({sc_dur:.1f}s): {sc_name}")
         finally:
             if cap is not None:
                 try:
