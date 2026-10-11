@@ -83,6 +83,20 @@ class MacroDirectorAI:
                     pass
 
         config = config or {}
+
+        # CƠ CHẾ BẢO VỆ MỐC 1 PHÚT: Tự động tính toán số Part an toàn dựa trên thời lượng nguồn
+        # Mỗi Part chuẩn Hollywood cần tối thiểu ~120s nguồn để lọc ra 4-5 cảnh cốt lõi đạt >= 70s - 95s
+        min_source_per_part = float(config.get("min_source_per_part", 125.0))
+        max_safe_parts = max(1, int(total_duration / min_source_per_part))
+        if part_count > max_safe_parts:
+            _log(
+                f"🛡️ [BẢO VỆ MỐC 1 PHÚT] Video nguồn {total_duration:.1f}s ({total_duration/60:.1f} phút) "
+                f"chia {part_count} Parts sẽ khiến video bị ngắn dưới 60s! "
+                f"Hệ thống tự động tái cân bằng từ {part_count} -> {max_safe_parts} Parts "
+                f"để cam kết 100% video đều > 1 phút (chuẩn kiếm tiền & giữ chân người xem)!"
+            )
+            part_count = max_safe_parts
+
         _log(f"👑 [ĐẠO DIỄN 1] Phân tích vĩ mô toàn bộ video ({total_duration:.1f}s, {len(cues)} cues) thành {part_count} Parts...")
 
         # Tóm tắt transcript cho LLM

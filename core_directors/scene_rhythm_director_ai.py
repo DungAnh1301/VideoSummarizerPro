@@ -159,6 +159,7 @@ Respond ONLY with a valid JSON object matching this schema:
                     data = json.loads(text[s_idx:e_idx + 1])
                     if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 3:
                         _log(f"✅ [ĐẠO DIỄN 2] Phê duyệt kịch bản {len(data['scenes'])} cảnh cho Part {part_index} thành công!")
+                        data["scenes"] = cls._ensure_min_duration(data["scenes"], min_dur=65.0, max_bound=end_bound)
                         return data
             except Exception as e:
                 logger.warning(f"Lỗi parse Storyboard Spec JSON: {e}")
@@ -166,11 +167,37 @@ Respond ONLY with a valid JSON object matching this schema:
         # Heuristic fallback: Tự động gom cụm cues thành 4-5 cảnh thuận chiều thời gian
         _log(f"ℹ️ [ĐẠO DIỄN 2] Tự động xây dựng 5 phân cảnh cốt lõi chất lượng cao từ transcript cues...")
         scenes = cls._build_heuristic_scenes(part_cues, start_bound, end_bound, target_scene_count=5)
+        scenes = cls._ensure_min_duration(scenes, min_dur=65.0, max_bound=end_bound)
         return {
             "part_index": part_index,
             "title": title,
             "scenes": scenes
         }
+
+    @classmethod
+    def _ensure_min_duration(
+        cls,
+        scenes: List[Dict[str, Any]],
+        min_dur: float = 65.0,
+        max_bound: float = 99999.0
+    ) -> List[Dict[str, Any]]:
+        """Bảo đảm tổng thời lượng các cảnh trong Part luôn đạt >= min_dur (65s), cam kết > 1 phút."""
+        tot = sum(max(0.0, float(sh.get("end", 0)) - float(sh.get("start", 0))) for sc in scenes for sh in sc.get("shots", []))
+        if tot >= min_dur or not scenes:
+            return scenes
+
+        deficit = min_dur - tot
+        shot_count = sum(len(sc.get("shots", [])) for sc in scenes)
+        if shot_count > 0:
+            add_per_shot = deficit / float(shot_count)
+            for sc in scenes:
+                for sh in sc.get("shots", []):
+                    s = max(0.0, float(sh["start"]) - add_per_shot * 0.3)
+                    e = min(max_bound, float(sh["end"]) + add_per_shot * 0.7)
+                    sh["start"] = round(s, 2)
+                    sh["end"] = round(e, 2)
+
+        return scenes
 
     @classmethod
     def _build_heuristic_scenes(

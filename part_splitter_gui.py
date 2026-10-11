@@ -1603,6 +1603,18 @@ class PartSplitterFrame(ttk.Frame):
 
         cleaned_video = video_path
         if editing_mode == "viral_condensed":
+            # CƠ CHẾ BẢO VỆ MỐC 1 PHÚT: Tự động tính toán số Part an toàn
+            min_source_per_part = 125.0  # Mỗi Part cần ít nhất ~2 phút nguồn để lọc 4-5 cảnh cốt lõi đạt >= 75s
+            max_safe_p = max(1, int(total_dur / min_source_per_part))
+            if p_count > max_safe_p:
+                self.log(
+                    f"🛡️ [BẢO VỆ MỐC 1 PHÚT] Video nguồn {total_dur:.1f}s ({total_dur/60:.1f} phút) "
+                    f"chia {p_count} Parts sẽ làm mỗi Part bị ngắn dưới 60s (không đủ chuẩn kiếm tiền)! "
+                    f"Hệ thống tự động tái cân bằng từ {p_count} -> {max_safe_p} Parts "
+                    f"để đảm bảo 100% các Part đều đạt 75s - 95s chuẩn Hollywood!"
+                )
+                p_count = max_safe_p
+
             from part_director_ai import PartDirectorAI
             self.log(f"👑 [BAN ĐẠO DIỄN] Kích hoạt 3 Đạo Diễn Hollywood (Macro Story, Scene & Rhythm, Sound & Transition)...")
             parts_info = PartDirectorAI.direct_full_series(
