@@ -188,6 +188,7 @@ class PipelineOrchestrator:
                 work_dir=os.path.join(part_work_dir, "visual_cuts"),
                 transition_duration=float(audio_spec.get("transition_duration", 0.35)),
                 target_fg_h=int(config.get("video_center_height", 1188)),
+                config=config,
                 log_fn=_log
             )
 

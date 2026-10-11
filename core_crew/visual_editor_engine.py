@@ -103,6 +103,7 @@ class VisualEditorEngine:
         work_dir: str,
         transition_duration: float = 0.35,
         target_fg_h: int = 1188,
+        config: Optional[Dict[str, Any]] = None,
         log_fn=None
     ) -> Tuple[str, List[float]]:
         """Render từng phân cảnh và nối lại bằng kỹ xảo xfade=hblur."""
@@ -135,6 +136,18 @@ class VisualEditorEngine:
                 cap = cv2.VideoCapture(source_video)
             except Exception as e:
                 logger.warning(f"Không khởi tạo được bộ dò khuôn mặt OpenCV: {e}")
+
+        # Chuẩn bị bộ lọc màu CapCut nếu có cấu hình chỉnh màu
+        color_fx = ""
+        try:
+            from capcut_filters import build_adjust_filters
+            fx_cand = build_adjust_filters(config or {}, allow_blur_fx=False)
+            if fx_cand and fx_cand != "eq=contrast=1.000:brightness=0.000:saturation=1.000":
+                color_fx = fx_cand
+                look_name = (config or {}).get("color_look", "Tùy chỉnh")
+                _log(f"🎨 [NHÂN VIÊN 1] Áp dụng bảng màu CapCut Studio ({look_name}) cho toàn bộ cảnh quay.")
+        except Exception as e:
+            logger.warning(f"Không thể khởi tạo bộ lọc màu CapCut: {e}")
 
         enc_name, enc_opts = get_best_video_encoder()
         scene_files = []
@@ -174,6 +187,9 @@ class VisualEditorEngine:
                         fg_filter = f"scale={p_scale_w}:{p_scale_h},crop=1080:{target_fg_h}:{px_off}:{py_off}"
                     else:
                         fg_filter = f"scale={scale_w}:{target_fg_h},crop=1080:{target_fg_h}:{x_off}:0"
+
+                    if color_fx:
+                        fg_filter = f"{fg_filter},{color_fx}"
 
                     vf = (
                         f"[0:v]split=2[bg_in][fg_in];"
