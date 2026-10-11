@@ -715,8 +715,7 @@ class PartSplitterEngine:
         hook: Optional[Dict[str, Any]] = None,
         output_path: str = "",
         log_fn: Optional[Callable[[str], None]] = None,
-        work_dir: str = "",
-        config: Optional[Dict[str, Any]] = None
+        work_dir: str = ""
     ) -> str:
         """Cắt nối Micro-Cuts (2.0s - 8.0s) từ video gốc:
         - Áp dụng Punch-in Zoom (115%) cho các shot được chỉ định punch_in=True.
@@ -788,18 +787,6 @@ class PartSplitterEngine:
         seg_files = []
         enc_name, enc_opts = get_best_video_encoder()
 
-        # Chuẩn bị bộ lọc màu CapCut nếu có cấu hình chỉnh màu
-        color_fx = ""
-        try:
-            from capcut_filters import build_adjust_filters
-            fx_cand = build_adjust_filters(config or {}, allow_blur_fx=False)
-            if fx_cand and fx_cand != "eq=contrast=1.000:brightness=0.000:saturation=1.000":
-                color_fx = fx_cand
-                look_name = (config or {}).get("color_look", "Tùy chỉnh")
-                _log(f"🎨 [COLOR STUDIO] Áp dụng bảng màu CapCut ({look_name}) cho toàn bộ phân đoạn video.")
-        except Exception as e:
-            logger.warning(f"Không thể khởi tạo bộ lọc màu: {e}")
-
         for idx, seg in enumerate(segments):
             s = seg["start"]
             e = seg["end"]
@@ -822,9 +809,6 @@ class PartSplitterEngine:
                 fg_filter = f"scale={p_scale_w}:{p_scale_h},crop=1080:{target_fg_h}:{px_off}:{py_off}"
             else:
                 fg_filter = f"scale={scale_w}:{target_fg_h},crop=1080:{target_fg_h}:{x_off}:0"
-
-            if color_fx:
-                fg_filter = f"{fg_filter},{color_fx}"
 
             vf = (
                 f"[0:v]split=2[bg_in][fg_in];"
@@ -1306,8 +1290,7 @@ class PartSplitterEngine:
                     hook=hook_data,
                     output_path=condensed_path,
                     log_fn=log_fn,
-                    work_dir=temp_dir,
-                    config=cfg
+                    work_dir=temp_dir
                 )
                 source_for_packaging = condensed_path
 
