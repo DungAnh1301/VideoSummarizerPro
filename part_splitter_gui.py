@@ -239,10 +239,10 @@ class PartSplitterFrame(ttk.Frame):
         ttk.Button(out_row, text="📂 Chọn...", command=self._browse_output_dir, style="Tool.TButton").pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(out_row, text="📁 Mở Folder", command=self.open_output_folder, style="Tool.TButton").pack(side=tk.LEFT)
 
-        # Hàng 4: Thông báo Hook AI Đối Thủ (Chế độ 3-Pass)
+        # Hàng 4: Thông báo Hollywood AI Film Crew (Chế độ 2)
         self.viral_hook_notice = ttk.Label(
             f1,
-            text="✨ [ĐẠO DIỄN AI 3-PASS] Trưởng phòng dựng tự động quét tìm Hook đỉnh cao nhất (2-3s) đưa lên giây 00:00 của mỗi Part. Không cần cấu hình Hook thủ công.",
+            text="✨ [HOLLYWOOD AI FILM CREW] 100% Zero-Touch: Tự động tải 1080p, tự động bóc sub Whisper GPU, chia 4-5 cảnh cốt lõi (~20s/cảnh), khóa câu thoại Zero Truncation, Motion Blur Transition & Audio Master.",
             foreground="#2563EB", font=("Segoe UI Semibold", 8)
         )
         self.viral_hook_notice.grid(row=4, column=0, columnspan=6, sticky=tk.W, padx=2, pady=(6, 2))
@@ -325,7 +325,7 @@ class PartSplitterFrame(ttk.Frame):
         em_radio_row = ttk.Frame(self.editor_mode_box)
         em_radio_row.pack(fill=tk.X, pady=(2, 6))
         self.rb_viral_condensed = ttk.Radiobutton(
-            em_radio_row, text="🔘 Dựng Tinh Hoa Đối Thủ (3-Pass AI Director) ⭐ (Khuyên dùng)",
+            em_radio_row, text="🔘 Dựng Chuẩn Hollywood AI Film Crew (Chế Độ 2: 4-5 Cảnh, Zero Truncation, SFX & Sub Tự Động) ⭐ (Khuyên dùng)",
             variable=self.editing_mode_var, value="viral_condensed",
             command=self.on_editing_mode_change
         )
@@ -338,7 +338,7 @@ class PartSplitterFrame(ttk.Frame):
         )
         self.rb_classic_linear.pack(side=tk.LEFT)
 
-        # Khung tham số cho Dựng Tinh Hoa Đối Thủ (3-Pass AI Director)
+        # Khung tham số cho Dựng Tinh Hoa Đối Thủ (Hollywood AI Film Crew)
         self.viral_settings_frame = ttk.Frame(self.editor_mode_box)
         self.viral_settings_frame.pack(fill=tk.X, pady=2)
         ttk.Label(self.viral_settings_frame, text="Số Part cần chia:").pack(side=tk.LEFT, padx=(2, 4))
@@ -358,7 +358,7 @@ class PartSplitterFrame(ttk.Frame):
 
         ttk.Label(
             self.viral_settings_frame,
-            text="(Chuẩn đối thủ 75s – 95s: Đạo Diễn AI lọc 80% râu ria, chọn Hook 2-3s đưa lên đầu & micro-cuts thoại mượt)",
+            text="(Chuẩn Hollywood: Đạo Diễn 1, 2, 3 tự động chia 4-5 cảnh cốt lõi ~20s/cảnh, Motion Blur xfade, Whoosh SFX, BGM Tension & Sub Safe Zone)",
             foreground="#2563EB", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
@@ -378,7 +378,7 @@ class PartSplitterFrame(ttk.Frame):
         f3 = self.tab3
         f3.columnconfigure(1, weight=1)
 
-        # Hàng 0: Tốc độ, Âm lượng, Blur nền
+        # Hàng 0: Tốc độ, Âm lượng, Limiter
         ttk.Label(f3, text="Tốc độ:").grid(row=0, column=0, sticky=tk.W, pady=3)
         self.speed_spin = ttk.Spinbox(f3, from_=0.5, to=3.0, increment=0.05, textvariable=self.source_speed_var, width=6)
         self.speed_spin.grid(row=0, column=1, sticky=tk.W, padx=3, pady=3)
@@ -388,10 +388,11 @@ class PartSplitterFrame(ttk.Frame):
         self.audio_boost_spin.grid(row=0, column=3, sticky=tk.W, padx=3, pady=3)
         self.audio_boost_spin.set(self.config.get("audio_boost", 6.0))
 
-        self.blur_chk = ttk.Checkbutton(f3, text="Làm mờ nền (Blur)", variable=self.blur_var)
-        self.blur_chk.grid(row=0, column=4, padx=8, sticky=tk.W)
+        ttk.Checkbutton(
+            f3, text="☑ CapCut Limiter +20dB (Compressor chuẩn)", variable=self.capcut_limiter_var
+        ).grid(row=0, column=4, padx=(8, 2), sticky=tk.W)
 
-        # Hàng 1: Zoom-in & Scale ngang/dọc
+        # Hàng 1: Zoom-in & Scale ngang / Scale dọc
         self.zoom_chk = ttk.Checkbutton(f3, text="Zoom-in (%):", variable=self.zoom_var)
         self.zoom_chk.grid(row=1, column=0, sticky=tk.W, pady=3)
 
@@ -409,79 +410,45 @@ class PartSplitterFrame(ttk.Frame):
         self.scale_h_spin.grid(row=1, column=5, sticky=tk.W, padx=3, pady=3)
         self.scale_h_spin.set(self.config.get("scale_h", 100))
 
-        # Hàng 2: KHUNG ĐÓNG GÓI CHUẨN ĐỐI THỦ TRIỆU VIEW (COMPETITOR LAYOUT)
-        self.competitor_box = ttk.LabelFrame(f3, text="  🌟 ĐÓNG GÓI CHUẨN ĐỐI THỦ TRIỆU VIEW (COMPETITOR LAYOUT)  ", padding=6)
-        self.competitor_box.grid(row=2, column=0, columnspan=6, sticky=tk.EW, pady=(3, 3))
-
-        c_row1 = ttk.Frame(self.competitor_box)
-        c_row1.pack(fill=tk.X, pady=2)
+        # Hàng 2: Chuẩn định dạng & Lật gương
+        fmt_row = ttk.Frame(f3)
+        fmt_row.grid(row=2, column=0, columnspan=6, sticky=tk.EW, pady=(3, 3))
         ttk.Checkbutton(
-            c_row1, text="☑ Canvas 9:16 + Nền Gaussian Blur trên/dưới",
-            variable=self.enable_competitor_layout_var
-        ).pack(side=tk.LEFT, padx=(2, 12))
+            fmt_row, text="☐ Lật gương video (Random Mirror)", variable=self.random_mirror_var
+        ).pack(side=tk.LEFT, padx=(0, 14))
         ttk.Checkbutton(
-            c_row1, text="☑ In Top Card: Thẻ trắng bo góc lấy Title gốc YouTube",
-            variable=self.competitor_top_card_var
-        ).pack(side=tk.LEFT, padx=(0, 12))
-
-        c_row2 = ttk.Frame(self.competitor_box)
-        c_row2.pack(fill=tk.X, pady=2)
-        ttk.Checkbutton(
-            c_row2, text="☑ In Bottom Badge: Nút trắng viên thuốc 'PART X'",
-            variable=self.competitor_bottom_badge_var
-        ).pack(side=tk.LEFT, padx=(2, 12))
+            fmt_row, text="🗑 Xóa thư mục tạm sau khi xuất video", variable=self.cleanup_temp_var
+        ).pack(side=tk.LEFT, padx=(0, 14))
         ttk.Label(
-            c_row2, text="🔊 Chuẩn âm lượng thoại: -14 LUFS (đanh rõ, sống động trên điện thoại)",
+            fmt_row, text="🔊 Chuẩn âm lượng thoại: -14 LUFS (đanh rõ, sống động trên điện thoại)",
             foreground="#16825D", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
-        # Hàng 3: CapCut Limiter, Subtle Zoom, Lật gương hình ảnh
-        effects_row = ttk.Frame(f3)
-        effects_row.grid(row=3, column=0, columnspan=6, sticky=tk.EW, pady=(3, 2))
-        ttk.Checkbutton(
-            effects_row, text="☑ CapCut Limiter +20dB (Compressor chuẩn)", variable=self.capcut_limiter_var
-        ).pack(side=tk.LEFT, padx=(0, 10))
-
-        ttk.Checkbutton(
-            effects_row, text="☑ Subtle Zoom (1.03x chống quét bản quyền)", variable=self.subtle_zoom_var
-        ).pack(side=tk.LEFT, padx=(0, 10))
-
-        ttk.Checkbutton(
-            effects_row, text="☐ Lật gương video (Random Mirror)", variable=self.random_mirror_var
-        ).pack(side=tk.LEFT)
-
-        # Hàng 4: Tiền tố nhãn Part quốc tế
+        # Hàng 3: Tiền tố nhãn Part quốc tế
         self.prefix_row = ttk.Frame(f3)
-        self.prefix_row.grid(row=4, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
+        self.prefix_row.grid(row=3, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
         ttk.Label(self.prefix_row, text="Tiền tố nhãn Part:").pack(side=tk.LEFT, padx=(0, 4))
         self.prefix_entry = ttk.Entry(self.prefix_row, textvariable=self.part_prefix_var, width=12)
         self.prefix_entry.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(
             self.prefix_row,
-            text="(Ví dụ: 'Part', 'Teil', 'Partie', 'Часть', 'Tập'...) Font tự động khớp Unicode quốc tế.",
+            text="(Ví dụ: 'Part', 'Teil', 'Partie', 'Часть', 'Tập'...) Cấu hình Title Banner, Subtitle & Part trực tiếp trong Title & Sub.",
             foreground="#64748B"
         ).pack(side=tk.LEFT)
 
-        # Hàng 5: Xóa thư mục tạm sau khi xuất video
-        clean_row = ttk.Frame(f3)
-        clean_row.grid(row=5, column=0, columnspan=6, sticky=tk.W, pady=(3, 2))
-        ttk.Checkbutton(
-            clean_row, text="Xóa thư mục tạm sau khi xuất video", variable=self.cleanup_temp_var
-        ).pack(side=tk.LEFT)
-
-        # Hàng 6: Bộ 3 nút công cụ Studio (Crop, Color, Title & Sub)
+        # Hàng 4: Bộ 3 nút công cụ Studio chuyên biệt (Crop, Color, Title & Sub)
         studio_row = ttk.Frame(f3)
-        studio_row.grid(row=6, column=0, columnspan=6, sticky=tk.EW, pady=(6, 2))
+        studio_row.grid(row=4, column=0, columnspan=6, sticky=tk.EW, pady=(6, 2))
         for col in range(3):
             studio_row.columnconfigure(col, weight=1)
 
-        self.btn_open_crop = ttk.Button(studio_row, text="✂ Crop", command=self.open_crop_tool_popup, style="Tool.TButton")
+        self.btn_open_crop = ttk.Button(studio_row, text="✂ Crop Khung Hình", command=self.open_crop_tool_popup, style="Tool.TButton")
         self.btn_open_crop.grid(row=0, column=0, sticky=tk.EW, padx=(0, 3))
 
-        self.btn_open_color = ttk.Button(studio_row, text="🎨 Color", command=self.open_capcut_color_popup, style="Tool.TButton")
+        self.btn_open_color = ttk.Button(studio_row, text="🎨 Chỉnh Màu CapCut", command=self.open_capcut_color_popup, style="Tool.TButton")
         self.btn_open_color.grid(row=0, column=1, sticky=tk.EW, padx=3)
 
-        self.btn_open_title_sub = ttk.Button(studio_row, text="🔤 Title & Sub", command=self.open_title_sub_studio_popup, style="Tool.TButton")
+        self.btn_open_title_sub = ttk.Button(studio_row, text="🔤 Title & Sub Studio (Live Preview)", command=self.open_title_sub_studio_popup, style="Tool.TButton")
         self.btn_open_title_sub.grid(row=0, column=2, sticky=tk.EW, padx=(3, 0))
 
     # =========================================================================
@@ -543,7 +510,7 @@ class PartSplitterFrame(ttk.Frame):
         ttk.Button(action_bar, text="📁 Mở Thư Mục Xuất", command=self.open_output_folder, style="Tool.TButton").grid(row=0, column=5, padx=4)
 
         self.btn_start = ttk.Button(
-            action_bar, text="🚀 BẮT ĐẦU CHIA PART & XUẤT VIDEO",
+            action_bar, text="🚀 SẢN XUẤT SERIES CHUẨN HOLLYWOOD (1-CLICK)",
             command=self.start_queue_processing, style="Primary.TButton"
         )
         self.btn_start.grid(row=0, column=6, padx=8)
@@ -1527,22 +1494,39 @@ class PartSplitterFrame(ttk.Frame):
         srt_path = ""
 
         # 1. Tải hoặc chuẩn bị file
+        raw_title = ""
         if source_mode == "youtube":
-            job["status"] = "Đang tải video..."
+            job["status"] = "Đang tải video & lấy sub..."
             self.after(0, self._refresh_queue_table)
-            self.log(f"📥 Đang tải source YouTube qua DownloaderProcessor...")
-            if DownloaderProcessor is not None:
-                dl = DownloaderProcessor(output_dir=work_dir, log_fn=self.log)
-                meta = dl.download(source)
-                video_path = meta.get("video_path")
-                srt_path = meta.get("subtitle_path", "")
-            else:
-                raise RuntimeError("Không tìm thấy DownloaderProcessor.")
+            self.log(f"🚀 [ZERO-TOUCH YOUTUBE] Bắt đầu tự động tải 1080p và lấy/bóc sub: {source}")
+            try:
+                from auto_youtube_pipeline import AutoYouTubePipeline
+                video_path, srt_path, yt_title = AutoYouTubePipeline.download_video_and_sub(source, work_dir)
+                raw_title = yt_title
+            except Exception as yt_err:
+                self.log(f"⚠️ AutoYouTubePipeline tải lỗi ({yt_err}), chuyển DownloaderProcessor...")
+                if DownloaderProcessor is not None:
+                    dl = DownloaderProcessor(output_dir=work_dir, log_fn=self.log)
+                    meta = dl.download(source)
+                    video_path = meta.get("video_path")
+                    srt_path = meta.get("subtitle_path", "")
+                    if "meta" in locals() or isinstance(meta, dict):
+                        raw_title = meta.get("title", "")
+                else:
+                    raise
         else:
             if not srt_path and video_path:
                 cand = os.path.splitext(video_path)[0] + ".srt"
                 if os.path.isfile(cand):
                     srt_path = cand
+                else:
+                    # Nếu video local không có sub -> Tự động dùng faster-whisper GPU
+                    self.log(f"🎙️ [WHISPER AI] Không tìm thấy file .srt cho video local. Tự động bóc sub bằng Faster-Whisper GPU CUDA...")
+                    try:
+                        from auto_youtube_pipeline import AutoYouTubePipeline
+                        srt_path = AutoYouTubePipeline.transcribe_with_whisper(video_path, work_dir)
+                    except Exception as wh_err:
+                        self.log(f"⚠️ Whisper bóc sub lỗi: {wh_err}")
 
         if not video_path or not os.path.isfile(video_path):
             raise FileNotFoundError(f"Không tìm thấy video nguồn: {video_path}")
@@ -1590,13 +1574,13 @@ class PartSplitterFrame(ttk.Frame):
             )
 
         # Xác định raw_title của video
-        raw_title = ""
-        if source_mode == "youtube" and "meta" in locals() and isinstance(meta, dict):
-            raw_title = meta.get("title", "")
-        if not raw_title and video_path:
-            raw_title = os.path.splitext(os.path.basename(video_path))[0]
         if not raw_title:
-            raw_title = job.get("name", "")
+            if source_mode == "youtube" and "meta" in locals() and isinstance(meta, dict):
+                raw_title = meta.get("title", "")
+            if not raw_title and video_path:
+                raw_title = os.path.splitext(os.path.basename(video_path))[0]
+            if not raw_title:
+                raw_title = job.get("name", "")
 
         ai_cfg = dict(cfg)
         ai_cfg["min_part_duration_sec"] = needed_raw_per_part
@@ -1604,34 +1588,45 @@ class PartSplitterFrame(ttk.Frame):
         ai_cfg["speed"] = speed_factor
 
         editing_mode = str(cfg.get("editing_mode", "viral_condensed")).strip()
-        self.log(f"🎬 Chế độ biên tập: {'Dựng Tinh Hoa Đối Thủ (3-Pass AI)' if editing_mode == 'viral_condensed' else 'Cắt Khúc Cơ Bản (Classic Linear)'}")
-
-        ai_plan = PartPrunerAI.analyze_and_plan(
-            video_path=video_path,
-            srt_path=srt_path,
-            total_duration=total_dur,
-            part_count=p_count,
-            target_prune_sec=prune_target if cfg.get("prune_enabled") else 0.0,
-            hook_target_sec=cfg.get("hook_target_sec", 6.0),
-            gemini_client=None,
-            model_name=cfg.get("gemini_model", "gemini-3.8-flash-high"),
-            api_key=cfg.get("gemini_api_key", ""),
-            auto_title=cfg.get("auto_regenerate_title", True),
-            part_prefix=cfg.get("part_label_prefix", "Part"),
-            config=ai_cfg,
-            job_dir=work_dir,
-            original_title=raw_title,
-            log_fn=self.log
-        )
-
-        self.log(f"🎯 Tiêu đề Viral (ngôn ngữ gốc): {ai_plan.get('master_title', raw_title or 'Video')}")
+        self.log(f"🎬 Chế độ biên tập: {'Dựng Tinh Hoa Đối Thủ (Hollywood AI Film Crew)' if editing_mode == 'viral_condensed' else 'Cắt Khúc Cơ Bản (Classic Linear)'}")
 
         cleaned_video = video_path
-        if editing_mode == "viral_condensed" and ai_plan.get("parts"):
-            # CHẾ ĐỘ DỰNG TINH HOA ĐỐI THỦ: Dùng trực tiếp kịch bản micro-cuts của 3-Pass AI
-            parts_info = ai_plan["parts"]
-            self.log(f"🎬 [3-PASS DIRECTOR] Nhận kịch bản {len(parts_info)} Parts micro-cuts chuẩn đối thủ!")
+        if editing_mode == "viral_condensed":
+            from part_director_ai import PartDirectorAI
+            self.log(f"👑 [BAN ĐẠO DIỄN] Kích hoạt 3 Đạo Diễn Hollywood (Macro Story, Scene & Rhythm, Sound & Transition)...")
+            parts_info = PartDirectorAI.direct_full_series(
+                transcript_data=cues,
+                video_duration_sec=total_dur,
+                part_count=p_count,
+                genre=cfg.get("genre", "reality"),
+                master_title=raw_title,
+                config=ai_cfg,
+                log_fn=self.log
+            )
+            ai_plan = {
+                "master_title": raw_title or "Viral Series",
+                "parts": parts_info,
+                "part_titles": [p.get("part_title", f"Part {i+1}") for i, p in enumerate(parts_info)]
+            }
+            self.log(f"🎬 [HOLLYWOOD DIRECTOR] Nhận kịch bản {len(parts_info)} Parts (mỗi Part gồm 4-5 phân cảnh chuẩn điện ảnh)!")
         else:
+            ai_plan = PartPrunerAI.analyze_and_plan(
+                video_path=video_path,
+                srt_path=srt_path,
+                total_duration=total_dur,
+                part_count=p_count,
+                target_prune_sec=prune_target if cfg.get("prune_enabled") else 0.0,
+                hook_target_sec=cfg.get("hook_target_sec", 6.0),
+                gemini_client=None,
+                model_name=cfg.get("gemini_model", "gemini-3.8-flash-high"),
+                api_key=cfg.get("gemini_api_key", ""),
+                auto_title=cfg.get("auto_regenerate_title", True),
+                part_prefix=cfg.get("part_label_prefix", "Part"),
+                config=ai_cfg,
+                job_dir=work_dir,
+                original_title=raw_title,
+                log_fn=self.log
+            )
             # CHẾ ĐỘ CẮT KHÚC CƠ BẢN (CLASSIC LINEAR): Tinh lược theo dải mốc thời gian
             self.log(f"✂️ AI đề xuất lược {len(ai_plan.get('prune_plan', []))} đoạn thừa")
             self.log(f"📍 Điểm chia Part Cliffhanger: {ai_plan.get('part_splits', [])}")
@@ -1785,7 +1780,7 @@ class PartSplitterFrame(ttk.Frame):
             part_cuts = p_item.get("cuts") if isinstance(p_item, dict) else None
 
             if editing_mode == "viral_condensed":
-                self.log(f"🎬 [Render] Engine: Cắt nối micro-cuts & dán Top Card/Bottom Badge cho {part_prefix} {i_idx+1}/{len(parts_info)}...")
+                self.log(f"🎬 [Render Hollywood] Render 4-5 phân cảnh, Motion Blur Transition & Audio Master cho {part_prefix} {i_idx+1}/{len(parts_info)}...")
             else:
                 self.log(f"🎬 Bắt đầu hậu kỳ {part_prefix} {i_idx+1}/{len(parts_info)}: Limiter +20dB, Speed {cfg.get('source_speed', 1.0)}x, Banner...")
 
@@ -1795,6 +1790,8 @@ class PartSplitterFrame(ttk.Frame):
                 hook_time_range=hook_range,
                 source_video=video_path,
                 cuts=part_cuts,
+                scenes=p_item.get("scenes") if isinstance(p_item, dict) else None,
+                cues=cues,
                 speed=cfg.get("source_speed", 1.0),
                 apply_limiter=cfg.get("apply_capcut_limiter", True),
                 apply_subtle_zoom=cfg.get("apply_subtle_zoom", True),

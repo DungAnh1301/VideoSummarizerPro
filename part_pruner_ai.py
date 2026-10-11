@@ -20,6 +20,11 @@ logger = logging.getLogger("PartPrunerAI")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
+try:
+    from audio_boundary_guard import AudioBoundaryGuard
+except ImportError:
+    AudioBoundaryGuard = None
+
 
 def _clean_json_text(raw_text: str) -> str:
     """Loại bỏ markdown code block ```json ... ``` và tìm khối JSON hợp lệ."""
@@ -398,7 +403,7 @@ Ensure 'story_arcs' has exactly {part_count} items and spans from 0.0 to {total_
         }
 
     # -------------------------------------------------------------------------
-    # PASS 2 THỰC THI
+    # PASS 2 THỰC THI (ĐỊNH VỊ TRƯỜNG ĐOẠN HẠT NHÂN LIỀN MẠCH - CORE SCENE ANCHORING)
     # -------------------------------------------------------------------------
     @classmethod
     def _pass2_pacing_editor(
@@ -417,27 +422,28 @@ Ensure 'story_arcs' has exactly {part_count} items and spans from 0.0 to {total_
         job_dir: str,
         log_fn = None
     ) -> Dict[str, Any]:
-        """Pass 2: Trưởng phòng dựng - Chọn Hook 2-3s, tỉa micro-cuts 2-8s, gán punch-in 115%."""
+        """Pass 2: Trưởng phòng dựng - Chọn Hook 2-3s và định vị 1 TRƯỜNG ĐOẠN HỘI THOẠI HẠT NHÂN LIỀN MẠCH (80s-90s) bảo toàn 100% ngữ cảnh."""
         cues_text = "\n".join([f"[{c['start']:.1f}s - {c['end']:.1f}s]: {c['text']}" for c in cues[:120]])
         if not cues_text:
             cues_text = f"(No dialogue transcript in this window from {arc_start:.1f}s to {arc_end:.1f}s.)"
 
         system_prompt = (
-            "You are the Lead Pacing & Continuity Film Editor.\n"
+            "You are the Lead Master Story Editor for viral TikTok/Reels episodes (Benchmark: 10/10 Viral Competitor).\n"
             f"You are editing Part {part_index}/{part_count} based on the Director's Brief:\n"
             f"'{director_brief}'\n"
             f"Source range for this Part: {arc_start:.1f}s to {arc_end:.1f}s.\n"
-            f"TARGET CONDENSED DURATION: {target_part_dur:.1f}s (Allowed range: {min_part_dur:.1f}s - {max_part_dur:.1f}s).\n\n"
-            "MANDATORY EDITING RULES:\n"
-            "1. HOOK (2.0s - 3.0s): Select the single most dramatic, high-stakes moment in this range to place at 00:00. "
-            "Never select ads, sponsor logos, or boring intros. Must show peak action/climax.\n"
-            "2. MICRO-CUTS CONDENSATION (Prune 75%-85% fluff): Keep ONLY high-value dialogue lines and visual action.\n"
-            "   - Each cut must be between 2.0s and 8.0s.\n"
-            "   - Never cut mid-word or mid-syllable; always snap cuts to natural sentence/breath pauses.\n"
-            "   - Total sum of all cuts (excluding hook) should equal approximately 80s - 90s.\n"
-            "3. PUNCH-IN ZOOM (115%): Set 'punch_in': true on alternating monologue shots or talking head shots "
-            "to transition from medium shot to close-up, eliminating jump cuts.\n"
-            "4. CLIFFHANGER: Ensure the last cut ends abruptly on a cliffhanger question or tense moment.\n"
+            f"TARGET PART DURATION: {target_part_dur:.1f}s (Allowed: {min_part_dur:.1f}s - {max_part_dur:.1f}s).\n\n"
+            "CRITICAL 10/10 HOLLYWOOD VIRAL EDITING RULES:\n"
+            "1. EXACTLY 4 TO 5 CORE SCENES (~18s - 22s per scene): Divide this episode into 4 to 5 distinct scene locations/beats.\n"
+            "   - NEVER keep people talking in 1 static spot for 40-50s!\n"
+            "   - Break each scene into 2-4 natural shots (3.5s - 7.0s each) with complete sentences.\n"
+            "2. SHOT-REVERSE-SHOT DYNAMICS:\n"
+            "   - When Questioner / Host / Speaker 1 speaks: pan = 'left'\n"
+            "   - When Guest / Responder / Speaker 2 speaks: pan = 'right'\n"
+            "   - When showing context / B-roll / group: pan = 'center'\n"
+            "   - On shocking revelations or punchlines: assign punch_in = true (1.18x zoom)!\n"
+            "3. ZERO TRUNCATION: Never cut mid-sentence. Keep complete thoughts.\n"
+            "4. CLIFFHANGER ENDING: End on the climax suspense right before the reveal!\n"
             "OUTPUT FORMAT: Strict valid JSON only."
         )
 
@@ -446,7 +452,7 @@ PART CONTEXT:
 - Part Index: {part_index} of {part_count}
 - Arc Theme: {arc_theme}
 - Timeline Window: {arc_start:.1f}s -> {arc_end:.1f}s
-- Target Condensed Total: {target_part_dur:.1f}s
+- Target Total Duration: {target_part_dur:.1f}s
 
 TRANSCRIPT IN THIS WINDOW:
 {cues_text}
@@ -454,19 +460,24 @@ TRANSCRIPT IN THIS WINDOW:
 JSON OUTPUT SCHEMA:
 {{
   "part_index": {part_index},
-  "title": "Short punchy title for this part in original language",
-  "hook": {{
-    "start": 320.5,
-    "end": 323.5,
-    "reason": "Most dramatic climax teaser"
-  }},
-  "cuts": [
-    {{"start": {arc_start + 5.0:.1f}, "end": {arc_start + 10.5:.1f}, "punch_in": false, "summary": "Key revelation"}},
-    {{"start": {arc_start + 25.0:.1f}, "end": {arc_start + 31.0:.1f}, "punch_in": true, "summary": "Reaction close-up"}}
+  "title": "Short punchy viral title for this episode",
+  "scenes": [
+    {{
+      "scene_id": 1,
+      "name": "Scene 1 description",
+      "shots": [
+        {{"start": 306.8, "end": 311.5, "pan": "left", "punch_in": false, "summary": "Host asks why you want to test him"}},
+        {{"start": 312.0, "end": 314.8, "pan": "right", "punch_in": true, "summary": "Guest reveals talking for 4 years"}}
+      ]
+    }}
   ],
-  "cliffhanger": "Ending with an unsolved mystery before reveal"
+  "cuts": [
+    {{"start": 306.8, "end": 311.5, "pan": "left", "punch_in": false, "summary": "Host asks why you want to test him"}},
+    {{"start": 312.0, "end": 314.8, "pan": "right", "punch_in": true, "summary": "Guest reveals talking for 4 years"}}
+  ],
+  "cliffhanger": "Ending with an unresolved reaction"
 }}
-Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
+Return exactly 4 to 5 core scenes covering the key beats of this story arc!
 """
         raw = cls._invoke_ai(system_prompt, user_prompt, config, job_dir)
         if raw:
@@ -507,58 +518,51 @@ Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
         arc_start = float(part_data.get("arc_start", 0.0))
         arc_end = float(part_data.get("arc_end", arc_start + 300.0))
 
-        # Soát lại danh sách cuts với transcript cues để triệt tiêu nuốt chữ
-        fine_tuned_cuts = []
+        # Soát lại danh sách cuts với transcript cues và AudioBoundaryGuard
+        processed_cuts = []
         for cut in cuts:
             c_s = float(cut.get("start", 0.0))
             c_e = float(cut.get("end", c_s + 4.0))
-            p_in = bool(cut.get("punch_in", False))
+            p_in = bool(cut.get("punch_in", False) or cut.get("punch", False))
+            pan = str(cut.get("pan", "center")).lower().strip()
             summary = str(cut.get("summary", ""))
 
             # Hít vào ranh giới cue nếu c_s hoặc c_e rơi vào giữa từ
             best_s = c_s
             best_e = c_e
             for cue in cues:
-                # Nếu c_s nằm rất gần điểm bắt đầu của cue (+-0.5s), neo vào cue.start
                 if abs(cue["start"] - c_s) <= 0.6:
                     best_s = cue["start"]
-                # Nếu c_e nằm rất gần điểm kết thúc của cue (+-0.5s), neo vào cue.end
                 if abs(cue["end"] - c_e) <= 0.6:
                     best_e = cue["end"]
 
-            # Ràng buộc độ dài shot từ 2.0s đến 8.5s
-            if best_e < best_s + 2.0:
+            # Ràng buộc độ dài shot chuẩn micro-cuts từ 2.0s đến 6.0s
+            dur = best_e - best_s
+            if dur < 2.0:
                 best_e = best_s + 2.0
-            if (best_e - best_s) > 8.5:
-                best_e = best_s + 8.5
+            elif dur > 6.0:
+                best_e = best_s + 6.0
 
             best_s = max(arc_start, best_s)
             best_e = min(arc_end, best_e)
 
-            if best_e > best_s + 1.5:
-                fine_tuned_cuts.append({
+            if best_e > best_s + 1.2:
+                processed_cuts.append({
                     "start": round(best_s, 2),
                     "end": round(best_e, 2),
+                    "pan": pan,
                     "punch_in": p_in,
                     "summary": summary
                 })
 
-        # Sắp xếp và triệt tiêu chồng chéo
-        fine_tuned_cuts.sort(key=lambda x: x["start"])
-        merged_cuts = []
-        for c in fine_tuned_cuts:
-            if not merged_cuts:
-                merged_cuts.append(c)
-            else:
-                last = merged_cuts[-1]
-                if c["start"] < last["end"]:
-                    # Nếu chồng chéo, kéo dài last hoặc dời start
-                    last["end"] = max(last["end"], c["end"])
-                else:
-                    merged_cuts.append(c)
+        # Áp dụng AudioBoundaryGuard bảo vệ khoảng thở và chống nuốt từ
+        if AudioBoundaryGuard:
+            fine_tuned_cuts = AudioBoundaryGuard.protect_and_smooth_shots(processed_cuts, arc_end)
+        else:
+            fine_tuned_cuts = processed_cuts
 
         # Tính tổng thời lượng cuts
-        total_cuts_dur = sum(c["end"] - c["start"] for c in merged_cuts)
+        total_cuts_dur = sum(c["end"] - c["start"] for c in fine_tuned_cuts)
 
         # Kiểm tra Hook
         hook = part_data.get("hook", {})
@@ -571,11 +575,13 @@ Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
         clean_hook = {
             "start": round(h_s, 2),
             "end": round(h_e, 2),
+            "pan": str(hook.get("pan", "left")).lower().strip(),
+            "punch_in": bool(hook.get("punch_in", True)),
             "reason": str(hook.get("reason", f"Part {p_idx} Hook Climax"))
         }
 
         part_data["hook"] = clean_hook
-        part_data["cuts"] = merged_cuts
+        part_data["cuts"] = fine_tuned_cuts
         part_data["target_duration"] = round(total_cuts_dur + (h_e - h_s), 1)
 
         return part_data
@@ -632,11 +638,12 @@ Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
                     s = arc_start
                 if e > arc_end:
                     e = arc_end
-                if e >= s + 1.8:
+                if e >= s + 1.5:
                     valid_cuts.append({
                         "start": round(s, 2),
                         "end": round(e, 2),
-                        "punch_in": bool(item.get("punch_in", False)),
+                        "pan": str(item.get("pan", "center")).lower().strip(),
+                        "punch_in": bool(item.get("punch_in", False) or item.get("punch", False)),
                         "summary": str(item.get("summary", ""))
                     })
             except Exception:
@@ -660,52 +667,39 @@ Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
         cues: List[Dict[str, Any]],
         target_dur: float
     ) -> Dict[str, Any]:
-        """Thuật toán local tự tạo danh sách micro-cuts 2-8s vừa khít target_dur."""
+        """Thuật toán local thông minh: Tạo 14-22 micro-cuts với chuyển góc máy liên tục (Shot-Reverse-Shot) chuẩn 10/10."""
         part_dur = arc_end - arc_start
-        cuts = []
-        accumulated = 0.0
+        body_dur = max(60.0, target_dur - 3.0)
 
-        if cues and len(cues) >= 8:
-            # Chọn các cues đối thoại hay nhất
-            step = max(1, len(cues) // 18)
-            punch_toggle = False
-            for c in cues[::step]:
-                if accumulated >= target_dur - 5.0:
-                    break
-                s = max(arc_start, float(c["start"]))
-                e = min(arc_end, max(s + 2.5, float(c["end"])))
-                dur = e - s
-                if dur > 8.0:
-                    e = s + 7.5
-                    dur = 7.5
-                if dur >= 2.0:
-                    cuts.append({
-                        "start": round(s, 2),
-                        "end": round(e, 2),
-                        "punch_in": punch_toggle,
-                        "summary": c.get("text", "")[:40]
-                    })
-                    punch_toggle = not punch_toggle
-                    accumulated += dur
+        # Định vị điểm bắt đầu của trường đoạn hạt nhân (né 15s đầu để tránh intro/quảng cáo)
+        if part_dur > body_dur + 20.0:
+            core_start = arc_start + min(20.0, (part_dur - body_dur) * 0.25)
         else:
-            # Chia lát cắt cơ học theo thời gian
-            shot_len = 4.0
-            n_shots = int(target_dur / shot_len)
-            time_step = part_dur / float(max(1, n_shots + 1))
-            punch_toggle = False
-            for i in range(n_shots):
-                s = arc_start + time_step * (i + 0.5)
-                e = min(arc_end, s + shot_len)
-                cuts.append({
-                    "start": round(s, 2),
-                    "end": round(e, 2),
-                    "punch_in": punch_toggle,
-                    "summary": f"Scene beat {i+1}"
-                })
-                punch_toggle = not punch_toggle
+            core_start = arc_start
+        core_end = min(arc_end, core_start + body_dur)
 
-        # Hook 2.5s lấy ở cuối chặng
-        h_s = max(arc_start, arc_end - 8.0)
+        # Chia trường đoạn thành 14-22 micro-cuts (mỗi cut 3.5s - 5.0s)
+        # Xen kẽ góc máy: Pan Left (người hỏi) -> Pan Right (người đáp) -> Center (bối cảnh)
+        # Xen kẽ Punch-in Zoom (1.15x) để tạo nhịp phim sống động
+        n_micro_shots = max(12, min(24, int(body_dur / 4.5)))
+        shot_step = (core_end - core_start) / float(n_micro_shots)
+        cuts = []
+        pan_cycle = ["left", "right", "left", "right", "center"]
+        for i in range(n_micro_shots):
+            s = core_start + i * shot_step
+            e = min(core_end, s + min(5.0, shot_step))
+            pan_val = pan_cycle[i % len(pan_cycle)]
+            punch_val = (i % 3 == 1)
+            cuts.append({
+                "start": round(s, 2),
+                "end": round(e, 2),
+                "pan": pan_val,
+                "punch_in": punch_val,
+                "summary": f"Micro-cut {i+1} ({pan_val})"
+            })
+
+        # Hook 2.8s: Lấy khoảnh khắc kịch tính ở cuối chặng hoặc cuối core
+        h_s = max(arc_start, arc_end - 10.0)
         h_e = min(arc_end, h_s + 2.8)
 
         return {
@@ -716,7 +710,9 @@ Ensure the cuts sum up to roughly {target_part_dur:.1f}s.
             "hook": {
                 "start": round(h_s, 2),
                 "end": round(h_e, 2),
-                "reason": f"Part {part_index} Climax Teaser"
+                "pan": "left",
+                "punch_in": True,
+                "reason": f"Part {part_index} Climax Hook"
             },
             "cuts": cuts,
             "cliffhanger": f"End of Part {part_index}",

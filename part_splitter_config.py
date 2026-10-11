@@ -23,6 +23,10 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "enable_competitor_layout": True,           # Bật layout chuẩn đối thủ
     "competitor_top_card": True,                # In title gốc trên Card trắng bo góc
     "competitor_bottom_badge": True,            # In nút viên thuốc PART X
+    "packaging_anchor_mode": "boundary",        # 'boundary': Gắn Title & Part tại ranh giới giữa video và blur 2 đầu
+    "video_center_height": 1188,                # Chiều cao video trung tâm (1188 chiếm 62% canvas 1080x1920, 0 là auto)
+    "top_card_boundary_offset": 0,              # Tinh chỉnh Y cho Title tại ranh giới trên (px)
+    "bottom_badge_boundary_offset": 0,          # Tinh chỉnh Y cho Part tại ranh giới dưới (px)
 
     # 1. Nguồn & Hook
     "source_mode": "youtube",             # 'youtube' hoặc 'local'

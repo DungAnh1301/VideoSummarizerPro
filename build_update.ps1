@@ -1,4 +1,4 @@
-﻿param(
+param(
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^\d+\.\d+\.\d+$')]
   [string]$Version,
@@ -30,7 +30,8 @@ $files = @(
   "font_manager.py", "part_splitter_config.py", "part_pruner_ai.py",
   "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
   "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.example.json",
-  "capcut_color_studio.py", "crop_blur_studio.py", "title_sub_studio.py", "studio_helpers.py"
+  "capcut_color_studio.py", "crop_blur_studio.py", "title_sub_studio.py", "studio_helpers.py",
+  "auto_youtube_pipeline.py", "ai_transition_sound_director.py", "audio_boundary_guard.py", "part_director_ai.py", "pipeline_orchestrator.py"
 )
 foreach ($name in $files) {
   $source = Join-Path $root $name
@@ -40,7 +41,7 @@ foreach ($name in $files) {
   Copy-Item -LiteralPath $source -Destination (Join-Path $stage $name) -Force
 }
 
-foreach ($folder in @("utils", "assets", "luts")) {
+foreach ($folder in @("utils", "assets", "luts", "core_directors", "core_crew")) {
   $source = Join-Path $root $folder
   if (Test-Path -LiteralPath $source -PathType Container) {
     Copy-Item -LiteralPath $source -Destination (Join-Path $stage $folder) -Recurse -Force

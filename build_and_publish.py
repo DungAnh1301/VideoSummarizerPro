@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.102"
+VERSION = "1.3.106"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.102: Loại bỏ hoàn toàn 100% tính năng Tuyển tập TOP Countdown khỏi Chế độ 2 (Chia Part); sửa triệt để lỗi đè chữ ở Tab 3; cập nhật bảng hàng đợi hiển thị cột Chế độ 3-Pass AI & Thời lượng; reset thông số mặc định về chuẩn đẹp (Tốc độ 1.0x, -14 LUFS, Zoom 100%)."
+NOTES = "Bản phát hành v1.3.106: Tích hợp toàn diện Hãng Phim Hollywood AI vào Chế độ 2 (Chia Part & Tinh Lược) - 100% Zero-Touch: Tự động tải video 1080p từ link YouTube, tự động lấy hoặc bóc sub bằng Faster-Whisper GPU CUDA, Ban Đạo Diễn chia 4-5 cảnh cốt lõi (~20s/cảnh), khóa trọn câu thoại Zero Truncation, kỹ xảo Motion Blur Whip Transition (xfade=hblur), Whoosh SFX & Tension BGM Bed -14 LUFS, Safe Zone ASS Subtitle nét căng."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -42,7 +42,8 @@ files = [
     "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
     "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.example.json",
     "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",
-    "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md", "PLAN_CHE_DO_2.md"
+    "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md", "PLAN_CHE_DO_2.md",
+    "auto_youtube_pipeline.py", "ai_transition_sound_director.py", "audio_boundary_guard.py", "part_director_ai.py", "pipeline_orchestrator.py"
 ]
 for fname in files:
     src = os.path.join(ROOT, fname)
@@ -51,7 +52,7 @@ for fname in files:
     else:
         print(f"[WARN] Khong thay file: {fname}")
 
-for folder in ["utils", "assets", "luts", "system_data"]:
+for folder in ["utils", "assets", "luts", "system_data", "core_directors", "core_crew"]:
     src = os.path.join(ROOT, folder)
     if os.path.isdir(src):
         dst = os.path.join(stage_dir, folder)

@@ -568,8 +568,20 @@ class PartSplitterEngine:
         clean_title = re.sub(r'^(?:Part|Tập|Chapter|Phần)\s*\d+[:\-.]*\s*', '', clean_title, flags=re.IGNORECASE).strip()
 
         card_w = int(video_w * 0.88)  # ~950px
-        font_size = 36 if len(clean_title) < 70 else (32 if len(clean_title) < 120 else 28)
-        font = FontManager.get_banner_font(clean_title, font_size)
+        font_size = 38 if len(clean_title) < 70 else (34 if len(clean_title) < 120 else 28)
+        
+        # Dùng Arial Bold / Segoe UI Semibold chuẩn 1:1 đối thủ (thay vì Impact thon dài)
+        font = None
+        for fn in ["arialbd.ttf", "seguisb.ttf", "segoeui.ttf", "arial.ttf"]:
+            fp = os.path.join(FontManager.WINDOWS_FONT_DIR, fn)
+            if os.path.isfile(fp):
+                try:
+                    font = ImageFont.truetype(fp, font_size)
+                    break
+                except Exception:
+                    pass
+        if font is None:
+            font = FontManager.get_banner_font(clean_title, font_size)
 
         # Ngắt dòng vừa khít bề rộng card (trừ lề 60px)
         max_text_w = card_w - 60
@@ -637,14 +649,24 @@ class PartSplitterEngine:
     ) -> str:
         """Render Nút Trắng hình Viên Thuốc in chữ 'PART X' chuẩn đối thủ:
         - Nền trắng tinh bo tròn dạng pill badge.
-        - Chữ đen in hoa nổi bật.
+        - Chữ đen in hoa nổi bật chuẩn Arial Bold.
         """
         if not output_png:
             output_png = os.path.join(tempfile.gettempdir(), f"bottom_badge_{time.time_ns()}.png")
 
         p_text = f"{(prefix or 'PART').upper()} {part_index}"
         font_size = 40
-        font = FontManager.get_banner_font(p_text, font_size)
+        font = None
+        for fn in ["arialbd.ttf", "seguisb.ttf", "segoeui.ttf"]:
+            fp = os.path.join(FontManager.WINDOWS_FONT_DIR, fn)
+            if os.path.isfile(fp):
+                try:
+                    font = ImageFont.truetype(fp, font_size)
+                    break
+                except Exception:
+                    pass
+        if font is None:
+            font = FontManager.get_banner_font(p_text, font_size)
 
         dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
         d_dummy = ImageDraw.Draw(dummy)
@@ -731,7 +753,8 @@ class PartSplitterEngine:
                     segments.append({
                         "start": round(s, 2),
                         "end": round(e, 2),
-                        "punch_in": bool(c.get("punch_in", False)),
+                        "punch_in": bool(c.get("punch_in", False) or c.get("punch", False)),
+                        "pan": str(c.get("pan", "center")).lower().strip(),
                         "is_hook": False
                     })
             except Exception:
@@ -744,56 +767,112 @@ class PartSplitterEngine:
 
         _log(f"✂️ [MICRO-CUTS] Đang cắt nối {len(segments)} phân đoạn (bao gồm {1 if hook else 0} Hook)...")
 
-        # Xây dựng FFmpeg filter_complex
-        v_filters = []
-        a_filters = []
-        concat_inputs = []
+        src_w, src_h = probe_video_dimensions(source_video)
+        target_fg_h = 1188
+        y_top_boundary = (1920 - target_fg_h) // 2
 
-        for i, seg in enumerate(segments):
+        scale_w = int(round(1188.0 * float(src_w) / max(1.0, float(src_h))))
+        scale_w = scale_w + (scale_w % 2)
+        max_x_off = max(0, scale_w - 1080)
+        x_left = int(max_x_off * 0.35)
+        x_right = int(max_x_off * 0.65)
+        x_center = int(max_x_off * 0.50)
+
+        # Thư mục tạm chứa các phân đoạn .ts
+        seg_dir = os.path.join(work_dir, f"_seg_{time.time_ns()}")
+        os.makedirs(seg_dir, exist_ok=True)
+        seg_files = []
+        enc_name, enc_opts = get_best_video_encoder()
+
+        for idx, seg in enumerate(segments):
             s = seg["start"]
             e = seg["end"]
             dur = max(0.5, e - s)
             p_in = seg["punch_in"]
+            pan = seg.get("pan", "center")
 
-            # Video: Trim + setpts + Punch-in zoom 115% nếu cần
-            if p_in:
-                v_filters.append(
-                    f"[0:v]trim=start={s:.2f}:end={e:.2f},setpts=PTS-STARTPTS,"
-                    f"crop=iw/1.15:ih/1.15:(iw-ow)/2:(ih-oh)/2,scale=1920:1080,setsar=1[v{i}]"
-                )
+            if pan == "left":
+                x_off = x_left
+            elif pan == "right":
+                x_off = x_right
             else:
-                v_filters.append(
-                    f"[0:v]trim=start={s:.2f}:end={e:.2f},setpts=PTS-STARTPTS,scale=1920:1080,setsar=1[v{i}]"
-                )
+                x_off = x_center
 
-            # Audio: Trim + asetpts + Micro-fade 10ms (triệt tiêu 100% pop/click)
-            fade_d = min(0.015, dur * 0.1)
-            fade_out_st = max(0.0, dur - fade_d)
-            a_filters.append(
-                f"[0:a]atrim=start={s:.2f}:end={e:.2f},asetpts=PTS-STARTPTS,"
-                f"afade=t=in:st=0:d={fade_d:.3f},afade=t=out:st={fade_out_st:.3f}:d={fade_d:.3f}[a{i}]"
+            if p_in:
+                p_scale_w = int(scale_w * 1.15) + (int(scale_w * 1.15) % 2)
+                p_scale_h = int(target_fg_h * 1.15) + (int(target_fg_h * 1.15) % 2)
+                px_off = int(x_off * 1.15 + (p_scale_w - scale_w) / 4)
+                py_off = int((p_scale_h - target_fg_h) / 2)
+                fg_filter = f"scale={p_scale_w}:{p_scale_h},crop=1080:{target_fg_h}:{px_off}:{py_off}"
+            else:
+                fg_filter = f"scale={scale_w}:{target_fg_h},crop=1080:{target_fg_h}:{x_off}:0"
+
+            vf = (
+                f"[0:v]split=2[bg_in][fg_in];"
+                f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
+                f"[fg_in]{fg_filter}[fg];"
+                f"[bg][fg]overlay=0:{y_top_boundary}[vout]"
             )
 
-            concat_inputs.append(f"[v{i}][a{i}]")
+            fade_d = min(0.040, dur * 0.1)
+            fade_out_st = max(0.0, dur - fade_d)
+            af = f"afade=t=in:st=0:d={fade_d:.3f},afade=t=out:st={fade_out_st:.3f}:d={fade_d:.3f}"
 
-        n_segs = len(segments)
-        filter_str = (
-            ";".join(v_filters) + ";" +
-            ";".join(a_filters) + ";" +
-            "".join(concat_inputs) + f"concat=n={n_segs}:v=1:a=1[vout][aout]"
-        )
+            seg_path = os.path.join(seg_dir, f"seg_{idx:03d}.ts")
+            seg_cmd = [
+                "ffmpeg", "-y",
+                "-ss", f"{s:.3f}",
+                "-t", f"{dur:.3f}",
+                "-i", source_video,
+                "-filter_complex", vf,
+                "-af", af,
+                "-map", "[vout]", "-map", "0:a",
+                "-c:v", enc_name, *enc_opts,
+                "-c:a", "aac", "-b:a", "192k",
+                "-f", "mpegts",
+                seg_path
+            ]
+            try:
+                _ff_run(seg_cmd, log_fn=None, timeout=60, label=f"seg_{idx}")
+                seg_files.append(seg_path)
+            except Exception:
+                # Fallback sang libx264 veryfast nếu NVENC bận
+                seg_cmd_fb = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{s:.3f}",
+                    "-t", f"{dur:.3f}",
+                    "-i", source_video,
+                    "-filter_complex", vf,
+                    "-af", af,
+                    "-map", "[vout]", "-map", "0:a",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-f", "mpegts",
+                    seg_path
+                ]
+                _ff_run(seg_cmd_fb, log_fn=None, timeout=120, label=f"seg_{idx}_fb")
+                seg_files.append(seg_path)
 
-        enc_name, enc_opts = get_best_video_encoder()
-        cmd = [
+        # Nối tất cả các segment vào output_path
+        concat_txt = os.path.join(seg_dir, "concat.txt")
+        with open(concat_txt, "w", encoding="utf-8") as f:
+            for sf in seg_files:
+                f.write(f"file '{sf}'\n")
+
+        concat_cmd = [
             "ffmpeg", "-y",
-            "-i", source_video,
-            "-filter_complex", filter_str,
-            "-map", "[vout]", "-map", "[aout]",
-            "-c:v", enc_name, *enc_opts,
-            "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+            "-f", "concat", "-safe", "0", "-i", concat_txt,
+            "-c", "copy",
             output_path
         ]
-        _ff_run(cmd, log_fn=log_fn, timeout=1800, label="micro_cuts")
+        _ff_run(concat_cmd, log_fn=log_fn, timeout=600, label="concat_micro_cuts")
+
+        # Dọn dẹp thư mục tạm
+        try:
+            shutil.rmtree(seg_dir, ignore_errors=True)
+        except Exception:
+            pass
+
         _log(f"✅ [MICRO-CUTS] Hoàn thành cắt nối: {output_path} ({probe_duration_sec(output_path):.1f}s)")
         return output_path
 
@@ -812,9 +891,9 @@ class PartSplitterEngine:
         """Đóng gói chuẩn 1:1 Đối thủ triệu view:
         - Canvas 9:16 (1080x1920)
         - Nền Gaussian Blur trên/dưới mờ ảo
-        - Khung giữa 16:9 sắc nét không biến dạng
-        - Top Card: Thẻ trắng bo góc in Title gốc YouTube (Y ~ 140)
-        - Bottom Badge: Nút trắng viên thuốc 'PART X' (Y ~ 1700)
+        - Khung video tiền cảnh sắc nét, tự động tính ranh giới tiếp giáp
+        - Title (Top Card) gắn chính xác ở ranh giới đầu trên giữa video và blur
+        - Part (Bottom Badge) gắn chính xác ở ranh giới đầu dưới giữa video và blur
         - Audio Normalization -14 LUFS (đanh rõ, sống động)
         """
         def _log(msg: str):
@@ -832,33 +911,81 @@ class PartSplitterEngine:
 
         enable_top = bool(config.get("competitor_top_card", True))
         enable_bottom = bool(config.get("competitor_bottom_badge", True))
-        top_y = int(config.get("top_card_y_pos", 140))
-        bottom_y = int(config.get("bottom_badge_y_pos", 1700))
+        anchor_mode = str(config.get("packaging_anchor_mode", "boundary")).lower().strip()
 
-        _log(f"📦 [ĐÓNG GÓI ĐỐI THỦ] Canvas 9:16 | Nền Blur | Top Card ({enable_top}) | Bottom Badge ({enable_bottom}) | Audio -14 LUFS...")
+        # 1. Tính toán kích thước và vị trí ranh giới (Boundary) giữa Video và Blur 2 đầu
+        vw, vh = probe_video_dimensions(condensed_video)
+        cfg_fg_h = int(config.get("video_center_height", 1188) or 0)
+        if cfg_fg_h > 0:
+            target_fg_h = cfg_fg_h
+        else:
+            # Tự động tính theo tỷ lệ video gốc trên chiều rộng 1080
+            target_fg_h = int(round(1080.0 * float(vh) / max(1.0, float(vw))))
+        target_fg_h = max(360, min(1600, target_fg_h))
+        target_fg_h = target_fg_h - (target_fg_h % 2)
 
-        # 1. Render Top Card & Bottom Badge PNGs
+        y_top_boundary = (1920 - target_fg_h) // 2
+        y_bottom_boundary = (1920 + target_fg_h) // 2
+
+        _log(f"📦 [RANH GIỚI KHUNG HÌNH] Video: 1080x{target_fg_h} | Ranh giới trên: Y={y_top_boundary} | Ranh giới dưới: Y={y_bottom_boundary}")
+
+        # 2. Render Top Card & Bottom Badge PNGs
         top_png = ""
+        card_w, card_h = 920, 140
         if enable_top:
             top_png = os.path.join(work_dir, f"_top_card_{part_index}_{time.time_ns()}.png")
             cls.render_competitor_top_card(master_title, video_w=1080, output_png=top_png, config=config)
+            if os.path.isfile(top_png):
+                try:
+                    with Image.open(top_png) as im:
+                        card_w, card_h = im.size
+                except Exception:
+                    pass
 
         bottom_png = ""
+        badge_w, badge_h = 240, 70
         if enable_bottom:
             bottom_png = os.path.join(work_dir, f"_bottom_badge_{part_index}_{time.time_ns()}.png")
             cls.render_competitor_bottom_badge(part_index, prefix=part_prefix, video_w=1080, output_png=bottom_png)
+            if os.path.isfile(bottom_png):
+                try:
+                    with Image.open(bottom_png) as im:
+                        badge_w, badge_h = im.size
+                except Exception:
+                    pass
 
-        # 2. Xây dựng filter graph FFmpeg
+        # 3. Tính tọa độ Y: Gắn Title ở ranh giới đầu trên, Part ở ranh giới đầu dưới
+        if anchor_mode == "boundary":
+            # Gắn đè ranh giới tiếp giáp: Tâm của badge/card nằm đúng trên đường chỉ giới tiếp giáp
+            top_offset = int(config.get("top_card_boundary_offset", 0))
+            bottom_offset = int(config.get("bottom_badge_boundary_offset", 0))
+            top_y = y_top_boundary - (card_h // 2) + top_offset
+            bottom_y = y_bottom_boundary - (badge_h // 2) + bottom_offset
+        else:
+            top_y = int(config.get("top_card_y_pos", 140))
+            bottom_y = int(config.get("bottom_badge_y_pos", 1700))
+
+        _log(f"📍 [VỊ TRÍ ĐÓNG GÓI] Title Top Card: Y={top_y} (ranh giới {y_top_boundary}) | Part Badge: Y={bottom_y} (ranh giới {y_bottom_boundary})")
+
+        # 4. Xây dựng filter graph FFmpeg
         inputs = ["-i", condensed_video]
         filter_parts = []
 
-        # Nền blur: scale to fill 1080x1920 rồi phủ boxblur
-        filter_parts.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=20:5[bg]")
-        # Tiền cảnh: scale 1080:-2 đặt chính giữa dọc
-        filter_parts.append("[0:v]scale=1080:-2:flags=lanczos[fg]")
-        filter_parts.append("[bg][fg]overlay=0:(1920-h)/2[base_canvas]")
+        if vw == 1080 and vh == 1920:
+            # Video đã sẵn sàng trên Canvas 9:16 (1080x1920), không cần blur lại
+            _log(f"ℹ️ Video đầu vào đã là chuẩn 1080x1920, giữ nguyên nền gốc và đặt Card & Badge lên ranh giới.")
+            curr_v = "0:v"
+        else:
+            # Nền blur: scale to fill 1080x1920 rồi phủ boxblur
+            filter_parts.append("[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg]")
 
-        curr_v = "base_canvas"
+            # Tiền cảnh: Tự động scale phủ trọn bề ngang 1080 và chiều cao target_fg_h an toàn 100% mọi tỉ lệ
+            filter_parts.append(f"[0:v]scale=1080:{target_fg_h}:force_original_aspect_ratio=increase,crop=1080:{target_fg_h},setsar=1[fg]")
+
+            # Overlay tiền cảnh vào chính giữa
+            filter_parts.append(f"[bg][fg]overlay=0:{y_top_boundary}[base_canvas]")
+            curr_v = "base_canvas"
+
         in_idx = 1
 
         if top_png and os.path.isfile(top_png):
@@ -1070,8 +1197,8 @@ class PartSplitterEngine:
             part_info = {"raw_path": raw_part, "index": p_idx, "title": p_title}
         else:
             raw_part = part_info.get("raw_path", "")
-            p_idx = part_info.get("index", 1)
-            p_title = part_info.get("title", f"Part {p_idx}")
+            p_idx = part_info.get("index") or part_info.get("part_index") or kwargs.get("part_index", 1)
+            p_title = part_info.get("title") or part_info.get("part_title", f"Part {p_idx}")
 
         if not output_final:
             output_final = kwargs.get("output_final", "")
@@ -1120,12 +1247,32 @@ class PartSplitterEngine:
         if output_final:
             os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
 
-        # KIỂM TRA CHẾ ĐỘ ĐỐI THỦ (VIRAL CONDENSED / 3-PASS AI DIRECTOR)
+        # KIỂM TRA CHẾ ĐỘ ĐỐI THỦ (VIRAL CONDENSED / HOLLYWOOD AI FILM CREW)
         editing_mode = str(cfg.get("editing_mode", "viral_condensed")).strip()
         enable_competitor = bool(cfg.get("enable_competitor_layout", True))
+        scenes = part_info.get("scenes") if isinstance(part_info, dict) else kwargs.get("scenes")
         cuts = part_info.get("cuts") if isinstance(part_info, dict) else kwargs.get("cuts")
 
-        if (editing_mode == "viral_condensed" or cuts) and enable_competitor:
+        if (editing_mode == "viral_condensed" or cuts or scenes) and enable_competitor:
+            if scenes:
+                _log(f"🎬 [HẬU KỲ HOLLYWOOD] Dựng 4-5 phân cảnh, Motion Blur Transition & Audio Master cho Part {p_idx}...")
+                from part_director_ai import PartDirectorAI
+                src_vid = source_video or kwargs.get("source_video") or raw_part
+                master_title = str(kwargs.get("master_title") or cfg.get("master_title") or p_title)
+                cues = kwargs.get("cues") or []
+                return PartDirectorAI.render_hollywood_part(
+                    source_video=src_vid,
+                    part_data=part_info if isinstance(part_info, dict) else {"scenes": scenes},
+                    cues=cues,
+                    output_final=output_final,
+                    master_title=master_title,
+                    part_index=p_idx,
+                    part_prefix=part_prefix,
+                    work_dir=temp_dir,
+                    config=cfg,
+                    log_fn=log_fn
+                )
+
             _log(f"🎬 [HẬU KỲ ĐỐI THỦ] Áp dụng quy chuẩn Đạo Diễn AI & Đóng gói thị giác 1:1 cho Part {p_idx}...")
             source_for_packaging = raw_part
 
