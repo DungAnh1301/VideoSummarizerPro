@@ -13,6 +13,109 @@ from typing import Dict, Any, List
 
 CONFIG_FILE_NAME = "config_part_splitter.json"
 
+DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "Chuẩn Gốc Hollywood (Tỷ lệ 100%, 1.0x)": {
+        "editing_mode": "viral_condensed",
+        "genre": "reality",
+        "target_part_duration": 90.0,
+        "min_part_duration": 70.0,
+        "max_part_duration": 110.0,
+        "keep_original_speed": True,
+        "source_speed": 1.0,
+        "speed": 1.0,
+        "zoom_in": False,
+        "zoom_percent": 100.0,
+        "scale_w": 100.0,
+        "scale_h": 100.0,
+        "random_mirror": False,
+        "blur_bg": True,
+        "apply_capcut_limiter": True,
+        "apply_subtle_zoom": True,
+        "audio_boost": 6.0,
+        "part_label_prefix": "PART",
+        "sub_style_type": "safe_zone_arial",
+        "sub_size": 48,
+        "sub_outline": 3.5,
+        "sub_shadow": 1.5,
+        "sub_margin_v": 420,
+    },
+    "Lách Bản Quyền An Toàn (Zoom 106%, Lật Gương)": {
+        "editing_mode": "viral_condensed",
+        "genre": "reality",
+        "target_part_duration": 90.0,
+        "min_part_duration": 70.0,
+        "max_part_duration": 110.0,
+        "keep_original_speed": False,
+        "source_speed": 1.05,
+        "speed": 1.05,
+        "zoom_in": True,
+        "zoom_percent": 106.0,
+        "scale_w": 100.0,
+        "scale_h": 100.0,
+        "random_mirror": True,
+        "blur_bg": True,
+        "apply_capcut_limiter": True,
+        "apply_subtle_zoom": True,
+        "audio_boost": 6.0,
+        "part_label_prefix": "PART",
+        "sub_style_type": "safe_zone_arial",
+        "sub_size": 48,
+        "sub_outline": 3.5,
+        "sub_shadow": 1.5,
+        "sub_margin_v": 420,
+    },
+    "Gaming Nhịp Nhanh (1.1x, Sub Nổi)": {
+        "editing_mode": "viral_condensed",
+        "genre": "gaming",
+        "target_part_duration": 80.0,
+        "min_part_duration": 65.0,
+        "max_part_duration": 100.0,
+        "keep_original_speed": False,
+        "source_speed": 1.10,
+        "speed": 1.10,
+        "zoom_in": False,
+        "zoom_percent": 100.0,
+        "scale_w": 100.0,
+        "scale_h": 100.0,
+        "random_mirror": False,
+        "blur_bg": True,
+        "apply_capcut_limiter": True,
+        "apply_subtle_zoom": True,
+        "audio_boost": 6.0,
+        "part_label_prefix": "PART",
+        "sub_style_type": "safe_zone_arial",
+        "sub_size": 48,
+        "sub_outline": 3.5,
+        "sub_shadow": 1.5,
+        "sub_margin_v": 420,
+    },
+    "Phim & Kể Chuyện (Tập X, 1.0x)": {
+        "editing_mode": "viral_condensed",
+        "genre": "storytelling",
+        "target_part_duration": 95.0,
+        "min_part_duration": 75.0,
+        "max_part_duration": 120.0,
+        "keep_original_speed": True,
+        "source_speed": 1.0,
+        "speed": 1.0,
+        "zoom_in": False,
+        "zoom_percent": 100.0,
+        "scale_w": 100.0,
+        "scale_h": 100.0,
+        "random_mirror": False,
+        "blur_bg": True,
+        "apply_capcut_limiter": True,
+        "apply_subtle_zoom": True,
+        "audio_boost": 6.0,
+        "part_label_prefix": "TẬP",
+        "sub_style_type": "safe_zone_arial",
+        "sub_size": 48,
+        "sub_outline": 3.5,
+        "sub_shadow": 1.5,
+        "sub_margin_v": 420,
+    }
+}
+
 DEFAULT_PART_CONFIG: Dict[str, Any] = {
     # 0. Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ Hollywood)
     "editing_mode": "viral_condensed",          # 'viral_condensed' (Chế độ đối thủ mới) hoặc 'classic_linear' (Kiểu cũ)
@@ -127,8 +230,8 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "output_dir": "output/parts",
 
     # 7. Quản lý cấu hình có tên (Named Configs)
-    "saved_configs": {},
-    "selected_config": "",
+    "saved_configs": copy.deepcopy(DEFAULT_SAVED_CONFIGS),
+    "selected_config": "Chuẩn Gốc Hollywood (Tỷ lệ 100%, 1.0x)",
 }
 
 
@@ -200,17 +303,25 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
     # KHỬ TOÀN BỘ CÁC GIÁ TRỊ TEST TÀN DƯ (Defense-in-depth)
     dirty = False
 
-    # 1. Khử toàn bộ cấu hình con named configs có tên "test"
+    # 1. Khử toàn bộ cấu hình con named configs có tên "test" và đảm bảo có đủ 4 preset chuẩn
     saved = config.get("saved_configs")
-    if isinstance(saved, dict):
-        test_keys = [k for k in saved if k.strip().lower() in ("test", "test_config", "demo", "sample")]
+    if not isinstance(saved, dict) or len(saved) == 0:
+        saved = copy.deepcopy(DEFAULT_SAVED_CONFIGS)
+        dirty = True
+    else:
+        test_keys = [k for k in saved if k.strip().lower() in ("test", "test_config", "demo", "sample") or any(ch in k for ch in ("🎬", "🛡️", "⚡", "🇻🇳"))]
         for tk in test_keys:
             saved.pop(tk, None)
             dirty = True
-        config["saved_configs"] = saved
+        for k, v in DEFAULT_SAVED_CONFIGS.items():
+            if k not in saved:
+                saved[k] = copy.deepcopy(v)
+                dirty = True
+    config["saved_configs"] = saved
 
-    if str(config.get("selected_config", "")).strip().lower() in ("test", "test_config", "demo", "sample") or config.get("selected_config") not in config.get("saved_configs", {}):
-        config["selected_config"] = ""
+    sel = str(config.get("selected_config", "")).strip()
+    if not sel or sel.lower() in ("test", "test_config", "demo", "sample") or sel not in config["saved_configs"]:
+        config["selected_config"] = "Chuẩn Gốc Hollywood (Tỷ lệ 100%, 1.0x)"
         dirty = True
 
     # 2. Khử các giá trị test mốc hook và URL

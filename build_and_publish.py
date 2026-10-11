@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.108"
+VERSION = "1.3.109"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.108: Tiêu diệt triệt để config 'test' và các giá trị test tồn đọng (Zoom 178%, Scale 170%, Speed 1.2x) ở Chế độ 2 - Tự động thanh lọc sạch 100% saved_configs, đặt về cấu hình Hollywood chuẩn nét (100% tỷ lệ gốc, Safe Zone 48pt, MarginV 420px, Tiền tố PART)."
+NOTES = "Bản phát hành v1.3.109: Tích hợp sẵn 4 bộ Preset chuẩn sản xuất cho Chế độ 2 vào thanh CONFIG CHIA PART (Chuẩn Gốc Hollywood 1.0x, Lách Bản Quyền An Toàn 106% + Lật Gương, Gaming Nhịp Nhanh 1.1x, Phim & Kể Chuyện Tập X). Tự động nạp cấu hình chuẩn ngay khi mở tool, không còn bất kỳ cấu hình rác nào."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
