@@ -35,8 +35,64 @@ from part_splitter_engine import (
 )
 
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+
 class VisualEditorEngine:
     """Nhân Viên 1 - Lead Visual Editor Engine."""
+
+    @classmethod
+    def detect_shot_focus_u(
+        cls,
+        cap,
+        face_cascade,
+        start_sec: float,
+        dur_sec: float,
+        pan_hint: str = "center"
+    ) -> float:
+        """
+        Dò tìm vị trí khuôn mặt người nói trong shot để căn camera trúng đích (Speaker Cut).
+        - Trả về tọa độ chuẩn hóa u in [0.15, 0.85] (0.5 là chính tâm).
+        - Nếu không có khuôn mặt: Giữ cố định 0.5 (Chính giữa), TUYỆT ĐỐI không lia vào tường/khoảng trống.
+        - Khung hình tĩnh 100% trong suốt shot (Hard Cut sang mặt), KHÔNG tracking di chuyển làm rung giật camera.
+        """
+        if cap is None or face_cascade is None:
+            return 0.5
+
+        sample_offsets = [min(0.8, dur_sec * 0.25), min(2.0, dur_sec * 0.60)]
+        for off in sample_offsets:
+            t_samp = max(0.0, start_sec + off)
+            try:
+                cap.set(cv2.CAP_PROP_POS_MSEC, t_samp * 1000.0)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    continue
+
+                small = cv2.resize(frame, (640, 360))
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                faces = face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(25, 25))
+
+                if len(faces) == 1:
+                    f = faces[0]
+                    u = float(f[0] + f[2] / 2.0) / 640.0
+                    return max(0.15, min(0.85, u))
+                elif len(faces) > 1:
+                    pan_l = pan_hint.lower().strip()
+                    if pan_l == "left":
+                        chosen = min(faces, key=lambda f: f[0] + f[2] / 2.0)
+                    elif pan_l == "right":
+                        chosen = max(faces, key=lambda f: f[0] + f[2] / 2.0)
+                    else:
+                        chosen = max(faces, key=lambda f: f[2] * f[3])
+                    u = float(chosen[0] + chosen[2] / 2.0) / 640.0
+                    return max(0.15, min(0.85, u))
+            except Exception:
+                pass
+
+        return 0.5
 
     @classmethod
     def render_scenes_with_transitions(
@@ -68,72 +124,87 @@ class VisualEditorEngine:
         scale_w = scale_w + (scale_w % 2)
         max_x_off = max(0, scale_w - 1080)
 
-        x_left = int(max_x_off * 0.28)
-        x_right = int(max_x_off * 0.52)
-        x_center = int(max_x_off * 0.50)
+        # Khởi tạo OpenCV dò tìm khuôn mặt cho Speaker Cut
+        face_cascade = None
+        cap = None
+        if cv2 is not None:
+            try:
+                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                if os.path.exists(cascade_path):
+                    face_cascade = cv2.CascadeClassifier(cascade_path)
+                cap = cv2.VideoCapture(source_video)
+            except Exception as e:
+                logger.warning(f"Không khởi tạo được bộ dò khuôn mặt OpenCV: {e}")
 
         enc_name, enc_opts = get_best_video_encoder()
         scene_files = []
         scene_durations = []
 
-        _log(f"✂️ [NHÂN VIÊN 1] Bắt đầu render {len(scenes)} phân cảnh chuẩn 9:16 Blur + Speaker Centering...")
+        _log(f"✂️ [NHÂN VIÊN 1] Bắt đầu render {len(scenes)} phân cảnh chuẩn 9:16 Blur + Speaker Centering tĩnh...")
 
         # 1. Render từng cảnh
-        for sc_idx, sc in enumerate(scenes):
-            sc_name = sc.get("name", f"Scene {sc_idx + 1}")
-            shots = sc.get("shots", [])
-            if not shots:
-                continue
+        try:
+            for sc_idx, sc in enumerate(scenes):
+                sc_name = sc.get("name", f"Scene {sc_idx + 1}")
+                shots = sc.get("shots", [])
+                if not shots:
+                    continue
 
-            seg_files = []
-            for sh_idx, sh in enumerate(shots):
-                start = float(sh["start"])
-                end = float(sh["end"])
-                dur = max(0.5, end - start)
-                pan = str(sh.get("pan", "center")).lower().strip()
-                punch = bool(sh.get("punch", False) or sh.get("punch_in", False))
+                seg_files = []
+                for sh_idx, sh in enumerate(shots):
+                    start = float(sh["start"])
+                    end = float(sh["end"])
+                    dur = max(0.5, end - start)
+                    pan = str(sh.get("pan", "center")).lower().strip()
+                    punch = bool(sh.get("punch", False) or sh.get("punch_in", False))
 
-                x_off = x_left if pan == "left" else (x_right if pan == "right" else x_center)
+                    # Dò tìm khuôn mặt trong shot để căn camera trúng đích, tĩnh 100% không rung giật
+                    u = cls.detect_shot_focus_u(cap, face_cascade, start, dur, pan_hint=pan)
+                    desired_x = int(round(u * scale_w - 540.0))
+                    x_off = max(0, min(max_x_off, desired_x))
+                    x_off = x_off - (x_off % 2)
 
-                if punch:
-                    p_scale_w = int(scale_w * 1.18) + (int(scale_w * 1.18) % 2)
-                    p_scale_h = int(target_fg_h * 1.18) + (int(target_fg_h * 1.18) % 2)
-                    px_off = int(x_off * 1.18 + (p_scale_w - scale_w) / 4)
-                    py_off = int((p_scale_h - target_fg_h) / 2)
-                    fg_filter = f"scale={p_scale_w}:{p_scale_h},crop=1080:{target_fg_h}:{px_off}:{py_off}"
-                else:
-                    fg_filter = f"scale={scale_w}:{target_fg_h},crop=1080:{target_fg_h}:{x_off}:0"
+                    if punch:
+                        p_scale_w = int(scale_w * 1.18) + (int(scale_w * 1.18) % 2)
+                        p_scale_h = int(target_fg_h * 1.18) + (int(target_fg_h * 1.18) % 2)
+                        desired_px = int(round(u * p_scale_w - 540.0))
+                        px_off = max(0, min(p_scale_w - 1080, desired_px))
+                        px_off = px_off - (px_off % 2)
+                        py_off = int((p_scale_h - target_fg_h) / 2)
+                        fg_filter = f"scale={p_scale_w}:{p_scale_h},crop=1080:{target_fg_h}:{px_off}:{py_off}"
+                    else:
+                        fg_filter = f"scale={scale_w}:{target_fg_h},crop=1080:{target_fg_h}:{x_off}:0"
 
-                vf = (
-                    f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
-                    f"[fg_in]{fg_filter}[fg];"
-                    f"[bg][fg]overlay=0:{y_top_boundary}[vout]"
-                )
+                    vf = (
+                        f"[0:v]split=2[bg_in][fg_in];"
+                        f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
+                        f"[fg_in]{fg_filter}[fg];"
+                        f"[bg][fg]overlay=0:{y_top_boundary}[vout]"
+                    )
 
-                fade_d = min(0.04, dur * 0.05)
-                af = f"afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={dur - fade_d:.3f}:d={fade_d:.3f}"
+                    fade_d = min(0.04, dur * 0.05)
+                    af = f"afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={dur - fade_d:.3f}:d={fade_d:.3f}"
 
-                seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start:.3f}",
-                    "-t", f"{dur:.3f}",
-                    "-i", source_video,
-                    "-filter_complex", vf,
-                    "-af", af,
-                    "-map", "[vout]", "-map", "0:a",
-                    "-c:v", enc_name, *enc_opts,
-                    "-c:a", "aac", "-b:a", "192k",
-                    "-r", "30",
-                    "-f", "mpegts",
-                    seg_ts
-                ]
-                _ff_run(cmd, log_fn=None, timeout=60, label=f"sh_{sc_idx}_{sh_idx}")
-                seg_files.append(seg_ts)
+                    seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start:.3f}",
+                        "-t", f"{dur:.3f}",
+                        "-i", source_video,
+                        "-filter_complex", vf,
+                        "-af", af,
+                        "-map", "[vout]", "-map", "0:a",
+                        "-c:v", enc_name, *enc_opts,
+                        "-c:a", "aac", "-b:a", "192k",
+                        "-r", "30",
+                        "-f", "mpegts",
+                        seg_ts
+                    ]
+                    _ff_run(cmd, log_fn=None, timeout=60, label=f"sh_{sc_idx}_{sh_idx}")
+                    seg_files.append(seg_ts)
 
-            if not seg_files:
-                continue
+                if not seg_files:
+                    continue
 
             # Ghép các shots của cảnh này thành video cảnh
             concat_list = os.path.join(work_dir, f"sc_{sc_idx:02d}_concat.txt")
@@ -153,6 +224,12 @@ class VisualEditorEngine:
             scene_files.append(sc_video)
             scene_durations.append(sc_dur)
             _log(f"   ✓ Cảnh {sc_idx + 1}/{len(scenes)} ({sc_dur:.1f}s): {sc_name}")
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
 
         if not scene_files:
             raise RuntimeError("Không có phân cảnh nào được render thành công!")

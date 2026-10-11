@@ -175,7 +175,7 @@
       "sub_shadow": 1.5,
       "sub_margin_v": 420
     },
-    "Phim & Kể Chuyện (Tập X, 1.0x)": {
+    "Phim & Kể Chuyện (PART X, 1.0x)": {
       "editing_mode": "viral_condensed",
       "genre": "storytelling",
       "target_part_duration": 95.0,
@@ -193,7 +193,7 @@
       "apply_capcut_limiter": true,
       "apply_subtle_zoom": true,
       "audio_boost": 6.0,
-      "part_label_prefix": "TẬP",
+      "part_label_prefix": "PART",
       "sub_style_type": "safe_zone_arial",
       "sub_size": 48,
       "sub_outline": 3.5,

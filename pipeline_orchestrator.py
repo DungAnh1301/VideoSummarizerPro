@@ -207,7 +207,8 @@ class PipelineOrchestrator:
                 scenes=audited_scenes,
                 cues=cues,
                 output_ass_path=ass_path,
-                transition_duration=float(audio_spec.get("transition_duration", 0.35))
+                transition_duration=float(audio_spec.get("transition_duration", 0.35)),
+                config=config
             )
 
             # Burn sub và dán Top Title Card (Y=301), Bottom Part Badge (Y=1519)

@@ -251,7 +251,8 @@ class PartDirectorAI:
             scenes=scenes,
             cues=cues,
             output_ass_path=ass_path,
-            transition_duration=float(audio_spec.get("transition_duration", 0.35))
+            transition_duration=float(audio_spec.get("transition_duration", 0.35)),
+            config=config
         )
 
         final_out = PackagingTypographerEngine.burn_subtitles_and_package(

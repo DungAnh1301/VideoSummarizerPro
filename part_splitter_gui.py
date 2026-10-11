@@ -1654,7 +1654,7 @@ class PartSplitterFrame(ttk.Frame):
                 model_name=cfg.get("gemini_model", "gemini-3.8-flash-high"),
                 api_key=cfg.get("gemini_api_key", ""),
                 auto_title=cfg.get("auto_regenerate_title", True),
-                part_prefix=cfg.get("part_label_prefix", "Part"),
+                part_prefix=cfg.get("part_label_prefix", "PART"),
                 config=ai_cfg,
                 job_dir=work_dir,
                 original_title=raw_title,
@@ -1715,7 +1715,7 @@ class PartSplitterFrame(ttk.Frame):
                 clean_video=cleaned_video,
                 cut_points=refined_splits,
                 output_dir=work_dir,
-                part_label_prefix=cfg.get("part_label_prefix", "Part"),
+                part_label_prefix=cfg.get("part_label_prefix", "PART"),
                 part_titles=ai_plan.get("part_titles", []),
                 log_fn=self.log
             )
@@ -1791,7 +1791,7 @@ class PartSplitterFrame(ttk.Frame):
         else:
             job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
-        part_prefix = str(cfg.get("part_label_prefix", "Part")).strip() or "Part"
+        part_prefix = str(cfg.get("part_label_prefix", "PART")).strip() or "PART"
 
         def _render_one_part(i_idx: int, p_item: Any) -> tuple[int, str]:
             raw_part = p_item.get("raw_path", "") if isinstance(p_item, dict) else str(p_item)

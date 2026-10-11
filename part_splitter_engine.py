@@ -654,7 +654,10 @@ class PartSplitterEngine:
         if not output_png:
             output_png = os.path.join(tempfile.gettempdir(), f"bottom_badge_{time.time_ns()}.png")
 
-        p_text = f"{(prefix or 'PART').upper()} {part_index}"
+        clean_prefix = str(prefix or "PART").strip().upper()
+        if clean_prefix in ("TẬP", "TAP", ""):
+            clean_prefix = "PART"
+        p_text = f"{clean_prefix} {part_index}"
         font_size = 40
         font = None
         for fn in ["arialbd.ttf", "seguisb.ttf", "segoeui.ttf"]:

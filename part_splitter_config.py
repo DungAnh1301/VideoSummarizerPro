@@ -89,7 +89,7 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "sub_shadow": 1.5,
         "sub_margin_v": 420,
     },
-    "Phim & Kể Chuyện (Tập X, 1.0x)": {
+    "Phim & Kể Chuyện (PART X, 1.0x)": {
         "editing_mode": "viral_condensed",
         "genre": "storytelling",
         "target_part_duration": 95.0,
@@ -107,7 +107,7 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "apply_capcut_limiter": True,
         "apply_subtle_zoom": True,
         "audio_boost": 6.0,
-        "part_label_prefix": "TẬP",
+        "part_label_prefix": "PART",
         "sub_style_type": "safe_zone_arial",
         "sub_size": 48,
         "sub_outline": 3.5,
@@ -409,9 +409,26 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
     except Exception:
         pass
 
-    if str(config.get("part_label_prefix", "")).strip().lower() == "part":
+    cur_pfx = str(config.get("part_label_prefix", "")).strip()
+    if not cur_pfx or cur_pfx.lower() in ("part", "tập", "tap") or "tập" in cur_pfx.lower() or "tap" in cur_pfx.lower():
         config["part_label_prefix"] = "PART"
         dirty = True
+
+    # Quét sạch và chuẩn hóa toàn bộ preset con trong saved_configs
+    saved_cfg = config.get("saved_configs", {})
+    if isinstance(saved_cfg, dict):
+        new_saved_cfg = {}
+        for skey, sval in saved_cfg.items():
+            new_key = skey.replace("Tập X", "PART X").replace("tập x", "PART X").replace("TẬP X", "PART X")
+            if isinstance(sval, dict):
+                s_pfx = str(sval.get("part_label_prefix", "")).strip()
+                if not s_pfx or s_pfx.lower() in ("part", "tập", "tap") or "tập" in s_pfx.lower() or "tap" in s_pfx.lower():
+                    sval["part_label_prefix"] = "PART"
+                    dirty = True
+            new_saved_cfg[new_key] = sval
+            if new_key != skey:
+                dirty = True
+        config["saved_configs"] = new_saved_cfg
 
     # 6. Khử bộ lọc màu test
     if config.get("color_look") in ("8K", "HDR"):
