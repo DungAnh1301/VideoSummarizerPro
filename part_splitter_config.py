@@ -14,58 +14,59 @@ from typing import Dict, Any, List
 CONFIG_FILE_NAME = "config_part_splitter.json"
 
 DEFAULT_PART_CONFIG: Dict[str, Any] = {
-    # 0. Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ)
+    # 0. Chế độ Biên tập Mới (3-Pass AI Director & Layout Đối thủ Hollywood)
     "editing_mode": "viral_condensed",          # 'viral_condensed' (Chế độ đối thủ mới) hoặc 'classic_linear' (Kiểu cũ)
+    "genre": "reality",                         # Thể loại chuẩn: 'reality', 'gaming', 'storytelling', 'movie_recap'
     "target_part_duration": 90.0,               # Thời lượng mục tiêu mỗi Part (75s - 95s)
-    "min_part_duration": 70.0,                  # Thời lượng tối thiểu
+    "min_part_duration": 70.0,                  # Thời lượng tối thiểu (> 61s chuẩn hóa)
     "max_part_duration": 110.0,                 # Thời lượng tối đa
     "keep_original_speed": True,                # Mặc định giữ tốc độ 1.0x chuẩn gốc
     "enable_competitor_layout": True,           # Bật layout chuẩn đối thủ
-    "competitor_top_card": True,                # In title gốc trên Card trắng bo góc
-    "competitor_bottom_badge": True,            # In nút viên thuốc PART X
+    "competitor_top_card": True,                # In title gốc trên Card trắng bo góc (Y=301)
+    "competitor_bottom_badge": True,            # In nút viên thuốc PART X (Y=1519)
     "packaging_anchor_mode": "boundary",        # 'boundary': Gắn Title & Part tại ranh giới giữa video và blur 2 đầu
     "video_center_height": 1188,                # Chiều cao video trung tâm (1188 chiếm 62% canvas 1080x1920, 0 là auto)
     "top_card_boundary_offset": 0,              # Tinh chỉnh Y cho Title tại ranh giới trên (px)
     "bottom_badge_boundary_offset": 0,          # Tinh chỉnh Y cho Part tại ranh giới dưới (px)
 
     # 1. Nguồn & Hook
-    "source_mode": "youtube",             # 'youtube' hoặc 'local'
-    "youtube_url": "https://www.youtube.com/watch?v=...",
+    "source_mode": "youtube",                   # 'youtube' hoặc 'local'
+    "youtube_url": "",                          # Trống sạch cho môi trường sản xuất
     "local_source_path": "",
-    "hook_mode": "individual",            # 'native', 'shared' (toàn cảnh), 'individual' (từng part), 'ai'
-    "hook_time": "11:55",
+    "hook_mode": "individual",                  # 'native', 'shared' (toàn cảnh), 'individual' (từng part), 'ai'
+    "hook_time": "00:00",                       # Mặc định sạch 00:00
     "hook_duration": 6.0,
-    "hook_strategy": "individual",        # 'shared' hoặc 'individual'
+    "hook_strategy": "individual",              # 'shared' hoặc 'individual'
     "hook_target_sec": 6.0,
-    "hook_tolerance": 0.50,               # Dao động +-50% (3s ~ 9s)
+    "hook_tolerance": 0.50,                     # Dao động +-50% (3s ~ 9s)
 
     # 2. Cấu hình chia Part & Cliffhanger
     "part_count": 6,
     "min_part_duration_sec": 60.0,
-    "part_tolerance": 0.50,               # Dao động +-50%
-    "auto_regenerate_title": True,        # AI tự động đặt lại tiêu đề viral theo ngôn ngữ gốc
-    "gemini_auth_mode": "antigravity",    # 'antigravity' hoặc 'api_key'
+    "part_tolerance": 0.50,                     # Dao động +-50%
+    "auto_regenerate_title": True,              # AI tự động đặt lại tiêu đề viral theo ngôn ngữ gốc
+    "gemini_auth_mode": "antigravity",          # 'antigravity' hoặc 'api_key'
     "gemini_model": "gemini-3.8-flash-high",
     "gemini_api_key": "",
 
     # 3. Cấu hình tinh lược (Prune)
     "prune_enabled": True,
-    "prune_mode": "percent",              # 'percent' hoặc 'minutes'
+    "prune_mode": "percent",                    # 'percent' hoặc 'minutes'
     "prune_percent": 20.0,
     "prune_minutes": 15.0,
-    "prune_tolerance": 0.20,              # Hạn ngạch co giãn +-20%
+    "prune_tolerance": 0.20,                    # Hạn ngạch co giãn +-20%
 
-    # 5. Hậu kỳ video (Đồng bộ 100% với Tóm Tắt Video)
-    "part_label_prefix": "Part",          # Tiền tố: 'Part', 'Teil', 'Partie', 'Часть', 'Tập'...
-    "source_speed": 1.0,                  # Mặc định giữ tốc độ 1.0x chuẩn gốc
+    # 5. Hậu kỳ video (Đồng bộ 100% với Hollywood AI Film Crew)
+    "part_label_prefix": "PART",                # Tiền tố: 'PART'
+    "source_speed": 1.0,                        # Mặc định giữ tốc độ 1.0x chuẩn gốc
     "speed": 1.0,
     "audio_boost": 6.0,
-    "apply_capcut_limiter": True,         # Áp dụng CapCut Limiter +20dB
-    "apply_subtle_zoom": True,            # Subtle Zoom (1.03x) lách bản quyền
-    "random_mirror": False,               # Lật gương hình ảnh
+    "apply_capcut_limiter": True,               # Áp dụng CapCut Limiter +20dB
+    "apply_subtle_zoom": True,                  # Subtle Zoom (1.03x) lách bản quyền
+    "random_mirror": False,                     # Lật gương hình ảnh
     "blur_bg": True,
-    "zoom_in": True,
-    "zoom_percent": 115.0,
+    "zoom_in": False,                           # Chuẩn không zoom
+    "zoom_percent": 100.0,                      # Chuẩn 100.0%
     "scale_w": 100.0,
     "scale_h": 100.0,
     "pos_x": 0,
@@ -84,10 +85,10 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "crop_right": 0,
     "use_blur_mask": False,
     "blur_shape": "Hình chữ nhật",
-    "blur_mask_x": 20,
-    "blur_mask_y": 861,
-    "blur_mask_w": 932,
-    "blur_mask_h": 210,
+    "blur_mask_x": 0,
+    "blur_mask_y": 0,
+    "blur_mask_w": 0,
+    "blur_mask_h": 0,
     "color_look": "Không lọc",
     "color_look_intensity": 70.0,
     "color_look_stack": [],
@@ -106,20 +107,20 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "grain": 0.0,
     "blur": 0.0,
     "vignette": 0.0,
-    "title_y_pos": 260,
+    "title_y_pos": 301,
     "title_color1": "black",
     "title_color2": "red",
     "title_outline_color": "none",
     "title_bg_color": "white",
-    "sub_style_type": "tiktok_slim",
-    "sub_size": 16,
-    "sub_outline": 2,
-    "sub_shadow": 1,
-    "sub_margin_v": 100,
-    "sub_color": "&HFFFFFF&",
-    "sub_outline_color": "&H000000&",
-    "gemini_grid_inspector": False,       # Quét lưới AI xóa logo & sub cũ (Đã tắt)
-    "qc_blur_strength": 75,               # Độ mờ che logo / sub AI (10% - 100%)
+    "sub_style_type": "safe_zone_arial",
+    "sub_size": 48,
+    "sub_outline": 3.5,
+    "sub_shadow": 1.5,
+    "sub_margin_v": 420,
+    "sub_color": "&H00FFFFFF&",
+    "sub_outline_color": "&H00000000&",
+    "gemini_grid_inspector": False,             # Quét lưới AI xóa logo & sub cũ (Tắt mặc định để xuất sạch & nhanh)
+    "qc_blur_strength": 75,                     # Độ mờ che logo / sub AI (10% - 100%)
     "cleanup_temp_after_export": False,
 
     # 6. Đường dẫn xuất
@@ -193,11 +194,51 @@ def load_part_config(config_path: str = "") -> Dict[str, Any]:
                      "compilation_teaser_duration", "compilation_rank_by"):
         config.pop(comp_key, None)
 
+    # KHỬ TOÀN BỘ CÁC GIÁ TRỊ TEST TÀN DƯ (Defense-in-depth)
+    dirty = False
+    if config.get("hook_time") == "11:55":
+        config["hook_time"] = "00:00"
+        dirty = True
+    if str(config.get("youtube_url", "")).strip() == "https://www.youtube.com/watch?v=...":
+        config["youtube_url"] = ""
+        dirty = True
+    if config.get("blur_mask_y") == 861 and config.get("blur_mask_x") == 20:
+        config["blur_mask_x"] = 0
+        config["blur_mask_y"] = 0
+        config["blur_mask_w"] = 0
+        config["blur_mask_h"] = 0
+        config["use_blur_mask"] = False
+        dirty = True
+    if config.get("zoom_percent") == 115.0 and config.get("zoom_in") is True:
+        config["zoom_percent"] = 100.0
+        config["zoom_in"] = False
+        dirty = True
+    if config.get("sub_size", 0) <= 20 or config.get("sub_style_type") == "tiktok_slim":
+        config["sub_style_type"] = "safe_zone_arial"
+        config["sub_size"] = 48
+        config["sub_outline"] = 3.5
+        config["sub_shadow"] = 1.5
+        config["sub_margin_v"] = 420
+        config["sub_color"] = "&H00FFFFFF&"
+        config["sub_outline_color"] = "&H00000000&"
+        dirty = True
+    if config.get("part_label_prefix") == "Part":
+        config["part_label_prefix"] = "PART"
+        dirty = True
+
+    if dirty and os.path.isfile(path):
+        try:
+            save_part_config(config, config_path)
+        except Exception:
+            pass
+
     # Đảm bảo kiểu dữ liệu an toàn
     try:
         config["editing_mode"] = str(config.get("editing_mode", "viral_condensed"))
         if config["editing_mode"] not in ("viral_condensed", "classic_linear"):
             config["editing_mode"] = "viral_condensed"
+        if config.get("genre") not in ("reality", "gaming", "storytelling", "movie_recap"):
+            config["genre"] = "reality"
         config["target_part_duration"] = max(30.0, min(600.0, float(config.get("target_part_duration", 90.0))))
         config["min_part_duration"] = max(20.0, min(500.0, float(config.get("min_part_duration", 70.0))))
         config["max_part_duration"] = max(40.0, min(600.0, float(config.get("max_part_duration", 110.0))))

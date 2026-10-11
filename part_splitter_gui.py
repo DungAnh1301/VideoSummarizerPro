@@ -276,7 +276,7 @@ class PartSplitterFrame(ttk.Frame):
         ttk.Label(self.time_row, text="Mốc hook:").pack(side=tk.LEFT, padx=(0, 4))
         self.hook_time_entry = ttk.Entry(self.time_row, width=8)
         self.hook_time_entry.pack(side=tk.LEFT, padx=(0, 8))
-        self.hook_time_entry.insert(0, self.config.get("hook_time", "11:55"))
+        self.hook_time_entry.insert(0, self.config.get("hook_time", "00:00"))
 
         ttk.Label(self.time_row, text="Thời lượng chuẩn:").pack(side=tk.LEFT, padx=(0, 4))
         self.hook_spin = ttk.Spinbox(self.time_row, from_=2.0, to=30.0, increment=0.5, textvariable=self.hook_duration_var, width=5)
@@ -601,7 +601,7 @@ class PartSplitterFrame(ttk.Frame):
 
             if hasattr(self, "hook_time_entry"):
                 self.hook_time_entry.delete(0, tk.END)
-                self.hook_time_entry.insert(0, c.get("hook_time", "11:55"))
+                self.hook_time_entry.insert(0, c.get("hook_time", "00:00"))
 
             self.hook_duration_var.set(float(c.get("hook_target_sec", 6.0)))
             self.output_dir_var.set(c.get("output_dir", "output/parts"))
@@ -629,7 +629,7 @@ class PartSplitterFrame(ttk.Frame):
             if hasattr(self, "audio_boost_spin"):
                 self.audio_boost_spin.set(float(c.get("audio_boost", 20.0)))
             self.blur_var.set(bool(c.get("blur_bg", True)))
-            z_pct = float(c.get("zoom_percent", 115.0))
+            z_pct = float(c.get("zoom_percent", 100.0))
             if hasattr(self, "zoom_spin"):
                 self.zoom_spin.set(z_pct)
             self.zoom_var.set(bool(c.get("zoom_in", False)) or (abs(z_pct - 100.0) >= 0.1))

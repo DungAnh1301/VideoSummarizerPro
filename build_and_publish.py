@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.106"
+VERSION = "1.3.107"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.106: Tích hợp toàn diện Hãng Phim Hollywood AI vào Chế độ 2 (Chia Part & Tinh Lược) - 100% Zero-Touch: Tự động tải video 1080p từ link YouTube, tự động lấy hoặc bóc sub bằng Faster-Whisper GPU CUDA, Ban Đạo Diễn chia 4-5 cảnh cốt lõi (~20s/cảnh), khóa trọn câu thoại Zero Truncation, kỹ xảo Motion Blur Whip Transition (xfade=hblur), Whoosh SFX & Tension BGM Bed -14 LUFS, Safe Zone ASS Subtitle nét căng."
+NOTES = "Bản phát hành v1.3.107: Chuẩn hóa 100% cấu hình Chế độ 2 (Part Splitter / Hollywood AI Film Crew) cho file xuất exe và phân phối sản xuất - Loại bỏ triệt để toàn bộ giá trị test cũ (mốc hook 11:55, test blur mask, forced zoom 115%), kích hoạt cấu hình Hollywood chuẩn nét (Safe Zone Arial Bold 48pt, MarginV 420px, Top Card Y=301, Part Badge Y=1519, thể loại Gaming/Reality/Storytelling/Recap tự động bảo vệ thời lượng > 61s)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
@@ -39,7 +39,7 @@ files = [
     "youtube_heatmap.py", "update_manager.py", "updater.py", "version.json", "requirements.txt",
     "config.example.json", "Chay_App.bat", "README_CAI_DAT.md",
     "font_manager.py", "studio_helpers.py", "part_splitter_config.py", "part_pruner_ai.py",
-    "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
+    "part_splitter_engine.py", "part_splitter_gui.py", "config_part_splitter.json", "config_part_splitter.example.json", "PLAN_CHIA_PART.md",
     "tiktok_remixer_config.py", "tiktok_remixer_engine.py", "tiktok_remixer_gui.py", "config_tiktok_remixer.example.json",
     "crop_blur_studio.py", "capcut_color_studio.py", "title_sub_studio.py",
     "PLAN_BIEN_TAP_VIDEO_TIKTOK_REMIX.md", "PLAN_TITLE_SUB_STUDIO_VA_PREVIEW.md", "PLAN_BANG_MAU_CAPCUT.md", "PLAN_CROP_VA_BLUR_MASK.md", "PLAN_CHE_DO_2.md",

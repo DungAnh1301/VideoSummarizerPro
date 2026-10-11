@@ -357,7 +357,7 @@ class ProfessionalVideoApp:
         ttk.Label(self.single_mode_frame, text="Mốc hook:").grid(row=1, column=0, sticky=tk.W, padx=2)
         self.hook_time_entry = ttk.Entry(self.single_mode_frame, width=10)
         self.hook_time_entry.grid(row=1, column=1, sticky=tk.W, padx=5)
-        self.hook_time_entry.insert(0, self.config.get("hook_time", "11:55"))
+        self.hook_time_entry.insert(0, self.config.get("hook_time", "00:00"))
         
         ttk.Label(self.single_mode_frame, text="Giây:").grid(row=1, column=2, sticky=tk.W, padx=(8, 2))
         self.hook_duration_entry = ttk.Entry(self.single_mode_frame, width=6)
