@@ -179,18 +179,18 @@ class VisualEditorEngine:
                         f"[0:v]split=2[bg_in][fg_in];"
                         f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
                         f"[fg_in]{fg_filter}[fg];"
-                        f"[bg][fg]overlay=0:{y_top_boundary}[vout]"
+                        f"[bg][fg]overlay=0:{y_top_boundary},setpts=PTS-STARTPTS[vout]"
                     )
 
                     fade_d = min(0.04, dur * 0.05)
-                    af = f"afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={dur - fade_d:.3f}:d={fade_d:.3f}"
+                    af = f"asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={dur - fade_d:.3f}:d={fade_d:.3f}"
 
                     seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
                     cmd = [
                         "ffmpeg", "-y",
                         "-ss", f"{start:.3f}",
-                        "-t", f"{dur:.3f}",
                         "-i", source_video,
+                        "-t", f"{dur:.3f}",
                         "-filter_complex", vf,
                         "-af", af,
                         "-map", "[vout]", "-map", "0:a",

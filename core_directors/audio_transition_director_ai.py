@@ -54,13 +54,21 @@ class AudioTransitionDirectorAI:
         scenes = part_storyboard.get("scenes", [])
         _log(f"🎧 [ĐẠO DIỄN 3] Khóa câu thoại trọn vẹn (Zero Truncation) và lập kế hoạch âm thanh cho Part {part_idx}...")
 
-        # 1. Rà soát Zero Truncation cho từng shot
+        # 1. Rà soát Zero Truncation cho từng shot và chống đè lặp timeframe
         audited_scenes = []
+        last_global_shot_end = 0.0
         for sc in scenes:
             audited_shots = []
             for sh in sc.get("shots", []):
                 s_st = float(sh["start"])
                 s_en = float(sh["end"])
+
+                # Đảm bảo không bao giờ lùi thời gian hoặc đè lặp lại shot trước
+                if s_st < last_global_shot_end:
+                    s_st = last_global_shot_end
+
+                if s_en <= s_st + 0.5:
+                    s_en = s_st + max(1.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
 
                 # Tìm cue nào giao thoa với đoạn cuối của shot
                 for c in cues:
@@ -68,14 +76,14 @@ class AudioTransitionDirectorAI:
                     c_en = float(c.get("end", 0.0))
                     # Nếu shot cắt ngang giữa một câu thoại
                     if c_st < s_en < c_en and (c_en - s_en) < 3.0:
-                        _log(f"   🛡️ [ZERO TRUNCATION] Mở rộng shot {s_st:.1f}s-{s_en:.1f}s -> {c_en + 0.6:.1f}s để bảo vệ trọn vẹn câu thoại.")
-                        s_en = min(video_total_duration, c_en + 0.6)
+                        s_en = min(video_total_duration, c_en + 0.4)
                         break
 
                 item = dict(sh)
                 item["start"] = round(s_st, 2)
                 item["end"] = round(s_en, 2)
                 audited_shots.append(item)
+                last_global_shot_end = item["end"]
 
             sc_copy = dict(sc)
             sc_copy["shots"] = audited_shots
