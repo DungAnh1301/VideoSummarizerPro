@@ -54,40 +54,44 @@ class AudioTransitionDirectorAI:
         scenes = part_storyboard.get("scenes", [])
         _log(f"🎧 [ĐẠO DIỄN 3] Khóa câu thoại trọn vẹn (Zero Truncation) và lập kế hoạch âm thanh cho Part {part_idx}...")
 
-        # 1. Rà soát Zero Truncation cho từng shot và chống đè lặp timeframe
+        # 1. Rà soát Zero Truncation cho từng shot và chống đè lặp timeframe tuyệt đối
         audited_scenes = []
-        last_global_shot_end = 0.0
-        for sc in scenes:
+        last_scene_end = 0.0
+
+        for sc_idx, sc in enumerate(scenes):
+            raw_shots = sc.get("shots", [])
+            if not raw_shots:
+                continue
+
             audited_shots = []
-            for sh in sc.get("shots", []):
-                s_st = float(sh["start"])
-                s_en = float(sh["end"])
+            first_sh_st = float(raw_shots[0]["start"])
+            if sc_idx > 0 and first_sh_st < last_scene_end + 2.0:
+                first_sh_st = last_scene_end + 2.0
 
-                # Đảm bảo không bao giờ lùi thời gian hoặc đè lặp lại shot trước
-                if s_st < last_global_shot_end:
-                    s_st = last_global_shot_end
+            cur_shot_st = first_sh_st
+            for sh_k, sh in enumerate(raw_shots):
+                s_dur = max(2.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
+                s_en = cur_shot_st + s_dur
 
-                if s_en <= s_st + 0.5:
-                    s_en = s_st + max(1.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
-
-                # Tìm cue nào giao thoa với đoạn cuối của shot
-                for c in cues:
-                    c_st = float(c.get("start", 0.0))
-                    c_en = float(c.get("end", 0.0))
-                    # Nếu shot cắt ngang giữa một câu thoại
-                    if c_st < s_en < c_en and (c_en - s_en) < 3.0:
-                        s_en = min(video_total_duration, c_en + 0.4)
-                        break
+                # Chỉ kiểm tra Zero Truncation mở rộng cho shot CUỐI CÙNG của cảnh
+                if sh_k == len(raw_shots) - 1:
+                    for c in cues:
+                        c_st = float(c.get("start", 0.0))
+                        c_en = float(c.get("end", 0.0))
+                        if c_st < s_en < c_en and (c_en - s_en) < 3.0:
+                            s_en = min(video_total_duration, c_en + 0.4)
+                            break
 
                 item = dict(sh)
-                item["start"] = round(s_st, 2)
+                item["start"] = round(cur_shot_st, 2)
                 item["end"] = round(s_en, 2)
                 audited_shots.append(item)
-                last_global_shot_end = item["end"]
+                cur_shot_st = item["end"]
 
             sc_copy = dict(sc)
             sc_copy["shots"] = audited_shots
             audited_scenes.append(sc_copy)
+            last_scene_end = audited_shots[-1]["end"]
 
         # 2. Chuẩn bị file SFX và BGM
         sound_dir = temp_dir or os.path.join(ROOT_DIR, "temp", "sound_master")

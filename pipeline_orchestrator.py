@@ -155,14 +155,14 @@ class PipelineOrchestrator:
             os.makedirs(part_work_dir, exist_ok=True)
             final_part_path = os.path.join(output_dir, f"{part_prefix}_{p_idx}.mp4")
 
-            # 3.1. ĐẠO DIỄN 2: Lọc 4-5 phân cảnh cốt lõi (~18s - 22s/cảnh)
+            # 3.1. ĐẠO DIỄN 2: Lọc 2-3 phân cảnh LIỀN MẠCH (~35s - 45s/cảnh) không cắt vụn
             storyboard = SceneRhythmDirectorAI.direct_part_scenes(
                 part_index=p_idx,
                 part_info=p_info,
                 cues=cues,
                 total_duration=total_dur,
-                target_scene_count=5,
-                target_part_duration=float(config.get("target_part_duration", 95.0)),
+                target_scene_count=2,
+                target_part_duration=float(config.get("target_part_duration", 85.0)),
                 config=config,
                 log_fn=_log
             )

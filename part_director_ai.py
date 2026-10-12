@@ -55,47 +55,46 @@ class PartDirectorAI:
         "reality": {
             "label": "Thực tế & Drama / Thử lòng (Loyalty Test, Prank)",
             "pacing": "hollywood_linear",
-            "scene_count": 5,
-            "scene_dur": 20.0,
+            "scene_count": 2,
+            "scene_dur": 42.0,
             "instructions": (
                 "Thể loại kịch tính thực tế: Cực kỳ nhạy bén với cảm xúc sốc, ngỡ ngàng. "
-                "Cắt tuần tự giữa các bối cảnh (Sân bay -> Xe -> Biệt thự -> Bikini -> Bể bơi). "
-                "Cắt giữa người hỏi (Pan Left) và người bị thử lòng (Pan Right). "
+                "Tuyệt đối KHÔNG CẮT VỤN từng câu 3s! Giữ 2-3 phân cảnh LIỀN MẠCH (35s-45s/cảnh) trọn vẹn ngữ cảnh. "
+                "Cắt tuần tự giữa các bối cảnh lớn. Đổi góc máy giữa người hỏi (Pan Left) và người bị thử lòng (Pan Right) trên dòng thời gian chạy thẳng. "
                 "Khi có câu nói giật gân, PUNCH ZOOM (1.18x) vào mặt đối phương để bắt trọn biểu cảm."
             )
         },
         "storytelling": {
             "label": "Kể chuyện & Podcast / Tự sự",
             "pacing": "balanced_linear",
-            "scene_count": 4,
-            "scene_dur": 24.0,
+            "scene_count": 2,
+            "scene_dur": 45.0,
             "instructions": (
                 "Thể loại kể chuyện/podcast: Nhịp điệu mượt mà, sâu lắng. "
-                "Giữ trọn vẹn ý tứ câu chuyện, luân chuyển giữa người dẫn chuyện và các dẫn chứng, tài liệu. "
+                "Giữ trọn vẹn ý tứ và câu chuyện liền mạch 40s-50s, không ngắt vụn. Luân chuyển giữa người dẫn chuyện và các dẫn chứng. "
                 "Punch Zoom tại các bước ngoặt bất ngờ của câu chuyện (twist)."
             )
         },
         "movie_recap": {
             "label": "Tóm tắt phim & Review / Phân tích",
             "pacing": "fast_linear",
-            "scene_count": 5,
-            "scene_dur": 18.0,
+            "scene_count": 3,
+            "scene_dur": 30.0,
             "instructions": (
-                "Thể loại tóm tắt phim: Nhịp dồn dập, chuyển cảnh theo từng nhịp hành động. "
-                "Loại bỏ 100% cảnh đi bộ hay thừa thãi, chỉ giữ các xung đột gay cấn và nút thắt."
+                "Thể loại tóm tắt phim: 2-3 phân đoạn hành động liền mạch 30s-35s. "
+                "Loại bỏ các đoạn thừa thãi, chỉ giữ các khối xung đột gay cấn và nút thắt có đầy đủ ngữ cảnh."
             )
         },
         "gaming": {
             "label": "Gaming & Esports / Streamer Highlight & Thử thách",
             "pacing": "intense_gaming",
-            "scene_count": 5,
-            "scene_dur": 19.0,
+            "scene_count": 2,
+            "scene_dur": 42.0,
             "instructions": (
-                "Thể loại Game & Streamer: Tiết tấu dồn dập, kịch tính cao độ. "
-                "Cắt bỏ 100% thời gian đi bộ, nhặt đồ, chạy map nhạt nhẽo; chỉ giữ các pha giao tranh (combat/clutch), "
-                "đánh trùm (boss fight), lỗi hài hước (fails/troll), và phản ứng sốc/rage của streamer. "
-                "Khi streamer hét lên, ăn mừng hoặc bị tiêu diệt bất ngờ: PUNCH ZOOM (1.18x) vào biểu cảm/khoảnh khắc đó. "
-                "Cliffhanger Part: Cắt ngay trước đòn chí mạng của Boss hoặc tình huống sống còn!"
+                "Thể loại Game & Streamer: 2 khối giao tranh / thử thách liền mạch trọn vẹn 35s-45s. "
+                "Không cắt vụn từng giây. Giữ trọn pha combat / phản ứng sốc của streamer từ đầu đến cuối. "
+                "Khi streamer hét lên, ăn mừng hoặc bị tiêu diệt: PUNCH ZOOM (1.18x) vào biểu cảm. "
+                "Cliffhanger Part: Cắt ngay trước tình huống sống còn!"
             )
         }
     }
@@ -137,6 +136,8 @@ class PartDirectorAI:
         parts_specs = master_plan.get("parts", [])
         verified_parts = []
 
+        genre_profile = cls.GENRE_PROFILES.get(genre, cls.GENRE_PROFILES["reality"])
+
         # 2. Đạo diễn 2 & 3 cho từng Part
         for p_info in parts_specs:
             p_idx = int(p_info.get("part_index", len(verified_parts) + 1))
@@ -145,8 +146,8 @@ class PartDirectorAI:
                 part_info=p_info,
                 cues=transcript_data,
                 total_duration=video_duration_sec,
-                target_scene_count=5,
-                target_part_duration=float(config.get("target_part_duration", 95.0)),
+                target_scene_count=int(genre_profile.get("scene_count", 2)),
+                target_part_duration=float(config.get("target_part_duration", 85.0)),
                 config=config,
                 log_fn=_log
             )
