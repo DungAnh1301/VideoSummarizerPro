@@ -73,14 +73,27 @@ class AudioTransitionDirectorAI:
                 s_dur = max(2.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
                 s_en = cur_shot_st + s_dur
 
-                # Chỉ kiểm tra Zero Truncation mở rộng cho shot CUỐI CÙNG của cảnh
+                # Kiểm tra Zero Truncation mở rộng cho shot CUỐI CÙNG của cảnh: đảm bảo câu nói kết thúc 100%
                 if sh_k == len(raw_shots) - 1:
-                    for c in cues:
-                        c_st = float(c.get("start", 0.0))
-                        c_en = float(c.get("end", 0.0))
-                        if c_st < s_en < c_en and (c_en - s_en) < 3.0:
-                            s_en = min(video_total_duration, c_en + 0.4)
-                            break
+                    try:
+                        from core_directors.scene_rhythm_director_ai import SceneRhythmDirectorAI
+                        sents = SceneRhythmDirectorAI.group_complete_sentences(cues)
+                        for s_idx, s in enumerate(sents):
+                            s_start = float(s["start"])
+                            s_end = float(s["end"])
+                            # Chỉ mở rộng nếu s_en thực sự đang cắt ngang thân câu nói (> 0.25s sau khi câu bắt đầu)
+                            if (s_start + 0.25) <= s_en < s_end:
+                                next_st = float(sents[s_idx + 1]["start"]) if s_idx < len(sents) - 1 else video_total_duration
+                                max_hold = max(s_end, min(s_end + 0.40, next_st - 0.15))
+                                s_en = min(video_total_duration, round(max_hold, 2))
+                                break
+                    except Exception:
+                        for c in cues:
+                            c_st = float(c.get("start", 0.0))
+                            c_en = float(c.get("end", 0.0))
+                            if (c_st + 0.25) <= s_en < c_en:
+                                s_en = min(video_total_duration, round(c_en + 0.35, 2))
+                                break
 
                 item = dict(sh)
                 item["start"] = round(cur_shot_st, 2)

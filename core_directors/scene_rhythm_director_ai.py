@@ -263,62 +263,138 @@ Respond ONLY with a valid JSON object matching this schema:
 
         return cleaned_scenes
 
+    DANGLING_WORDS = {
+        'so', 'and', 'but', 'because', 'for', 'or', 'that', 'to', 'with', 'as',
+        'in', 'if', 'while', 'the', 'a', 'an', 'is', 'are', 'was', 'were', 'it',
+        'its', 'my', 'your', 'his', 'her', 'our', 'their', 'of', 'at', 'by', 'from'
+    }
+    TERMINAL_REGEX = re.compile(r'[\.\!\?]+["\')]*$')
+
+    @classmethod
+    def is_complete_sentence_end(cls, text: str) -> bool:
+        """Kiểm tra câu nói đã kết thúc hoàn chỉnh về ngữ nghĩa chưa (không dừng ở liên từ dở dang)."""
+        txt = text.strip()
+        if not txt:
+            return False
+        words = [re.sub(r'[^a-zA-Z0-9]', '', w).lower() for w in txt.split()]
+        words = [w for w in words if w]
+        if not words:
+            return False
+        last_word = words[-1]
+        if last_word in cls.DANGLING_WORDS:
+            return False
+        return bool(cls.TERMINAL_REGEX.search(txt)) or len(words) >= 4
+
+    @classmethod
+    def group_complete_sentences(cls, cues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Nhóm các cues vụn thành các câu nói trọn vẹn ngữ nghĩa (Complete Sentences)."""
+        sentences: List[Dict[str, Any]] = []
+        cur_cues: List[Dict[str, Any]] = []
+
+        for i, c in enumerate(cues):
+            cur_cues.append(c)
+            txt = str(c.get("text", "")).strip()
+            is_term = bool(cls.TERMINAL_REGEX.search(txt))
+            gap = float(cues[i + 1]["start"]) - float(c["end"]) if i < len(cues) - 1 else 0.0
+
+            last_word = txt.split()[-1].lower() if txt.split() else ""
+            last_word_clean = re.sub(r"[^a-z]", "", last_word)
+
+            is_boundary = False
+            if is_term and last_word_clean not in cls.DANGLING_WORDS:
+                is_boundary = True
+            elif gap >= 0.85 and last_word_clean not in cls.DANGLING_WORDS:
+                is_boundary = True
+            elif gap >= 1.8:
+                is_boundary = True
+
+            if is_boundary:
+                s_text = " ".join(c_item.get("text", "").strip() for c_item in cur_cues)
+                sentences.append({
+                    "start": float(cur_cues[0]["start"]),
+                    "end": float(cur_cues[-1]["end"]),
+                    "text": s_text,
+                    "cues": cur_cues
+                })
+                cur_cues = []
+
+        if cur_cues:
+            s_text = " ".join(c_item.get("text", "").strip() for c_item in cur_cues)
+            sentences.append({
+                "start": float(cur_cues[0]["start"]),
+                "end": float(cur_cues[-1]["end"]),
+                "text": s_text,
+                "cues": cur_cues
+            })
+
+        return sentences
+
     @classmethod
     def _split_scene_by_dialogue_turns(
         cls,
         cues: List[Dict[str, Any]],
         sc_start: float,
         sc_end: float,
-        sc_idx: int
+        sc_idx: int,
+        scene_sents: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
-        """Chia một phân cảnh liền mạch ~20s [sc_start, sc_end] thành 3-4 góc máy (shots)
-        khớp chính xác với nhịp ngắt câu / đổi người nói ('>>') trong phụ đề:
-        - Shot 1: Wide / Zoom Out (hoặc Speaker Left) mở bối cảnh
-        - Shot 2: Speaker Shift (Cận trung người đối thoại)
-        - Shot 3: Emotion Zoom In Close-Up (Phóng cận mặt bắt biểu cảm cao trào)
-        - Shot 4: Reaction / Speaker Shift (Phản ứng đối phương / Zoom Out kết cảnh)
-        Đảm bảo 100% liền mạch: shot[k+1].start == shot[k].end.
+        """Chia phân cảnh liền mạch thành 3-4 shots khớp chính xác với nhịp bắt đầu câu nói
+        hoặc lượt đổi người nói ('>>') để người xem hiểu trọn vẹn từng câu:
+        - Không cắt giữa chừng câu nói!
+        - Shot 1: Mở đầu câu chuyện / Bối cảnh (wide_zoom_out)
+        - Shot 2: Người đối thoại / Phân tích tiếp theo (speaker_left)
+        - Shot 3: Câu nói cao trào / Biểu cảm sốc (closeup_zoom_in)
+        - Shot 4: Phản ứng đối phương / Câu kết luận (speaker_right)
         """
         sc_dur = max(6.0, sc_end - sc_start)
-        num_shots = 4 if sc_dur >= 19.0 else 3
-        ideal_step = sc_dur / float(num_shots)
-
-        # Tìm các điểm ngắt câu / đổi người nói ('>>') trong khoảng [sc_start + 3.2, sc_end - 3.2]
-        scene_cues = [
-            c for c in cues
-            if float(c.get("start", 0.0)) > sc_start + 2.8 and float(c.get("start", 0.0)) < sc_end - 2.8
-        ]
-
+        
+        # Nếu có danh sách câu hoàn chỉnh trong cảnh, sử dụng ranh giới câu làm điểm cắt shot
         cut_points = [sc_start]
-        for k in range(1, num_shots):
-            target_t = sc_start + k * ideal_step
-            best_t = target_t
-            best_cost = 999.0
-            for c in scene_cues:
-                c_st = float(c.get("start", 0.0))
-                if c_st <= cut_points[-1] + 3.2 or c_st >= sc_end - 3.0:
-                    continue
-                dist = abs(c_st - target_t)
-                if dist <= 2.4:
+        if scene_sents and len(scene_sents) >= 2:
+            s_starts = [s["start"] for s in scene_sents if sc_start + 3.0 < s["start"] < sc_end - 3.0]
+            if s_starts:
+                # Lấy tối đa 2-3 điểm cắt câu cách nhau tối thiểu 4.0s
+                last_p = sc_start
+                for st in s_starts:
+                    if st - last_p >= 4.0 and sc_end - st >= 3.5:
+                        cut_points.append(round(st, 2))
+                        last_p = st
+                        if len(cut_points) >= 4:
+                            break
+
+        if len(cut_points) == 1:
+            # Fallback nếu cảnh ít câu: tìm mốc đổi người nói '>>' hoặc ngắt câu
+            num_shots = 4 if sc_dur >= 24.0 else 3
+            ideal_step = sc_dur / float(num_shots)
+            scene_cues = [
+                c for c in cues
+                if float(c.get("start", 0.0)) > sc_start + 3.2 and float(c.get("start", 0.0)) < sc_end - 3.2
+            ]
+            for k in range(1, num_shots):
+                target_t = sc_start + k * ideal_step
+                best_t = target_t
+                best_cost = 999.0
+                for c in scene_cues:
+                    c_st = float(c.get("start", 0.0))
+                    if c_st <= cut_points[-1] + 3.2 or c_st >= sc_end - 3.0:
+                        continue
+                    dist = abs(c_st - target_t)
                     txt = str(c.get("text", "")).strip()
-                    # Ưu tiên cao cho điểm đổi người nói '>>'
                     speaker_bonus = -0.9 if txt.startswith(">>") else 0.0
                     cost = dist + speaker_bonus
                     if cost < best_cost:
                         best_cost = cost
                         best_t = c_st
-            cut_points.append(round(best_t, 2))
+                cut_points.append(round(best_t, 2))
+
         cut_points.append(round(sc_end, 2))
 
-        roles_4 = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
-        roles_3 = ["wide_zoom_out", "closeup_zoom_in", "speaker_right"]
-        roles = roles_4 if num_shots == 4 else roles_3
-
+        roles_pool = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
         shots = []
         for sh_i in range(len(cut_points) - 1):
             st = cut_points[sh_i]
             en = cut_points[sh_i + 1]
-            role = roles[sh_i % len(roles)]
+            role = roles_pool[sh_i % len(roles_pool)]
             if role == "wide_zoom_out":
                 pan = "center"
                 punch = False
@@ -351,76 +427,96 @@ Respond ONLY with a valid JSON object matching this schema:
         target_scene_count: int = 5,
         target_part_dur: float = 95.0
     ) -> List[Dict[str, Any]]:
-        """Thuật toán tìm 4-5 Khối Diễn Biến Liền Mạch (Continuous Story Blocks ~20s/cảnh):
-        - Mỗi cảnh dài ~18s - 22s liên tục, không bị gián đoạn hay ngắt vụn.
-        - Tìm phân đoạn 20s có mật độ lời thoại cao nhất trong từng phân vùng của Part.
-        - Chia 20s đó thành 3-4 shots theo đúng nhịp đổi người nói (Wide Zoom Out -> Speaker Shift -> Close-Up Zoom In -> Reaction).
+        """Thuật toán Hollywood Complete Thought Narrative:
+        - Gom các câu nói thành cụm ý niệm hoàn chỉnh (Setup -> Conflict/Action -> Conclusion).
+        - Tuyệt đối KHÔNG cắt cụt câu nói đang dở dang (Zero Mid-Sentence Cut).
+        - Mỗi cảnh dài ~18s - 30s (cho phép nới rộng để câu nói kết thúc trọn vẹn ở dấu chấm câu).
+        - Nếu là phân đoạn hành động không lời (cưa xe, hàn xe, trailer), giữ gọn gàng 6s-10s tạo nhịp kịch tính.
         """
+        all_sentences = cls.group_complete_sentences(cues)
+        part_sentences = [
+            s for s in all_sentences
+            if s["start"] >= max(0.0, start_bound - 2.0) and s["end"] <= end_bound + 15.0
+        ]
+
         window_len = max(60.0, end_bound - start_bound)
         if window_len < 130.0:
             target_scene_count = 4
         else:
             target_scene_count = 5
 
-        target_sc_dur = max(18.5, min(22.0, target_part_dur / float(target_scene_count)))
-
+        window_size = window_len / float(target_scene_count)
         scenes = []
         current_min_start = start_bound
 
         for sc_idx in range(target_scene_count):
-            frac_st = sc_idx / float(target_scene_count)
-            frac_en = (sc_idx + 1) / float(target_scene_count)
-            w_st = max(current_min_start, start_bound + frac_st * window_len)
-            w_en = start_bound + frac_en * window_len
+            w_st = max(current_min_start, start_bound + sc_idx * window_size)
+            w_en = start_bound + (sc_idx + 1) * window_size
             if sc_idx == target_scene_count - 1:
                 w_en = end_bound
 
-            window_cues = [c for c in cues if c.get("start", 0.0) >= w_st and c.get("end", 0.0) <= w_en + 8.0]
-            if not window_cues:
-                best_st = w_st
-                best_en = min(end_bound, w_st + target_sc_dur)
-            else:
-                best_st = max(current_min_start, float(window_cues[0]["start"]))
-                best_en = min(end_bound, best_st + target_sc_dur)
-                best_score = -999.0
+            cand_sents = [s for s in part_sentences if s["start"] >= w_st and s["end"] <= w_en + 20.0]
 
-                for i, c_st in enumerate(window_cues):
-                    s_time = float(c_st.get("start", 0.0))
-                    if s_time < current_min_start:
-                        continue
-                    # Đảm bảo còn đủ thời gian cho 1 cảnh ~18s trước w_en
-                    if s_time > w_en - 17.5 and s_time > current_min_start:
-                        break
-                    for j in range(i, len(window_cues)):
-                        c_en = window_cues[j]
-                        dur = float(c_en.get("end", 0.0)) - s_time
-                        if dur >= 16.5:
-                            sub_c = window_cues[i:j+1]
-                            words = sum(len(str(c.get("text", "")).split()) for c in sub_c)
-                            diff = abs(dur - target_sc_dur)
-                            score = words - diff * 2.5
+            best_cluster = []
+            best_score = -999.0
+
+            if cand_sents:
+                for i in range(len(cand_sents)):
+                    cluster = []
+                    for j in range(i, len(cand_sents)):
+                        cluster.append(cand_sents[j])
+                        dur = cluster[-1]["end"] - cluster[0]["start"]
+                        last_text = cluster[-1]["text"]
+
+                        if 18.0 <= dur <= 32.0 and cls.is_complete_sentence_end(last_text):
+                            words = sum(len(s["text"].split()) for s in cluster)
+                            diff = abs(dur - 24.0)
+                            has_dialogue = any(">>" in s["text"] for s in cluster)
+                            score = words - diff * 2.0 + (15.0 if has_dialogue else 0.0)
                             if score > best_score:
                                 best_score = score
-                                best_st = s_time
-                                best_en = float(c_en.get("end", 0.0))
-                            if dur > target_sc_dur + 4.5:
-                                break
+                                best_cluster = list(cluster)
+                        elif dur > 32.0:
+                            break
 
-            sc_start = round(max(current_min_start, best_st), 2)
-            if end_bound - sc_start < 18.0 and end_bound - 19.5 >= current_min_start:
-                sc_start = round(end_bound - 19.5, 2)
+                if not best_cluster:
+                    # Fallback lấy cụm câu hợp lý nhất kết thúc trọn vẹn
+                    for k in range(len(cand_sents)):
+                        dur = cand_sents[k]["end"] - cand_sents[0]["start"]
+                        if dur >= 15.0 and cls.is_complete_sentence_end(cand_sents[k]["text"]):
+                            best_cluster = cand_sents[:k + 1]
+                            break
+                    if not best_cluster:
+                        best_cluster = [cand_sents[0]]
 
-            sc_end = round(min(end_bound, max(sc_start + 18.0, min(sc_start + 23.0, best_en))), 2)
+            if best_cluster:
+                sc_start = round(best_cluster[0]["start"], 2)
+                # Thêm khoảng đệm thở reaction hold 0.35s sau khi dứt câu cuối, tuyệt đối không chạm vào câu kế tiếp
+                last_end = float(best_cluster[-1]["end"])
+                next_sents = [s for s in part_sentences if float(s["start"]) > last_end + 0.05]
+                next_st = float(next_sents[0]["start"]) if next_sents else end_bound
+                hold = max(last_end, min(last_end + 0.35, next_st - 0.15))
+                sc_end = round(hold, 2)
+            else:
+                # Trường hợp đoạn video là Action Montage / Trailer (không có lời thoại)
+                sc_start = round(w_st, 2)
+                sc_end = round(min(end_bound, sc_start + 18.0), 2)
 
-            shots = cls._split_scene_by_dialogue_turns(cues, sc_start, sc_end, sc_idx)
+            shots = cls._split_scene_by_dialogue_turns(
+                cues=cues,
+                sc_start=sc_start,
+                sc_end=sc_end,
+                sc_idx=sc_idx,
+                scene_sents=best_cluster
+            )
 
             scenes.append({
                 "scene_id": sc_idx + 1,
-                "name": f"Phân cảnh Liền Mạch {sc_idx + 1}",
+                "name": f"Phân cảnh Hoàn Chỉnh {sc_idx + 1}",
                 "shots": shots
             })
 
-            # Đảm bảo cảnh tiếp theo cách cảnh này tối thiểu 2.5 giây (ZERO OVERLAP!)
+            # Đảm bảo cảnh tiếp theo cách cảnh này tối thiểu 2.5s (0% LẶP FOOTAGE)
             current_min_start = sc_end + 2.5
 
         return scenes
