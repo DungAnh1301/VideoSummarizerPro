@@ -94,7 +94,7 @@ class AudioMasterEngine:
             # 4. Chuẩn hóa âm lượng EBU R128 chuẩn -14 LUFS
             af_parts.append(f"[mixed_raw]loudnorm=I={target_lufs:.1f}:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100[aout]")
         else:
-            af_parts.append(f"[0:a]loudnorm=I={target_lufs:.1f}:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100[aout]")
+            af_parts.append(f"[vocal]loudnorm=I={target_lufs:.1f}:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100[aout]")
 
         filter_complex_str = ";".join(af_parts)
 

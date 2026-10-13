@@ -315,26 +315,29 @@ class VisualEditorEngine:
                     u_focus = 0.38 if pan_hint == "left" else (0.62 if pan_hint == "right" else 0.50)
                     v_focus = 0.40
 
-            # Quyết định độ phóng đại ống kính (Zoom Out / Medium / Close-Up Zoom In)
-            if role == "wide_zoom_out":
+            # Quyết định độ phóng đại ống kính (Zoom Out / Medium / Close-Up Zoom In - Tasteful, không lạm dụng)
+            if "zoom_factor" in sh and sh["zoom_factor"] is not None:
+                zoom_factor = float(sh["zoom_factor"])
+            elif role == "wide_zoom_out":
                 zoom_factor = 1.00
             elif role == "closeup_zoom_in" or punch_flag:
-                zoom_factor = 1.25
+                zoom_factor = 1.15
             elif role == "speaker_left":
-                zoom_factor = 1.14
-            elif role == "speaker_right":
                 zoom_factor = 1.08
+            elif role == "speaker_right":
+                zoom_factor = 1.06
             else:
-                zoom_factor = 1.24 if punch_flag else (1.12 if sh_idx % 2 == 1 else 1.00)
+                zoom_factor = 1.15 if punch_flag else (1.08 if sh_idx % 2 == 1 else 1.00)
 
-            # Đảm bảo 2 shots liên tiếp trong cùng 1 cảnh luôn có sự biến thiên rõ rệt (Zoom In / Zoom Out hoặc Dịch chuyển Camera)
-            if abs(zoom_factor - prev_zoom) < 0.06 and abs(u_focus - prev_u) < 0.07:
-                if zoom_factor <= 1.05:
-                    zoom_factor = 1.16
-                elif zoom_factor >= 1.20:
-                    zoom_factor = 1.04
-                else:
-                    zoom_factor = 1.25
+            # Chỉ tự động dịch chuyển nếu không khóa zoom_factor rõ ràng và không phải góc toàn cảnh
+            if "zoom_factor" not in sh and role != "wide_zoom_out":
+                if abs(zoom_factor - prev_zoom) < 0.05 and abs(u_focus - prev_u) < 0.06:
+                    if zoom_factor <= 1.05:
+                        zoom_factor = 1.12
+                    elif zoom_factor >= 1.15:
+                        zoom_factor = 1.04
+                    else:
+                        zoom_factor = 1.15
 
             # Tính toán kích thước scale & tọa độ crop (x_off, y_off) căn chuẩn mặt vào tâm vàng
             z_w = int(round(scale_w * zoom_factor))
@@ -446,6 +449,8 @@ class VisualEditorEngine:
                     start = float(sh["start"])
                     end = float(sh["end"])
                     dur = max(0.5, end - start)
+                    spd = float(sh.get("speed_factor", 1.0))
+                    eff_dur = dur / spd if spd > 0.05 else dur
 
                     z_w = int(sh["z_w"])
                     z_h = int(sh["z_h"])
@@ -454,21 +459,24 @@ class VisualEditorEngine:
                     z_fac = float(sh["zoom_factor"])
                     u_foc = float(sh["u_focus"])
 
-                    cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x @ u={u_foc:.2f}")
+                    spd_tag = f" (Speed {spd:.1f}x)" if abs(spd - 1.0) > 0.05 else ""
+                    cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x @ u={u_foc:.2f}{spd_tag}")
 
                     fg_filter = f"scale={z_w}:{z_h},crop=1080:{target_fg_h}:{x_off}:{y_off}"
                     if color_fx:
                         fg_filter = f"{fg_filter},{color_fx}"
 
+                    pts_filter = f"setpts=(PTS-STARTPTS)/{spd:.3f}" if abs(spd - 1.0) > 0.05 else "setpts=PTS-STARTPTS"
                     vf = (
                         f"[0:v]split=2[bg_in][fg_in];"
                         f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
                         f"[fg_in]{fg_filter}[fg];"
-                        f"[bg][fg]overlay=0:{y_top_boundary},setpts=PTS-STARTPTS[vout]"
+                        f"[bg][fg]overlay=0:{y_top_boundary},{pts_filter}[vout]"
                     )
 
-                    fade_d = min(0.04, dur * 0.05)
-                    af = f"asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={dur - fade_d:.3f}:d={fade_d:.3f}"
+                    fade_d = min(0.04, eff_dur * 0.05)
+                    atempo_filter = f"atempo={spd:.3f}," if (0.5 <= spd <= 2.0 and abs(spd - 1.0) > 0.05) else ""
+                    af = f"{atempo_filter}asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={eff_dur - fade_d:.3f}:d={fade_d:.3f}"
 
                     seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
                     cmd = [

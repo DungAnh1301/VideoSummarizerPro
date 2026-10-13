@@ -46,6 +46,7 @@ from core_crew import (
     PackagingTypographerEngine,
 )
 from audio_boundary_guard import AudioBoundaryGuard
+from part_splitter_engine import probe_duration_sec
 
 
 class PartDirectorAI:
