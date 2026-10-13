@@ -71,16 +71,16 @@ class SceneRhythmDirectorAI:
         part_info: Dict[str, Any],
         cues: List[Dict[str, Any]],
         total_duration: float,
-        target_scene_count: int = 2,
-        target_part_duration: float = 85.0,
+        target_scene_count: int = 5,
+        target_part_duration: float = 95.0,
         config: Optional[Dict[str, Any]] = None,
         log_fn=None
     ) -> Dict[str, Any]:
-        """Tạo kịch bản 2-3 phân cảnh LIỀN MẠCH (Continuous Story Blocks ~35s - 45s mỗi cảnh) cho một Part.
-        - TUYỆT ĐỐI KHÔNG CẮT VỤN 3s rồi ghép lại!
-        - Mỗi cảnh là một dòng thời gian chảy liên tục 100% (câu chuyện, hội thoại nguyên vẹn có đầu có đuôi).
-        - Bên trong mỗi cảnh, các shot nối tiếp nhau không hở thời gian (shot[i+1].start == shot[i].end).
-        - Giữa các cảnh có khoảng cách an toàn, tuyệt đối không bao giờ lùi giờ hay lặp lại video/b-roll.
+        """Tạo kịch bản 4-5 phân cảnh LIỀN MẠCH (~18s - 22s mỗi cảnh, trung bình ~20s) cho một Part.
+        - TUYỆT ĐỐI KHÔNG CẮT VỤN 2-3s nhảy cóc bên trong cảnh!
+        - Mỗi cảnh 20s là một dòng thời gian chảy liên tục 100% (câu chuyện, hội thoại nguyên vẹn có đầu có đuôi).
+        - Bên trong mỗi cảnh 20s, chia thành 2-3 góc máy nối tiếp nhau không hở thời gian (shot[i+1].start == shot[i].end).
+        - Giữa 4-5 cảnh có khoảng cách an toàn (>= 2.5s), tuyệt đối không bao giờ lùi giờ hay lặp lại video/b-roll.
         """
         def _log(msg: str):
             logger.info(msg)
@@ -92,19 +92,19 @@ class SceneRhythmDirectorAI:
 
         config = config or {}
         time_range = part_info.get("source_time_range", [0.0, total_duration])
-        start_bound = float(time_range[0])
+        start_bound = max(float(time_range[0]), float(part_info.get("start_sec", 0.0)))
         end_bound = float(time_range[1])
         goal = part_info.get("narrative_goal", "Story development")
         title = part_info.get("part_title", f"Part {part_index}")
 
-        # Tự động chọn 2 hoặc 3 cảnh tùy theo độ dài cửa sổ thời gian
+        # Tự động chọn 4 hoặc 5 cảnh (~20s/cảnh) tùy theo độ dài cửa sổ thời gian
         window_duration = max(30.0, end_bound - start_bound)
-        if window_duration >= 200.0:
-            target_scene_count = 3
+        if window_duration < 130.0:
+            target_scene_count = 4
         else:
-            target_scene_count = 2
+            target_scene_count = 5
 
-        _log(f"🎬 [ĐẠO DIỄN 2] Đạo diễn {target_scene_count} phân cảnh LIỀN MẠCH cho Part {part_index}: {title} ({start_bound:.1f}s -> {end_bound:.1f}s)...")
+        _log(f"🎬 [ĐẠO DIỄN 2] Đạo diễn {target_scene_count} phân cảnh LIỀN MẠCH (~20s/cảnh) cho Part {part_index}: {title} ({start_bound:.1f}s -> {end_bound:.1f}s)...")
 
         # Lọc cues trong khung thời gian của Part
         part_cues = [c for c in cues if c.get("start", 0.0) >= max(0.0, start_bound - 2.0) and c.get("end", 0.0) <= min(total_duration, end_bound + 2.0)]
@@ -126,18 +126,18 @@ Story Goal: {goal}
 Timeline window: {start_bound:.1f}s to {end_bound:.1f}s.
 
 ABSOLUTE LAWS OF THE HOLLYWOOD DIRECTOR:
-1. STRICT CONTINUOUS STORY BLOCKS (NO MICRO-FRAGMENTATION):
-   - You must select exactly {target_scene_count} CONTINUOUS narrative scenes (each lasting 35s to 45s of uninterrupted dialogue and action).
-   - DO NOT chop the video into disconnected 3-second fragments! Every scene must be a continuous slice of the video where characters talk and act with full beginning-to-end context!
-2. SEAMLESS SHOTS INSIDE EACH SCENE:
-   - Inside each scene, divide the continuous timeframe into 3 to 5 consecutive shots for dynamic camera movement (pan="left", pan="right", punch=true).
+1. 4 TO 5 CONTINUOUS 20-SECOND SCENES (NO MICRO-FRAGMENTATION):
+   - You must select exactly {target_scene_count} CONTINUOUS narrative scenes (each lasting ~18s to 22s of uninterrupted dialogue and action).
+   - DO NOT chop a scene into disconnected 3-second fragments! Every 20s scene must be a continuous slice of the video where characters talk and act with full beginning-to-end context!
+2. SEAMLESS SHOTS INSIDE EACH 20s SCENE:
+   - Inside each 20s scene, divide the continuous timeframe into 2 to 3 consecutive shots (~6.5s - 7.5s each) for dynamic camera movement (pan="left", pan="right", punch=true).
    - MANDATORY: There are ZERO time gaps between shots inside the scene: shot[k+1].start MUST EQUAL shot[k].end!
-3. ZERO REPETITION & NO OVERLAP:
-   - Scene 2 start MUST be strictly greater than Scene 1 end (at least 3.0s later). Never repeat footage!
+3. ZERO REPETITION & NO OVERLAP BETWEEN SCENES:
+   - Scene[i+1] start MUST be strictly greater than Scene[i] end (at least 2.5s later). Never repeat footage!
 4. CLIFFHANGER: The final scene must end on a suspenseful reveal or twist!
 """
 
-        user_prompt = f"""Target Part Duration: ~{target_part_duration:.0f}s (each scene ~35s - 45s continuous)
+        user_prompt = f"""Target Part Duration: ~{target_part_duration:.0f}s ({target_scene_count} scenes, each ~20s continuous)
 TRANSCRIPT IN WINDOW:
 {transcript_text}
 
@@ -149,11 +149,11 @@ Respond ONLY with a valid JSON object matching this schema:
   "scenes": [
     {{
       "scene_id": 1,
-      "name": "The Setup & Inciting Conflict",
+      "name": "Scene 1 Description",
       "shots": [
-        {{"start": 10.0, "end": 20.0, "speaker": "Host", "pan": "left", "punch": false, "desc": "Setup problem"}},
-        {{"start": 20.0, "end": 32.0, "speaker": "Guest", "pan": "right", "punch": true, "desc": "Shock reaction"}},
-        {{"start": 32.0, "end": 45.0, "speaker": "Host", "pan": "center", "punch": false, "desc": "Decision to proceed"}}
+        {{"start": 10.0, "end": 16.5, "speaker": "Host", "pan": "left", "punch": false, "desc": "Setup"}},
+        {{"start": 16.5, "end": 23.5, "speaker": "Guest", "pan": "right", "punch": true, "desc": "Reaction"}},
+        {{"start": 23.5, "end": 30.0, "speaker": "Host", "pan": "left", "punch": false, "desc": "Follow-up"}}
       ]
     }}
   ]
@@ -168,9 +168,9 @@ Respond ONLY with a valid JSON object matching this schema:
                 e_idx = text.rfind("}")
                 if s_idx != -1 and e_idx != -1:
                     data = json.loads(text[s_idx:e_idx + 1])
-                    if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 2:
-                        _log(f"✅ [ĐẠO DIỄN 2] AI đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch cho Part {part_index}!")
-                        sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=70.0)
+                    if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
+                        _log(f"✅ [ĐẠO DIỄN 2] AI đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
+                        sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
                         return {
                             "part_index": part_index,
                             "title": title,
@@ -179,8 +179,8 @@ Respond ONLY with a valid JSON object matching this schema:
             except Exception as e:
                 logger.warning(f"Lỗi parse Storyboard Spec JSON: {e}")
 
-        # Heuristic fallback: Tự động xây dựng 2-3 khối phân cảnh LIỀN MẠCH chuẩn Hollywood
-        _log(f"ℹ️ [ĐẠO DIỄN 2] Tự động chọn {target_scene_count} phân cảnh LIỀN MẠCH (~35s-45s/cảnh) không cắt vụn...")
+        # Heuristic fallback: Tự động xây dựng 4-5 khối phân cảnh LIỀN MẠCH (~20s/cảnh) chuẩn Hollywood
+        _log(f"ℹ️ [ĐẠO DIỄN 2] Tự động chọn {target_scene_count} phân cảnh LIỀN MẠCH (~20s/cảnh) không cắt vụn...")
         scenes = cls._build_heuristic_continuous_scenes(
             cues=part_cues,
             start_bound=start_bound,
@@ -188,7 +188,7 @@ Respond ONLY with a valid JSON object matching this schema:
             target_scene_count=target_scene_count,
             target_part_dur=target_part_duration
         )
-        sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=70.0)
+        sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=75.0)
         return {
             "part_index": part_index,
             "title": title,
@@ -201,11 +201,11 @@ Respond ONLY with a valid JSON object matching this schema:
         scenes: List[Dict[str, Any]],
         start_bound: float,
         end_bound: float,
-        min_dur: float = 70.0
+        min_dur: float = 75.0
     ) -> List[Dict[str, Any]]:
         """Chuẩn hóa và khóa cứng 100% tính liền mạch (Strict Continuity):
-        1. Bên trong mỗi cảnh: shot[k+1].start == shot[k].end (KHÔNG HỞ KHOẢNG TRỐNG NÀO).
-        2. Giữa các cảnh: Scene[i+1].start >= Scene[i].end + 2.0s (TRIỆT TIÊU 100% TRÙNG LẶP FOOTAGE).
+        1. Bên trong mỗi cảnh (~20s): shot[k+1].start == shot[k].end (KHÔNG HỞ KHOẢNG TRỐNG NÀO).
+        2. Giữa các cảnh: Scene[i+1].start >= Scene[i].end + 2.5s (TRIỆT TIÊU 100% TRÙNG LẶP FOOTAGE).
         3. Tổng thời lượng đảm bảo >= min_dur (luôn > 1 phút).
         """
         if not scenes:
@@ -219,10 +219,10 @@ Respond ONLY with a valid JSON object matching this schema:
             if not raw_shots:
                 continue
 
-            # Mốc bắt đầu cảnh này phải sau cảnh trước ít nhất 2s
+            # Mốc bắt đầu cảnh này phải sau cảnh trước ít nhất 2.5s
             first_sh_st = float(raw_shots[0].get("start", 0.0))
-            if first_sh_st < last_scene_end:
-                offset = (last_scene_end + 2.0) - first_sh_st
+            if sc_idx > 0 and first_sh_st < last_scene_end + 2.5:
+                offset = (last_scene_end + 2.5) - first_sh_st
             else:
                 offset = 0.0
 
@@ -248,7 +248,7 @@ Respond ONLY with a valid JSON object matching this schema:
             cleaned_scenes.append(sc_copy)
             last_scene_end = clean_shots[-1]["end"]
 
-        # Kiểm tra tổng thời lượng Part, nếu thiếu thì mở rộng nhẹ shot cuối của cảnh cuối
+        # Kiểm tra tổng thời lượng Part
         tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc["shots"])
         if tot < min_dur and cleaned_scenes:
             deficit = min_dur - tot
@@ -264,16 +264,21 @@ Respond ONLY with a valid JSON object matching this schema:
         cues: List[Dict[str, Any]],
         start_bound: float,
         end_bound: float,
-        target_scene_count: int = 2,
-        target_part_dur: float = 85.0
+        target_scene_count: int = 5,
+        target_part_dur: float = 95.0
     ) -> List[Dict[str, Any]]:
-        """Thuật toán tìm các Khối Diễn Biến Liền Mạch (Continuous Story Blocks):
-        - Mỗi cảnh dài ~35s - 45s liên tục, không bị gián đoạn hay ngắt vụn.
-        - Tìm phân đoạn có mật độ lời thoại cao nhất trong từng nửa cửa sổ Part.
-        - Chia đều thành các shot đổi góc camera trên dòng thời gian chạy thẳng.
+        """Thuật toán tìm 4-5 Khối Diễn Biến Liền Mạch (Continuous Story Blocks ~20s/cảnh):
+        - Mỗi cảnh dài ~18s - 22s liên tục, không bị gián đoạn hay ngắt vụn.
+        - Tìm phân đoạn 20s có mật độ lời thoại cao nhất trong từng phân vùng của Part.
+        - Chia 20s đó thành 2-3 shots nối tiếp liền kề trên dòng thời gian chạy thẳng.
         """
         window_len = max(60.0, end_bound - start_bound)
-        target_sc_dur = max(32.0, target_part_dur / float(target_scene_count))
+        if window_len < 130.0:
+            target_scene_count = 4
+        else:
+            target_scene_count = 5
+
+        target_sc_dur = max(18.5, min(22.0, target_part_dur / float(target_scene_count)))
 
         scenes = []
         current_min_start = start_bound
@@ -286,40 +291,47 @@ Respond ONLY with a valid JSON object matching this schema:
             if sc_idx == target_scene_count - 1:
                 w_en = end_bound
 
-            window_cues = [c for c in cues if c.get("start", 0.0) >= w_st and c.get("end", 0.0) <= w_en + 15.0]
+            window_cues = [c for c in cues if c.get("start", 0.0) >= w_st and c.get("end", 0.0) <= w_en + 8.0]
             if not window_cues:
                 best_st = w_st
-                best_en = min(w_en, w_st + target_sc_dur)
+                best_en = min(end_bound, w_st + target_sc_dur)
             else:
-                best_st = window_cues[0]["start"]
-                best_en = min(w_en, best_st + target_sc_dur)
-                best_score = -1.0
+                best_st = max(current_min_start, float(window_cues[0]["start"]))
+                best_en = min(end_bound, best_st + target_sc_dur)
+                best_score = -999.0
 
                 for i, c_st in enumerate(window_cues):
                     s_time = float(c_st.get("start", 0.0))
                     if s_time < current_min_start:
                         continue
+                    # Đảm bảo còn đủ thời gian cho 1 cảnh ~18s trước w_en
+                    if s_time > w_en - 17.5 and s_time > current_min_start:
+                        break
                     for j in range(i, len(window_cues)):
                         c_en = window_cues[j]
                         dur = float(c_en.get("end", 0.0)) - s_time
-                        if dur >= max(22.0, target_sc_dur - 8.0):
+                        if dur >= 16.5:
                             sub_c = window_cues[i:j+1]
                             words = sum(len(str(c.get("text", "")).split()) for c in sub_c)
                             diff = abs(dur - target_sc_dur)
-                            score = words - diff * 1.5
+                            score = words - diff * 2.5
                             if score > best_score:
                                 best_score = score
                                 best_st = s_time
                                 best_en = float(c_en.get("end", 0.0))
-                            if dur > target_sc_dur + 8.0:
+                            if dur > target_sc_dur + 4.5:
                                 break
 
-            sc_start = round(best_st, 2)
-            sc_end = round(max(sc_start + 28.0, best_en), 2)
-            sc_dur = sc_end - sc_start
+            sc_start = round(max(current_min_start, best_st), 2)
+            # Nếu sát cuối Part, lùi điểm bắt đầu một chút (nếu còn dư so với current_min_start) để đủ ~19s-20s
+            if end_bound - sc_start < 18.0 and end_bound - 19.5 >= current_min_start:
+                sc_start = round(end_bound - 19.5, 2)
 
-            # Chia khối liên tục [sc_start, sc_end] thành 3-5 shots nối tiếp nhau
-            num_shots = max(2, min(5, int(round(sc_dur / 9.0))))
+            sc_end = round(min(end_bound, max(sc_start + 18.0, min(sc_start + 23.0, best_en))), 2)
+            sc_dur = max(6.0, sc_end - sc_start)
+
+            # Chia khối liên tục ~20s [sc_start, sc_end] thành 3 shots nối tiếp liền kề (~6.5s - 7s/shot)
+            num_shots = 3 if sc_dur >= 17.5 else 2
             shot_dur = sc_dur / float(num_shots)
 
             shots = []
@@ -331,14 +343,14 @@ Respond ONLY with a valid JSON object matching this schema:
                     cur_sh_en = round(cur_sh_st + shot_dur, 2)
 
                 pan = "left" if (sh_i % 2 == 0) else "right"
-                punch = (sh_i == 1 or sh_i == num_shots - 1)
+                punch = (sh_i == 1)
 
                 shots.append({
                     "start": cur_sh_st,
                     "end": cur_sh_en,
                     "pan": pan,
                     "punch": punch,
-                    "desc": f"Continuous Narrative Beat {sh_i+1}"
+                    "desc": f"Scene {sc_idx+1} Beat {sh_i+1}"
                 })
                 # Shot sau bắt đầu đúng điểm kết thúc shot trước (ZERO GAPS!)
                 cur_sh_st = cur_sh_en
@@ -349,7 +361,7 @@ Respond ONLY with a valid JSON object matching this schema:
                 "shots": shots
             })
 
-            # Đảm bảo cảnh tiếp theo cách cảnh này tối thiểu 3 giây (ZERO OVERLAP!)
-            current_min_start = sc_end + 3.0
+            # Đảm bảo cảnh tiếp theo cách cảnh này tối thiểu 2.5 giây (ZERO OVERLAP!)
+            current_min_start = sc_end + 2.5
 
         return scenes

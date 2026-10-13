@@ -146,23 +146,27 @@ class PipelineOrchestrator:
         # -------------------------------------------------------------
         # BƯỚC 3 & 4: SẢN XUẤT TỪNG PART (ĐẠO DIỄN 2, 3 & ĐỘI NGŨ CREW)
         # -------------------------------------------------------------
+        prev_part_end_sec = 0.0
         for p_idx, p_info in enumerate(parts_list, start=1):
             _log("------------------------------------------------------------------")
             _log(f"🎬 [SẢN XUẤT] BẮT ĐẦU DỰNG {part_prefix} {p_idx}/{len(parts_list)}: {p_info.get('part_title', '')}")
             _log("------------------------------------------------------------------")
 
+            if prev_part_end_sec > 0.0 and float(p_info.get("start_sec", 0.0)) < prev_part_end_sec + 2.0:
+                p_info["start_sec"] = round(prev_part_end_sec + 2.0, 2)
+
             part_work_dir = os.path.join(work_dir, f"part_{p_idx}")
             os.makedirs(part_work_dir, exist_ok=True)
             final_part_path = os.path.join(output_dir, f"{part_prefix}_{p_idx}.mp4")
 
-            # 3.1. ĐẠO DIỄN 2: Lọc 2-3 phân cảnh LIỀN MẠCH (~35s - 45s/cảnh) không cắt vụn
+            # 3.1. ĐẠO DIỄN 2: Lọc 4-5 phân cảnh LIỀN MẠCH (~20s/cảnh) không cắt vụn
             storyboard = SceneRhythmDirectorAI.direct_part_scenes(
                 part_index=p_idx,
                 part_info=p_info,
                 cues=cues,
                 total_duration=total_dur,
-                target_scene_count=2,
-                target_part_duration=float(config.get("target_part_duration", 85.0)),
+                target_scene_count=5,
+                target_part_duration=float(config.get("target_part_duration", 95.0)),
                 config=config,
                 log_fn=_log
             )
@@ -177,6 +181,8 @@ class PipelineOrchestrator:
             )
 
             audited_scenes = audio_spec.get("audited_scenes", storyboard.get("scenes", []))
+            if audited_scenes and audited_scenes[-1].get("shots"):
+                prev_part_end_sec = max(prev_part_end_sec, float(audited_scenes[-1]["shots"][-1].get("end", 0.0)))
 
             # 4.1. NHÂN VIÊN 1: Visual Editor Engine
             # Render 9:16 Canvas Blur 2 đầu, video 1188px, speaker centering, punch zoom 1.18x, Motion Blur Whip xfade
