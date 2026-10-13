@@ -108,7 +108,8 @@ class PartDirectorAI:
         genre: str = "reality",
         master_title: str = "",
         config: Optional[Dict[str, Any]] = None,
-        log_fn: Optional[Callable[[str], None]] = None
+        log_fn: Optional[Callable[[str], None]] = None,
+        target_part_index: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Đạo diễn toàn diện trọn bộ series N Parts chuẩn công thức Hollywood 4-5 phân cảnh."""
         def _log(msg: str):
@@ -120,7 +121,8 @@ class PartDirectorAI:
                     pass
 
         config = config or {}
-        _log(f"🎬 [HOLLYWOOD DIRECTOR] Bắt đầu đạo diễn bộ video {part_count} Parts (Thể loại: {genre})...")
+        part_scope_msg = f"Part {target_part_index}" if target_part_index else f"{part_count} Parts"
+        _log(f"🎬 [HOLLYWOOD DIRECTOR] Bắt đầu đạo diễn bộ video {part_scope_msg} (Thể loại: {genre})...")
 
         # 1. Đạo diễn 1: Lập Master Series Plan
         master_plan = MacroDirectorAI.plan_macro_series(
@@ -134,6 +136,11 @@ class PartDirectorAI:
         )
 
         parts_specs = master_plan.get("parts", [])
+        if target_part_index is not None:
+            parts_specs = [p for p in parts_specs if int(p.get("part_index", 0)) == target_part_index]
+            if not parts_specs:
+                parts_specs = master_plan.get("parts", [])[:1]
+
         verified_parts = []
 
         genre_profile = cls.GENRE_PROFILES.get(genre, cls.GENRE_PROFILES["reality"])

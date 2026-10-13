@@ -136,6 +136,12 @@ class PipelineOrchestrator:
 
         series_title = master_plan.get("series_title", video_title)
         parts_list = master_plan.get("parts", [])
+        target_p_idx = config.get("target_part_index")
+        if target_p_idx is not None:
+            parts_list = [p for p in parts_list if int(p.get("part_index", 0)) == int(target_p_idx)]
+            if not parts_list:
+                parts_list = master_plan.get("parts", [])[:1]
+
         _log(f"👑 [ĐẠO DIỄN 1] Hoàn thành phân bổ {len(parts_list)} Parts: '{series_title}'")
 
         exported_parts = []

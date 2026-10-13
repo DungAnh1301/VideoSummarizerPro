@@ -147,24 +147,26 @@ Respond ONLY with a valid JSON object matching this schema:
   ]
 }}
 """
-        raw_output = cls._call_llm(system_prompt, user_prompt, config)
-        if raw_output:
-            try:
-                # Trích xuất JSON sạch
-                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_output, re.IGNORECASE)
-                text = m.group(1).strip() if m else raw_output.strip()
-                s_idx = text.find("{")
-                e_idx = text.rfind("}")
-                if s_idx != -1 and e_idx != -1:
-                    plan = json.loads(text[s_idx:e_idx + 1])
-                    if isinstance(plan, dict) and plan.get("parts") and len(plan["parts"]) == part_count:
-                        _log(f"✅ [ĐẠO DIỄN 1] Kế hoạch vĩ mô AI đã phê duyệt thành công!")
-                        return plan
-            except Exception as e:
-                logger.warning(f"Lỗi parse Master Plan JSON: {e}")
+        use_cloud_llm = bool(config.get("use_cloud_llm_macro", False))
+        if use_cloud_llm:
+            raw_output = cls._call_llm(system_prompt, user_prompt, config)
+            if raw_output:
+                try:
+                    # Trích xuất JSON sạch
+                    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_output, re.IGNORECASE)
+                    text = m.group(1).strip() if m else raw_output.strip()
+                    s_idx = text.find("{")
+                    e_idx = text.rfind("}")
+                    if s_idx != -1 and e_idx != -1:
+                        plan = json.loads(text[s_idx:e_idx + 1])
+                        if isinstance(plan, dict) and plan.get("parts") and len(plan["parts"]) == part_count:
+                            _log(f"✅ [ĐẠO DIỄN 1] Kế hoạch vĩ mô AI Cloud đã phê duyệt thành công!")
+                            return plan
+                except Exception as e:
+                    logger.warning(f"Lỗi parse Master Plan JSON: {e}")
 
-        # Heuristic fallback: Chia đều timeline thành part_count đoạn tuyến tính
-        _log(f"ℹ️ [ĐẠO DIỄN 1] Áp dụng phân bổ tuyến tính chuẩn xác cho {part_count} Parts...")
+        # Phân bổ vĩ mô tuyến tính chuẩn xác tốc độ cao (0.001s)
+        _log(f"⚡ [ĐẠO DIỄN 1] Phân bổ vĩ mô tuyến tính chuẩn xác cho {part_count} Parts...")
         part_step = total_duration / float(part_count)
         parts = []
         for i in range(part_count):

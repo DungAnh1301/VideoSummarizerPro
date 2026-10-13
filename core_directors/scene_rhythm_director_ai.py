@@ -159,28 +159,30 @@ Respond ONLY with a valid JSON object matching this schema:
   ]
 }}
 """
-        raw_output = cls._call_llm(system_prompt, user_prompt, config)
-        if raw_output:
-            try:
-                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_output, re.IGNORECASE)
-                text = m.group(1).strip() if m else raw_output.strip()
-                s_idx = text.find("{")
-                e_idx = text.rfind("}")
-                if s_idx != -1 and e_idx != -1:
-                    data = json.loads(text[s_idx:e_idx + 1])
-                    if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
-                        _log(f"✅ [ĐẠO DIỄN 2] AI đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
-                        sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
-                        return {
-                            "part_index": part_index,
-                            "title": title,
-                            "scenes": sanitized
-                        }
-            except Exception as e:
-                logger.warning(f"Lỗi parse Storyboard Spec JSON: {e}")
+        use_cloud_llm = bool(config.get("use_cloud_llm_storyboard", False))
+        if use_cloud_llm:
+            raw_output = cls._call_llm(system_prompt, user_prompt, config)
+            if raw_output:
+                try:
+                    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_output, re.IGNORECASE)
+                    text = m.group(1).strip() if m else raw_output.strip()
+                    s_idx = text.find("{")
+                    e_idx = text.rfind("}")
+                    if s_idx != -1 and e_idx != -1:
+                        data = json.loads(text[s_idx:e_idx + 1])
+                        if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
+                            _log(f"✅ [ĐẠO DIỄN 2] AI Cloud đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
+                            sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
+                            return {
+                                "part_index": part_index,
+                                "title": title,
+                                "scenes": sanitized
+                            }
+                except Exception as e:
+                    logger.warning(f"Lỗi parse Storyboard Spec JSON: {e}")
 
-        # Heuristic fallback: Tự động xây dựng 4-5 khối phân cảnh LIỀN MẠCH (~20s/cảnh) chuẩn Hollywood
-        _log(f"ℹ️ [ĐẠO DIỄN 2] Tự động chọn {target_scene_count} phân cảnh LIỀN MẠCH (~20s/cảnh) không cắt vụn...")
+        # Đạo Diễn Nội Dung Cốt Truyện Bản Địa Tốc Độ Cao (Complete Thought Narrative Engine - 0.01s)
+        _log(f"⚡ [ĐẠO DIỄN 2] Phân tích cốt truyện trọn vẹn ý tứ (Zero Mid-Sentence Cut) cho Part {part_index}...")
         scenes = cls._build_heuristic_continuous_scenes(
             cues=part_cues,
             start_bound=start_bound,
