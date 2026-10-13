@@ -213,6 +213,7 @@ Respond ONLY with a valid JSON object matching this schema:
 
         cleaned_scenes = []
         last_scene_end = start_bound
+        camera_roles_cycle = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
 
         for sc_idx, sc in enumerate(scenes):
             raw_shots = sc.get("shots", [])
@@ -233,11 +234,15 @@ Respond ONLY with a valid JSON object matching this schema:
                 orig_dur = max(3.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
                 sh_end = cur_shot_st + orig_dur
 
+                role = str(sh.get("camera_role") or camera_roles_cycle[sh_k % len(camera_roles_cycle)])
+                pan_default = "center" if role == "wide_zoom_out" else ("left" if sh_k % 2 == 0 else "right")
+
                 item = dict(sh)
                 item["start"] = round(cur_shot_st, 2)
                 item["end"] = round(sh_end, 2)
-                item["pan"] = str(sh.get("pan", "left" if sh_k % 2 == 0 else "right")).lower().strip()
-                item["punch"] = bool(sh.get("punch", False) or sh_k == 1)
+                item["pan"] = str(sh.get("pan", pan_default)).lower().strip()
+                item["punch"] = bool(sh.get("punch", False) or role == "closeup_zoom_in")
+                item["camera_role"] = role
 
                 clean_shots.append(item)
                 # Shot kế tiếp bắt đầu CHÍNH XÁC tại điểm kết thúc của shot này
@@ -259,6 +264,85 @@ Respond ONLY with a valid JSON object matching this schema:
         return cleaned_scenes
 
     @classmethod
+    def _split_scene_by_dialogue_turns(
+        cls,
+        cues: List[Dict[str, Any]],
+        sc_start: float,
+        sc_end: float,
+        sc_idx: int
+    ) -> List[Dict[str, Any]]:
+        """Chia một phân cảnh liền mạch ~20s [sc_start, sc_end] thành 3-4 góc máy (shots)
+        khớp chính xác với nhịp ngắt câu / đổi người nói ('>>') trong phụ đề:
+        - Shot 1: Wide / Zoom Out (hoặc Speaker Left) mở bối cảnh
+        - Shot 2: Speaker Shift (Cận trung người đối thoại)
+        - Shot 3: Emotion Zoom In Close-Up (Phóng cận mặt bắt biểu cảm cao trào)
+        - Shot 4: Reaction / Speaker Shift (Phản ứng đối phương / Zoom Out kết cảnh)
+        Đảm bảo 100% liền mạch: shot[k+1].start == shot[k].end.
+        """
+        sc_dur = max(6.0, sc_end - sc_start)
+        num_shots = 4 if sc_dur >= 19.0 else 3
+        ideal_step = sc_dur / float(num_shots)
+
+        # Tìm các điểm ngắt câu / đổi người nói ('>>') trong khoảng [sc_start + 3.2, sc_end - 3.2]
+        scene_cues = [
+            c for c in cues
+            if float(c.get("start", 0.0)) > sc_start + 2.8 and float(c.get("start", 0.0)) < sc_end - 2.8
+        ]
+
+        cut_points = [sc_start]
+        for k in range(1, num_shots):
+            target_t = sc_start + k * ideal_step
+            best_t = target_t
+            best_cost = 999.0
+            for c in scene_cues:
+                c_st = float(c.get("start", 0.0))
+                if c_st <= cut_points[-1] + 3.2 or c_st >= sc_end - 3.0:
+                    continue
+                dist = abs(c_st - target_t)
+                if dist <= 2.4:
+                    txt = str(c.get("text", "")).strip()
+                    # Ưu tiên cao cho điểm đổi người nói '>>'
+                    speaker_bonus = -0.9 if txt.startswith(">>") else 0.0
+                    cost = dist + speaker_bonus
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_t = c_st
+            cut_points.append(round(best_t, 2))
+        cut_points.append(round(sc_end, 2))
+
+        roles_4 = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
+        roles_3 = ["wide_zoom_out", "closeup_zoom_in", "speaker_right"]
+        roles = roles_4 if num_shots == 4 else roles_3
+
+        shots = []
+        for sh_i in range(len(cut_points) - 1):
+            st = cut_points[sh_i]
+            en = cut_points[sh_i + 1]
+            role = roles[sh_i % len(roles)]
+            if role == "wide_zoom_out":
+                pan = "center"
+                punch = False
+            elif role == "speaker_left":
+                pan = "left"
+                punch = False
+            elif role == "closeup_zoom_in":
+                pan = "right" if (sc_idx % 2 == 0) else "left"
+                punch = True
+            else:
+                pan = "right"
+                punch = False
+
+            shots.append({
+                "start": st,
+                "end": en,
+                "pan": pan,
+                "punch": punch,
+                "camera_role": role,
+                "desc": f"Scene {sc_idx+1} Shot {sh_i+1} ({role})"
+            })
+        return shots
+
+    @classmethod
     def _build_heuristic_continuous_scenes(
         cls,
         cues: List[Dict[str, Any]],
@@ -270,7 +354,7 @@ Respond ONLY with a valid JSON object matching this schema:
         """Thuật toán tìm 4-5 Khối Diễn Biến Liền Mạch (Continuous Story Blocks ~20s/cảnh):
         - Mỗi cảnh dài ~18s - 22s liên tục, không bị gián đoạn hay ngắt vụn.
         - Tìm phân đoạn 20s có mật độ lời thoại cao nhất trong từng phân vùng của Part.
-        - Chia 20s đó thành 2-3 shots nối tiếp liền kề trên dòng thời gian chạy thẳng.
+        - Chia 20s đó thành 3-4 shots theo đúng nhịp đổi người nói (Wide Zoom Out -> Speaker Shift -> Close-Up Zoom In -> Reaction).
         """
         window_len = max(60.0, end_bound - start_bound)
         if window_len < 130.0:
@@ -323,37 +407,12 @@ Respond ONLY with a valid JSON object matching this schema:
                                 break
 
             sc_start = round(max(current_min_start, best_st), 2)
-            # Nếu sát cuối Part, lùi điểm bắt đầu một chút (nếu còn dư so với current_min_start) để đủ ~19s-20s
             if end_bound - sc_start < 18.0 and end_bound - 19.5 >= current_min_start:
                 sc_start = round(end_bound - 19.5, 2)
 
             sc_end = round(min(end_bound, max(sc_start + 18.0, min(sc_start + 23.0, best_en))), 2)
-            sc_dur = max(6.0, sc_end - sc_start)
 
-            # Chia khối liên tục ~20s [sc_start, sc_end] thành 3 shots nối tiếp liền kề (~6.5s - 7s/shot)
-            num_shots = 3 if sc_dur >= 17.5 else 2
-            shot_dur = sc_dur / float(num_shots)
-
-            shots = []
-            cur_sh_st = sc_start
-            for sh_i in range(num_shots):
-                if sh_i == num_shots - 1:
-                    cur_sh_en = sc_end
-                else:
-                    cur_sh_en = round(cur_sh_st + shot_dur, 2)
-
-                pan = "left" if (sh_i % 2 == 0) else "right"
-                punch = (sh_i == 1)
-
-                shots.append({
-                    "start": cur_sh_st,
-                    "end": cur_sh_en,
-                    "pan": pan,
-                    "punch": punch,
-                    "desc": f"Scene {sc_idx+1} Beat {sh_i+1}"
-                })
-                # Shot sau bắt đầu đúng điểm kết thúc shot trước (ZERO GAPS!)
-                cur_sh_st = cur_sh_en
+            shots = cls._split_scene_by_dialogue_turns(cues, sc_start, sc_end, sc_idx)
 
             scenes.append({
                 "scene_id": sc_idx + 1,
