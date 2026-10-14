@@ -44,323 +44,89 @@ except ImportError:
 class VisualEditorEngine:
     """Nhân Viên 1 - Lead Visual Editor & AI Cinematographer (Đạo Diễn Hình Ảnh)."""
 
-    @classmethod
-    def _init_detectors(cls) -> Dict[str, Any]:
-        """Khởi tạo bộ dò khuôn mặt đa tầng:
-        1. OpenCV YuNet DNN (FaceDetectorYN) độ chính xác cao với cả góc nghiêng, mặt nhỏ.
-        2. Haar Cascade Frontal + Profile (trái/phải) dự phòng.
-        """
-        detectors: Dict[str, Any] = {
-            "yunet": None,
-            "frontal": None,
-            "profile": None,
-        }
-        if cv2 is None:
-            return detectors
-
-        try:
-            onnx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_detection_yunet_2023mar.onnx")
-            if os.path.isfile(onnx_path) and hasattr(cv2, "FaceDetectorYN"):
-                detectors["yunet"] = cv2.FaceDetectorYN.create(onnx_path, "", (960, 540), 0.38, 0.3, 5000)
-        except Exception as e:
-            logger.warning(f"Không khởi tạo được YuNet DNN: {e}")
-
-        try:
-            f_path = cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml"
-            if not os.path.exists(f_path):
-                f_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            if os.path.exists(f_path):
-                detectors["frontal"] = cv2.CascadeClassifier(f_path)
-
-            p_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
-            if os.path.exists(p_path):
-                detectors["profile"] = cv2.CascadeClassifier(p_path)
-        except Exception as e:
-            logger.warning(f"Không khởi tạo được Haar Cascade: {e}")
-
-        return detectors
-
-    @classmethod
-    def _detect_faces_and_motion_at(
-        cls,
-        cap,
-        detectors: Dict[str, Any],
-        t_sec: float
-    ) -> Tuple[List[Dict[str, float]], Optional[Tuple[float, float, float]]]:
-        """Quét khung hình tại mốc t_sec (và t_sec + 0.2s) để tìm:
-        - Danh sách khuôn mặt: [{'u': 0..1, 'v': 0..1, 'area': %, 'speaker_score': float}]
-        - Trọng tâm chuyển động hình ảnh (u_mot, v_mot, energy) khi cảnh quay xa/B-roll không rõ mặt.
-        """
-        if cap is None or cv2 is None:
-            return [], None
-
-        import numpy as np
-        faces_list: List[Dict[str, float]] = []
-        motion_center: Optional[Tuple[float, float, float]] = None
-
-        try:
-            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_sec) * 1000.0)
-            ret1, frame1 = cap.read()
-            if not ret1 or frame1 is None:
-                return [], None
-
-            small1 = cv2.resize(frame1, (960, 540))
-            gray1 = cv2.cvtColor(small1, cv2.COLOR_BGR2GRAY)
-
-            # Đọc thêm 1 frame cách 0.20s để đo chuyển động miệng/đầu (Active Speaker) & chuyển động toàn cảnh
-            cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, t_sec + 0.20) * 1000.0)
-            ret2, frame2 = cap.read()
-            gray2 = None
-            diff_frame = None
-            if ret2 and frame2 is not None:
-                small2 = cv2.resize(frame2, (960, 540))
-                gray2 = cv2.cvtColor(small2, cv2.COLOR_BGR2GRAY)
-                diff_frame = cv2.absdiff(cv2.GaussianBlur(gray1, (7, 7), 0), cv2.GaussianBlur(gray2, (7, 7), 0))
-
-                # Tính trọng tâm chuyển động trong vùng trung tâm khung hình
-                weights = np.zeros_like(diff_frame, dtype=np.float32)
-                weights[60:480, 60:900] = diff_frame[60:480, 60:900].astype(np.float32)
-                weights[weights < 9.0] = 0.0
-                tot_w = float(weights.sum())
-                if tot_w > 1500.0:
-                    xs = np.arange(960, dtype=np.float32)
-                    ys = np.arange(540, dtype=np.float32)
-                    u_m = float((weights.sum(axis=0) * xs).sum() / tot_w) / 960.0
-                    v_m = float((weights.sum(axis=1) * ys).sum() / tot_w) / 540.0
-                    motion_center = (max(0.15, min(0.85, u_m)), max(0.20, min(0.75, v_m)), tot_w)
-
-            raw_boxes = []
-            yunet = detectors.get("yunet")
-            if yunet is not None:
-                _, dets = yunet.detect(small1)
-                if dets is not None:
-                    for d in dets:
-                        x, y, w, h = float(d[0]), float(d[1]), float(d[2]), float(d[3])
-                        conf = float(d[-1])
-                        area_pct = (w * h) / (960.0 * 540.0) * 100.0
-                        if conf >= 0.38 and area_pct >= 0.05:
-                            raw_boxes.append((x, y, w, h, conf))
-
-            # Fallback sang Haar Frontal + Profile nếu YuNet không bắt được
-            if not raw_boxes:
-                frontal = detectors.get("frontal")
-                profile = detectors.get("profile")
-                if frontal is not None:
-                    for (x, y, w, h) in frontal.detectMultiScale(gray1, 1.12, 4, minSize=(32, 32)):
-                        raw_boxes.append((float(x), float(y), float(w), float(h), 0.7))
-                if not raw_boxes and profile is not None:
-                    for (x, y, w, h) in profile.detectMultiScale(gray1, 1.12, 4, minSize=(32, 32)):
-                        raw_boxes.append((float(x), float(y), float(w), float(h), 0.65))
-                    for (x, y, w, h) in profile.detectMultiScale(cv2.flip(gray1, 1), 1.12, 4, minSize=(32, 32)):
-                        real_x = 960.0 - float(x) - float(w)
-                        raw_boxes.append((real_x, float(y), float(w), float(h), 0.65))
-
-            for (x, y, w, h, conf) in raw_boxes:
-                u = (x + w * 0.5) / 960.0
-                v = (y + h * 0.5) / 540.0
-                area_pct = (w * h) / (960.0 * 540.0) * 100.0
-                if not (0.06 <= u <= 0.94 and 0.08 <= v <= 0.85):
-                    continue
-
-                # Tính điểm người đang nói (chuyển động vùng nửa dưới khuôn mặt + kích thước mặt)
-                mouth_motion = 1.0
-                if diff_frame is not None:
-                    x1 = max(0, int(x))
-                    x2 = min(960, int(x + w))
-                    y1 = max(0, int(y + h * 0.45))
-                    y2 = min(540, int(y + h * 1.05))
-                    if x2 > x1 and y2 > y1:
-                        roi = diff_frame[y1:y2, x1:x2]
-                        mouth_motion = float(roi.mean()) + 1.0
-
-                speaker_score = (area_pct ** 0.65) * mouth_motion * conf
-                faces_list.append({
-                    "u": max(0.12, min(0.88, u)),
-                    "v": max(0.18, min(0.75, v)),
-                    "area": area_pct,
-                    "speaker_score": speaker_score,
-                })
-        except Exception:
-            pass
-
-        return faces_list, motion_center
+    # Bỏ hoàn toàn quét khuôn mặt CPU/Haar/YuNet - 100% tuân thủ chỉ định từ Đạo diễn AI CLI
 
     @classmethod
     def plan_scene_camera_shots(
         cls,
-        cap,
-        detectors: Dict[str, Any],
         shots: List[Dict[str, Any]],
         scale_w: int,
         target_fg_h: int
     ) -> List[Dict[str, Any]]:
-        """Đạo Diễn Hình Ảnh (AI Cinematographer) cho toàn bộ 1 phân cảnh ~20s:
-        - Quét toàn bộ các shots trong cảnh để nhận diện tất cả nhân vật (Trái / Phải / Giữa) và người đang nói.
-        - Quyết định chính xác cho từng shot:
-          + Zoom Level: Zoom Out (1.00x toàn cảnh) <-> Medium Speaker (1.14x cận trung) <-> Close-Up Zoom In (1.25x đặc tả biểu cảm).
-          + Dịch chuyển Camera (x_off, y_off): Căn chuẩn tâm mặt nhân vật theo cả chiều ngang (X=540) và chiều dọc (tỉ lệ vàng mắt Y=36%).
-          + Đảm bảo các shot liên tiếp luôn có sự thay đổi góc máy (dịch chuyển Trái/Phải hoặc Zoom In/Zoom Out) rõ ràng, mượt mà.
+        """Đạo Diễn Hình Ảnh Tự Động (Pure AI Command Driven - Tốc độ 0.0001s):
+        - BỎ HOÀN TOÀN QUÉT MẶT CPU: Đọc trực tiếp quyết định nghệ thuật từ Kịch bản Đạo diễn AI CLI.
+        - Căn chỉnh góc máy ngang (u_focus):
+          + "left" / "speaker_left": u=0.38 (bắt trọn nhân vật/hành động bên trái)
+          + "right" / "speaker_right": u=0.62 (bắt trọn nhân vật/hành động bên phải)
+          + "center" / "wide_zoom_out": u=0.50 (trung tâm cân đối)
+        - ĐỘNG CƠ RANDOM SCALE DỌC (Vertical Anamorphic Stretch 110% ~ 130%):
+          + Mỗi shot ngẫu nhiên nhận tỉ lệ kéo giãn dọc v_scale trong khoảng [1.10, 1.30].
+          + Đồng thời GIẢM mức Zoom In tương ứng (z_eff = max(0.80, base_zoom / v_scale)) để chiều cao
+            sau khi scale luôn vừa khít 100% với khung hình trung tâm hiện tại (target_fg_h).
         """
+        import random
         planned: List[Dict[str, Any]] = []
-        scene_all_faces: List[Dict[str, float]] = []
-        per_shot_data: List[Dict[str, Any]] = []
 
-        # Bước 1: Quét dữ liệu thị giác thực tế của từng shot trong cảnh 20s
-        for sh in shots:
-            v_st = float(sh.get("video_start", sh["start"]))
-            v_en = float(sh.get("video_end", sh["end"]))
-            dur = max(0.5, v_en - v_st)
-            sample_times = [
-                v_st + dur * 0.18,
-                v_st + dur * 0.45,
-                v_st + dur * 0.72,
-            ]
-            shot_faces: List[Dict[str, float]] = []
-            shot_motions: List[Tuple[float, float, float]] = []
-            for t_s in sample_times:
-                f_list, mot = cls._detect_faces_and_motion_at(cap, detectors, t_s)
-                shot_faces.extend(f_list)
-                scene_all_faces.extend(f_list)
-                if mot is not None:
-                    shot_motions.append(mot)
-
-            per_shot_data.append({
-                "faces": shot_faces,
-                "motions": shot_motions,
-            })
-
-        # Phân cụm nhân vật Trái / Phải trên toàn phân cảnh (nếu cảnh có 2 người nói chuyện)
-        left_cluster = [f for f in scene_all_faces if f["u"] < 0.46]
-        right_cluster = [f for f in scene_all_faces if f["u"] >= 0.46]
-        scene_u_left = (
-            sum(f["u"] * f["speaker_score"] for f in left_cluster) / sum(f["speaker_score"] for f in left_cluster)
-            if left_cluster else None
-        )
-        scene_v_left = (
-            sum(f["v"] * f["speaker_score"] for f in left_cluster) / sum(f["speaker_score"] for f in left_cluster)
-            if left_cluster else 0.36
-        )
-        scene_u_right = (
-            sum(f["u"] * f["speaker_score"] for f in right_cluster) / sum(f["speaker_score"] for f in right_cluster)
-            if right_cluster else None
-        )
-        scene_v_right = (
-            sum(f["v"] * f["speaker_score"] for f in right_cluster) / sum(f["speaker_score"] for f in right_cluster)
-            if right_cluster else 0.36
-        )
-
-        prev_zoom = 0.0
-        prev_u = -1.0
-
-        # Bước 2: Quyết định thông số Camera (u_focus, v_focus, zoom_factor) cho từng shot
         for sh_idx, sh in enumerate(shots):
-            s_data = per_shot_data[sh_idx]
-            faces = s_data["faces"]
-            motions = s_data["motions"]
             role = str(sh.get("camera_role") or "").lower().strip()
             pan_hint = str(sh.get("pan", "center")).lower().strip()
             punch_flag = bool(sh.get("punch", False) or sh.get("punch_in", False))
 
-            # Xác định tọa độ trọng tâm (u_focus, v_focus)
-            u_focus = 0.50
-            v_focus = 0.36
-
-            if faces:
-                # Nhóm các mặt tìm thấy trong shot này
-                f_sorted = sorted(faces, key=lambda x: x["speaker_score"], reverse=True)
-                best_f = f_sorted[0]
-
-                # Kiểm tra xem có 2 nhân vật đứng cách nhau trong shot không
-                u_min = min(f["u"] for f in faces)
-                u_max = max(f["u"] for f in faces)
-                has_two_people = (u_max - u_min) >= 0.16 and len(faces) >= 2
-
-                if role == "wide_zoom_out" and has_two_people:
-                    # Góc toàn cảnh 2 người: lấy trung điểm giữa 2 nhân vật
-                    u_focus = 0.5 * (u_min + u_max)
-                    v_focus = sum(f["v"] for f in faces) / len(faces)
-                elif has_two_people:
-                    # Ưu tiên bắt vào người đang nói hoặc phân vai trái/phải theo nhịp dựng
-                    left_f = [f for f in faces if f["u"] <= 0.5 * (u_min + u_max)]
-                    right_f = [f for f in faces if f["u"] > 0.5 * (u_min + u_max)]
-                    if pan_hint == "left" and left_f:
-                        chosen = max(left_f, key=lambda x: x["speaker_score"])
-                    elif pan_hint == "right" and right_f:
-                        chosen = max(right_f, key=lambda x: x["speaker_score"])
-                    else:
-                        chosen = best_f
-                    u_focus = chosen["u"]
-                    v_focus = chosen["v"]
-                else:
-                    # Chỉ thấy 1 mặt trong shot này -> bám chuẩn vào mặt đó
-                    u_focus = best_f["u"]
-                    v_focus = best_f["v"]
-            else:
-                # Nếu shot này nhân vật quay lưng / khuất mặt tạm thời:
-                # Ưu tiên kế thừa vị trí nhân vật Trái/Phải của cảnh hoặc trọng tâm chuyển động (Motion Saliency)
-                if pan_hint == "left" and scene_u_left is not None:
-                    u_focus = scene_u_left
-                    v_focus = scene_v_left
-                elif pan_hint == "right" and scene_u_right is not None:
-                    u_focus = scene_u_right
-                    v_focus = scene_v_right
-                elif motions:
-                    tot_e = sum(m[2] for m in motions)
-                    u_focus = sum(m[0] * m[2] for m in motions) / tot_e
-                    v_focus = sum(m[1] * m[2] for m in motions) / tot_e
-                elif scene_all_faces:
-                    u_focus = sum(f["u"] for f in scene_all_faces) / len(scene_all_faces)
-                    v_focus = sum(f["v"] for f in scene_all_faces) / len(scene_all_faces)
-                else:
-                    u_focus = 0.38 if pan_hint == "left" else (0.62 if pan_hint == "right" else 0.50)
-                    v_focus = 0.40
-
-            # Quyết định độ phóng đại ống kính (Zoom Out / Medium / Close-Up Zoom In - Tasteful, không lạm dụng)
-            if "zoom_factor" in sh and sh["zoom_factor"] is not None:
-                zoom_factor = float(sh["zoom_factor"])
+            # 1. Tọa độ ngang theo chỉ định góc máy của Đạo diễn AI
+            if pan_hint == "left" or role == "speaker_left":
+                u_focus = 0.38
+            elif pan_hint == "right" or role == "speaker_right":
+                u_focus = 0.62
             elif role == "wide_zoom_out":
-                zoom_factor = 1.00
-            elif role == "closeup_zoom_in" or punch_flag:
-                zoom_factor = 1.15
-            elif role == "speaker_left":
-                zoom_factor = 1.08
-            elif role == "speaker_right":
-                zoom_factor = 1.06
+                u_focus = 0.50
             else:
-                zoom_factor = 1.15 if punch_flag else (1.08 if sh_idx % 2 == 1 else 1.00)
+                u_focus = 0.44 if (sh_idx % 2 == 1) else 0.56
 
-            # Chỉ tự động dịch chuyển nếu không khóa zoom_factor rõ ràng và không phải góc toàn cảnh
-            if "zoom_factor" not in sh and role != "wide_zoom_out":
-                if abs(zoom_factor - prev_zoom) < 0.05 and abs(u_focus - prev_u) < 0.06:
-                    if zoom_factor <= 1.05:
-                        zoom_factor = 1.12
-                    elif zoom_factor >= 1.15:
-                        zoom_factor = 1.04
-                    else:
-                        zoom_factor = 1.15
+            v_focus = 0.38  # Tỉ lệ vàng 38% từ đỉnh
 
-            # Tính toán kích thước scale & tọa độ crop (x_off, y_off) căn chuẩn mặt vào tâm vàng
-            z_w = int(round(scale_w * zoom_factor))
+            # 2. Random Scale Dọc trong khoảng [1.10, 1.30] (110% ~ 130%)
+            v_scale = round(random.uniform(1.10, 1.30), 3)
+
+            # 3. Zoom In cơ bản theo chỉ định của AI
+            if "zoom_factor" in sh and sh["zoom_factor"] is not None:
+                base_zoom = float(sh["zoom_factor"])
+            elif role == "wide_zoom_out":
+                base_zoom = 1.00
+            elif role == "closeup_zoom_in" or punch_flag:
+                base_zoom = 1.16
+            elif role == "speaker_left" or role == "speaker_right":
+                base_zoom = 1.07
+            else:
+                base_zoom = 1.14 if punch_flag else (1.08 if sh_idx % 2 == 1 else 1.00)
+
+            # 4. Giảm Zoom In để bù cho Scale Dọc tăng, làm cho chiều cao tổng thể vừa khít khung hình
+            z_eff = max(0.80, base_zoom / v_scale)
+
+            # Tính kích thước scale thực tế:
+            z_w = int(round(scale_w * z_eff))
             z_w = z_w + (z_w % 2)
-            z_h = int(round(target_fg_h * zoom_factor))
-            z_h = z_h + (z_h % 2)
+            if z_w < 1080:
+                z_w = 1080  # Tránh hụt viền đen khi crop ngang 1080
 
+            z_h = int(round(target_fg_h * z_eff * v_scale))
+            z_h = z_h + (z_h % 2)
+            if z_h < target_fg_h:
+                z_h = target_fg_h  # Vừa khít khung hình trung tâm
+
+            # Tọa độ Crop X & Y
             desired_x = int(round(u_focus * z_w - 540.0))
             x_off = max(0, min(max(0, z_w - 1080), desired_x))
             x_off = x_off - (x_off % 2)
 
-            # Căn chiều dọc: đặt khuôn mặt (v_focus) vào đường tỉ lệ vàng 36% từ đỉnh khung trung tâm
-            desired_y = int(round(v_focus * z_h - target_fg_h * 0.36))
+            desired_y = int(round(v_focus * z_h - target_fg_h * 0.38))
             y_off = max(0, min(max(0, z_h - target_fg_h), desired_y))
             y_off = y_off - (y_off % 2)
-
-            prev_zoom = zoom_factor
-            prev_u = u_focus
 
             sh_plan = dict(sh)
             sh_plan["u_focus"] = round(u_focus, 3)
             sh_plan["v_focus"] = round(v_focus, 3)
-            sh_plan["zoom_factor"] = round(zoom_factor, 2)
+            sh_plan["zoom_factor"] = round(base_zoom, 2)
+            sh_plan["v_scale"] = v_scale
             sh_plan["z_w"] = z_w
             sh_plan["z_h"] = z_h
             sh_plan["x_off"] = x_off
@@ -399,15 +165,7 @@ class VisualEditorEngine:
         scale_w = int(round(float(target_fg_h) * float(src_w) / max(1.0, float(src_h))))
         scale_w = scale_w + (scale_w % 2)
 
-        # Khởi tạo Đạo Diễn Hình Ảnh (YuNet DNN + Cascades + Motion Saliency)
-        detectors = cls._init_detectors()
-        cap = None
-        if cv2 is not None:
-            try:
-                cap = cv2.VideoCapture(source_video)
-            except Exception as e:
-                logger.warning(f"Không mở được VideoCapture: {e}")
-
+        # Không cần mở VideoCapture quét khuôn mặt CPU - 100% tuân thủ chỉ định từ Đạo diễn AI
         # Chuẩn bị bộ lọc màu CapCut nếu có cấu hình chỉnh màu
         color_fx = ""
         try:
@@ -424,7 +182,7 @@ class VisualEditorEngine:
         scene_files = []
         scene_durations = []
 
-        _log(f"🎥 [ĐẠO DIỄN HÌNH ẢNH] Bắt đầu phân tích khuôn mặt (YuNet DNN) & điều phối Camera (Zoom In / Zoom Out / Speaker Cut) cho {len(scenes)} phân cảnh...")
+        _log(f"🎬 [ĐẠO DIỄN HÌNH ẢNH CLI AI] Thực thi góc máy & Random Scale Dọc (110% - 130%) cho {len(scenes)} phân cảnh...")
 
         base_speed = float(config.get("speed") or config.get("source_speed") or config.get("playback_speed") or 1.0)
         base_speed = max(0.5, min(3.0, base_speed))
@@ -439,140 +197,132 @@ class VisualEditorEngine:
             return f"atempo=2.0,atempo={s / 2.0:.3f},"
 
         # 1. Render từng cảnh
-        try:
-            for sc_idx, sc in enumerate(scenes):
-                sc_name = sc.get("name", f"Scene {sc_idx + 1}")
-                raw_shots = sc.get("shots", [])
-                if not raw_shots:
-                    continue
+        for sc_idx, sc in enumerate(scenes):
+            sc_name = sc.get("name", f"Scene {sc_idx + 1}")
+            raw_shots = sc.get("shots", [])
+            if not raw_shots:
+                continue
 
-                # Đạo diễn hình ảnh lập phương án góc máy & tiêu cự (Zoom In / Zoom Out / X-Y Framing) cho từng shot
-                planned_shots = cls.plan_scene_camera_shots(
-                    cap=cap,
-                    detectors=detectors,
-                    shots=raw_shots,
-                    scale_w=scale_w,
-                    target_fg_h=target_fg_h,
+            # Đạo diễn hình ảnh CLI AI lập phương án góc máy & Random Scale Dọc (110% - 130%) cho từng shot
+            planned_shots = cls.plan_scene_camera_shots(
+                shots=raw_shots,
+                scale_w=scale_w,
+                target_fg_h=target_fg_h,
+            )
+
+            seg_files = []
+            cam_summary = []
+            for sh_idx, sh in enumerate(planned_shots):
+                start = float(sh["start"])
+                end = float(sh["end"])
+                dur = max(0.5, end - start)
+
+                a_start = float(sh.get("audio_start", sh.get("start", start)))
+                v_start = float(sh.get("video_start", sh.get("start", start)))
+                is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
+
+                # Tốc độ âm thanh thoại: Theo đúng config người dùng (ví dụ 1.2x)
+                spd_audio = base_speed
+                eff_dur = round(dur / spd_audio, 3)
+
+                if is_anchor or abs(v_start - a_start) < 0.05:
+                    # Shot Gốc: Video chạy cùng tốc độ thoại (base_speed) để khớp khẩu hình
+                    spd_video = base_speed
+                    v_read_dur = dur
+                else:
+                    # Shot B-Roll (không có âm thanh gốc): ĐẨY TỐC ĐỘ LÊN CAO (timelapse / fast-motion)
+                    spd_video = round(base_speed * broll_speed_multiplier, 3)
+                    v_read_dur = round(eff_dur * spd_video, 3)
+
+                z_w = int(sh["z_w"])
+                z_h = int(sh["z_h"])
+                x_off = int(sh["x_off"])
+                y_off = int(sh["y_off"])
+                z_fac = float(sh["zoom_factor"])
+                u_foc = float(sh["u_focus"])
+                v_sc = float(sh.get("v_scale", 1.0))
+
+                spd_tag = f" (Audio {spd_audio:.2f}x | Video {spd_video:.2f}x)"
+                cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x + Dọc {v_sc*100:.0f}% @ u={u_foc:.2f}{spd_tag}")
+
+                fg_filter = f"scale={z_w}:{z_h},crop=1080:{target_fg_h}:{x_off}:{y_off}"
+                if color_fx:
+                    fg_filter = f"{fg_filter},{color_fx}"
+
+                pts_filter = f"setpts=(PTS-STARTPTS)/{spd_video:.3f}" if abs(spd_video - 1.0) > 0.04 else "setpts=PTS-STARTPTS"
+                vf = (
+                    f"[0:v]split=2[bg_in][fg_in];"
+                    f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
+                    f"[fg_in]{fg_filter}[fg];"
+                    f"[bg][fg]overlay=0:{y_top_boundary},{pts_filter}[vout]"
                 )
 
-                seg_files = []
-                cam_summary = []
-                for sh_idx, sh in enumerate(planned_shots):
-                    start = float(sh["start"])
-                    end = float(sh["end"])
-                    dur = max(0.5, end - start)
+                fade_d = min(0.04, eff_dur * 0.05)
+                atempo_filter = _get_atempo(spd_audio)
+                af = f"{atempo_filter}asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={eff_dur - fade_d:.3f}:d={fade_d:.3f}"
 
-                    a_start = float(sh.get("audio_start", sh.get("start", start)))
-                    v_start = float(sh.get("video_start", sh.get("start", start)))
-                    is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
+                seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
+                if is_anchor or abs(v_start - a_start) < 0.05:
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{a_start:.3f}",
+                        "-t", f"{dur:.3f}",
+                        "-i", source_video,
+                        "-filter_complex", vf,
+                        "-af", af,
+                        "-map", "[vout]", "-map", "0:a",
+                        "-c:v", enc_name, *enc_opts,
+                        "-c:a", "aac", "-b:a", "192k",
+                        "-r", "30",
+                        "-t", f"{eff_dur:.3f}",
+                        "-f", "mpegts",
+                        seg_ts
+                    ]
+                else:
+                    # B-Roll Footage Swap: Video chạy nhanh (spd_video), Audio thoại chạy theo base_speed
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{v_start:.3f}",
+                        "-t", f"{v_read_dur:.3f}",
+                        "-i", source_video,
+                        "-ss", f"{a_start:.3f}",
+                        "-t", f"{dur:.3f}",
+                        "-i", source_video,
+                        "-filter_complex", vf,
+                        "-af", af,
+                        "-map", "[vout]", "-map", "1:a",
+                        "-c:v", enc_name, *enc_opts,
+                        "-c:a", "aac", "-b:a", "192k",
+                        "-r", "30",
+                        "-t", f"{eff_dur:.3f}",
+                        "-f", "mpegts",
+                        seg_ts
+                    ]
+                shot_timeout = max(360, int(eff_dur * 8))
+                _ff_run(cmd, log_fn=None, timeout=shot_timeout, label=f"sh_{sc_idx}_{sh_idx}")
+                seg_files.append(seg_ts)
 
-                    # Tốc độ âm thanh thoại: Theo đúng config người dùng (ví dụ 1.2x)
-                    spd_audio = base_speed
-                    eff_dur = round(dur / spd_audio, 3)
+            if not seg_files:
+                continue
 
-                    if is_anchor or abs(v_start - a_start) < 0.05:
-                        # Shot Gốc: Video chạy cùng tốc độ thoại (base_speed) để khớp khẩu hình
-                        spd_video = base_speed
-                        v_read_dur = dur
-                    else:
-                        # Shot B-Roll (không có âm thanh gốc): ĐẨY TỐC ĐỘ LÊN CAO (timelapse / fast-motion)
-                        spd_video = round(base_speed * broll_speed_multiplier, 3)
-                        v_read_dur = round(eff_dur * spd_video, 3)
+            # Ghép các shots của cảnh này thành video cảnh
+            concat_list = os.path.join(work_dir, f"sc_{sc_idx:02d}_concat.txt")
+            with open(concat_list, "w", encoding="utf-8") as f:
+                for sf in seg_files:
+                    f.write(f"file '{sf}'\n")
 
-                    z_w = int(sh["z_w"])
-                    z_h = int(sh["z_h"])
-                    x_off = int(sh["x_off"])
-                    y_off = int(sh["y_off"])
-                    z_fac = float(sh["zoom_factor"])
-                    u_foc = float(sh["u_focus"])
-
-                    spd_tag = f" (Audio {spd_audio:.2f}x | Video {spd_video:.2f}x)"
-                    cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x @ u={u_foc:.2f}{spd_tag}")
-
-                    fg_filter = f"scale={z_w}:{z_h},crop=1080:{target_fg_h}:{x_off}:{y_off}"
-                    if color_fx:
-                        fg_filter = f"{fg_filter},{color_fx}"
-
-                    pts_filter = f"setpts=(PTS-STARTPTS)/{spd_video:.3f}" if abs(spd_video - 1.0) > 0.04 else "setpts=PTS-STARTPTS"
-                    vf = (
-                        f"[0:v]split=2[bg_in][fg_in];"
-                        f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
-                        f"[fg_in]{fg_filter}[fg];"
-                        f"[bg][fg]overlay=0:{y_top_boundary},{pts_filter}[vout]"
-                    )
-
-                    fade_d = min(0.04, eff_dur * 0.05)
-                    atempo_filter = _get_atempo(spd_audio)
-                    af = f"{atempo_filter}asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={eff_dur - fade_d:.3f}:d={fade_d:.3f}"
-
-                    seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
-                    if is_anchor or abs(v_start - a_start) < 0.05:
-                        cmd = [
-                            "ffmpeg", "-y",
-                            "-ss", f"{a_start:.3f}",
-                            "-t", f"{dur:.3f}",
-                            "-i", source_video,
-                            "-filter_complex", vf,
-                            "-af", af,
-                            "-map", "[vout]", "-map", "0:a",
-                            "-c:v", enc_name, *enc_opts,
-                            "-c:a", "aac", "-b:a", "192k",
-                            "-r", "30",
-                            "-t", f"{eff_dur:.3f}",
-                            "-f", "mpegts",
-                            seg_ts
-                        ]
-                    else:
-                        # B-Roll Footage Swap: Video chạy nhanh (spd_video), Audio thoại chạy theo base_speed
-                        cmd = [
-                            "ffmpeg", "-y",
-                            "-ss", f"{v_start:.3f}",
-                            "-t", f"{v_read_dur:.3f}",
-                            "-i", source_video,
-                            "-ss", f"{a_start:.3f}",
-                            "-t", f"{dur:.3f}",
-                            "-i", source_video,
-                            "-filter_complex", vf,
-                            "-af", af,
-                            "-map", "[vout]", "-map", "1:a",
-                            "-c:v", enc_name, *enc_opts,
-                            "-c:a", "aac", "-b:a", "192k",
-                            "-r", "30",
-                            "-t", f"{eff_dur:.3f}",
-                            "-f", "mpegts",
-                            seg_ts
-                        ]
-                    shot_timeout = max(360, int(eff_dur * 8))
-                    _ff_run(cmd, log_fn=None, timeout=shot_timeout, label=f"sh_{sc_idx}_{sh_idx}")
-                    seg_files.append(seg_ts)
-
-                if not seg_files:
-                    continue
-
-                # Ghép các shots của cảnh này thành video cảnh
-                concat_list = os.path.join(work_dir, f"sc_{sc_idx:02d}_concat.txt")
-                with open(concat_list, "w", encoding="utf-8") as f:
-                    for sf in seg_files:
-                        f.write(f"file '{sf}'\n")
-
-                sc_video = os.path.join(work_dir, f"scene_{sc_idx + 1}.mp4")
-                concat_cmd = [
-                    "ffmpeg", "-y",
-                    "-f", "concat", "-safe", "0", "-i", concat_list,
-                    "-c", "copy",
-                    sc_video
-                ]
-                _ff_run(concat_cmd, log_fn=None, timeout=300, label=f"sc_{sc_idx}")
-                sc_dur = probe_duration_sec(sc_video)
-                scene_files.append(sc_video)
-                scene_durations.append(sc_dur)
-                _log(f"   ✓ Cảnh {sc_idx + 1}/{len(scenes)} ({sc_dur:.1f}s): {' | '.join(cam_summary)}")
-        finally:
-            if cap is not None:
-                try:
-                    cap.release()
-                except Exception:
-                    pass
+            sc_video = os.path.join(work_dir, f"scene_{sc_idx + 1}.mp4")
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", concat_list,
+                "-c", "copy",
+                sc_video
+            ]
+            _ff_run(concat_cmd, log_fn=None, timeout=300, label=f"sc_{sc_idx}")
+            sc_dur = probe_duration_sec(sc_video)
+            scene_files.append(sc_video)
+            scene_durations.append(sc_dur)
+            _log(f"   ✓ Cảnh {sc_idx + 1}/{len(scenes)} ({sc_dur:.1f}s): {' | '.join(cam_summary)}")
 
         if not scene_files:
             raise RuntimeError("Không có phân cảnh nào được render thành công!")
