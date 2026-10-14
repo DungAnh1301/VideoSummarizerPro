@@ -97,14 +97,27 @@ class SceneRhythmDirectorAI:
         goal = part_info.get("narrative_goal", "Story development")
         title = part_info.get("part_title", f"Part {part_index}")
 
-        # Tự động chọn 4 hoặc 5 cảnh (~20s/cảnh) tùy theo độ dài cửa sổ thời gian
+        # Tốc độ phát video cơ bản theo config (VD: 1.2x)
+        base_speed = float(config.get("speed") or config.get("source_speed") or config.get("playback_speed") or 1.0)
+        base_speed = max(0.5, min(3.0, base_speed))
+
+        # Thời lượng video xuất xưởng mục tiêu (chuẩn ~90s)
+        target_final_duration = float(config.get("target_part_duration") or target_part_duration or 90.0)
+
+        # Ngân sách thời lượng thô (Raw Budget) gom từ video gốc để sau khi tăng tốc đạt đúng ~90s
+        target_raw_budget = round(target_final_duration * base_speed, 2)
+
+        # Tự động chọn 4 hoặc 5 cảnh tùy theo ngân sách thô
         window_duration = max(30.0, end_bound - start_bound)
-        if window_duration < 130.0:
+        if target_raw_budget <= 115.0 or window_duration < 130.0:
             target_scene_count = 4
         else:
             target_scene_count = 5
 
-        _log(f"🎬 [ĐẠO DIỄN 2] Đạo diễn {target_scene_count} phân cảnh LIỀN MẠCH (~20s/cảnh) cho Part {part_index}: {title} ({start_bound:.1f}s -> {end_bound:.1f}s)...")
+        min_dur = round(target_raw_budget * 0.94, 2)
+        max_dur = round(target_raw_budget * 1.02, 2)
+
+        _log(f"🎬 [ĐẠO DIỄN 2] Đạo diễn {target_scene_count} phân cảnh LIỀN MẠCH (Ngân sách thô: {target_raw_budget:.1f}s -> Xuất xưởng ~{target_final_duration:.0f}s @ {base_speed}x) cho Part {part_index}: {title}...")
 
         # Lọc cues trong khung thời gian của Part
         part_cues = [c for c in cues if c.get("start", 0.0) >= max(0.0, start_bound - 2.0) and c.get("end", 0.0) <= min(total_duration, end_bound + 2.0)]
@@ -172,7 +185,7 @@ Respond ONLY with a valid JSON object matching this schema:
                         data = json.loads(text[s_idx:e_idx + 1])
                         if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
                             _log(f"✅ [ĐẠO DIỄN 2] AI Cloud đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
-                            sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
+                            sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=min_dur, max_dur=max_dur, target_scene_count=target_scene_count)
                             sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, start_bound=start_bound, end_bound=end_bound, log_fn=_log)
                             return {
                                 "part_index": part_index,
@@ -189,9 +202,9 @@ Respond ONLY with a valid JSON object matching this schema:
             start_bound=start_bound,
             end_bound=end_bound,
             target_scene_count=target_scene_count,
-            target_part_dur=target_part_duration
+            target_part_dur=target_raw_budget
         )
-        sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=75.0)
+        sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=min_dur, max_dur=max_dur, target_scene_count=target_scene_count)
         # ÁP DỤNG MA TRẬN ĐẠO DIỄN: 50% SOURCE GỐC, 50% B-ROLL CÙNG NGỮ CẢNH PART
         sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, start_bound=start_bound, end_bound=end_bound, log_fn=_log)
 
@@ -422,13 +435,15 @@ Respond ONLY with a valid JSON object matching this schema:
         scenes: List[Dict[str, Any]],
         start_bound: float,
         end_bound: float,
-        min_dur: float = 75.0
+        min_dur: float = 75.0,
+        max_dur: float = 115.0,
+        target_scene_count: int = 4
     ) -> List[Dict[str, Any]]:
         """Chuẩn hóa và khóa cứng 100% tính liền mạch (Strict Continuity):
         1. Bên trong mỗi cảnh (~20s): shot[k+1].start == shot[k].end (KHÔNG HỞ KHOẢNG TRỐNG NÀO).
         2. Giữa các cảnh: Scene[i+1].start >= Scene[i].end + 2.5s (TRIỆT TIÊU 100% TRÙNG LẶP FOOTAGE).
-        3. Tổng thời lượng đảm bảo >= min_dur (luôn > 1 phút, chuẩn kiếm tiền).
-        4. TUYỆT ĐỐI KHÔNG để bất kỳ shot đơn lẻ nào vượt quá 7.5s (tự động cắt góc máy linh hoạt).
+        3. Tổng thời lượng đảm bảo trong khung chuẩn [min_dur, max_dur] (chuẩn ~90s).
+        4. TUYỆT ĐỐI KHÔNG để bất kỳ shot đơn lẻ nào vượt quá 12.0s (tự động cắt góc máy linh hoạt).
         """
         if not scenes:
             return scenes
@@ -475,13 +490,31 @@ Respond ONLY with a valid JSON object matching this schema:
             cleaned_scenes.append(sc_copy)
             last_scene_end = clean_shots[-1]["end"]
 
-        # Kiểm tra tổng thời lượng Part (Cam kết luôn >= min_dur, ví dụ >= 75s)
-        tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc["shots"])
+        # Kiểm tra tổng thời lượng Part (Cam kết trong khoảng [min_dur, max_dur])
+        tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc.get("shots"))
+
+        # Cắt bớt cảnh thừa CHỈ KHI số cảnh vượt quá target_scene_count (ví dụ sinh ra 5 cảnh mà target chỉ cần 4)
+        while len(cleaned_scenes) > target_scene_count and tot > max_dur:
+            cleaned_scenes.pop()
+            tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc.get("shots"))
+
+        # Nếu tổng thời lượng vẫn vượt max_dur, tỉa bớt shot cuối của cảnh cuối để khớp khung ngân sách
+        if tot > max_dur and cleaned_scenes:
+            excess = tot - max_dur
+            last_sc_shots = cleaned_scenes[-1]["shots"]
+            if last_sc_shots:
+                cur_end = float(last_sc_shots[-1]["end"])
+                cur_st = float(last_sc_shots[-1]["start"])
+                new_end = max(cur_st + 3.0, cur_end - excess)
+                last_sc_shots[-1]["end"] = round(new_end, 2)
+                tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc.get("shots"))
+
+        # Bù thêm nếu thiếu dưới min_dur
         if tot < min_dur and cleaned_scenes:
             deficit = min_dur - tot
             last_sc_shots = cleaned_scenes[-1]["shots"]
             if last_sc_shots:
-                last_sc_shots[-1]["end"] = round(min(end_bound, last_sc_shots[-1]["end"] + deficit + 1.0), 2)
+                last_sc_shots[-1]["end"] = round(min(end_bound, last_sc_shots[-1]["end"] + deficit + 0.5), 2)
 
         # KHÓA CỨNG: Tự động chia nhỏ mọi shot > 12.0s
         for sc in cleaned_scenes:
@@ -681,10 +714,10 @@ Respond ONLY with a valid JSON object matching this schema:
             ]
 
         window_len = max(60.0, end_bound - start_bound)
-        if window_len < 130.0:
+        if target_part_dur <= 115.0 or window_len < 130.0:
             target_scene_count = 4
         else:
-            target_scene_count = 5
+            target_scene_count = min(5, target_scene_count)
 
         window_size = window_len / float(target_scene_count)
         scenes = []
@@ -700,8 +733,8 @@ Respond ONLY with a valid JSON object matching this schema:
             best_cluster = []
             best_score = -999.0
 
-            ideal_sc_dur = max(15.0, min(21.0, target_part_dur / float(target_scene_count)))
-            min_sc_dur = max(12.0, ideal_sc_dur - 4.0)
+            ideal_sc_dur = max(16.0, min(28.0, target_part_dur / float(target_scene_count)))
+            min_sc_dur = max(12.0, ideal_sc_dur - 4.5)
             max_sc_dur = ideal_sc_dur + 3.5
 
             if cand_sents:

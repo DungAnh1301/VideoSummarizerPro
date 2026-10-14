@@ -426,6 +426,18 @@ class VisualEditorEngine:
 
         _log(f"🎥 [ĐẠO DIỄN HÌNH ẢNH] Bắt đầu phân tích khuôn mặt (YuNet DNN) & điều phối Camera (Zoom In / Zoom Out / Speaker Cut) cho {len(scenes)} phân cảnh...")
 
+        base_speed = float(config.get("speed") or config.get("source_speed") or config.get("playback_speed") or 1.0)
+        base_speed = max(0.5, min(3.0, base_speed))
+        broll_speed_multiplier = float(config.get("broll_speed_multiplier", 1.8))
+        broll_speed_multiplier = max(1.2, min(3.0, broll_speed_multiplier))
+
+        def _get_atempo(s: float) -> str:
+            if abs(s - 1.0) <= 0.03:
+                return ""
+            if s <= 2.0:
+                return f"atempo={s:.3f},"
+            return f"atempo=2.0,atempo={s / 2.0:.3f},"
+
         # 1. Render từng cảnh
         try:
             for sc_idx, sc in enumerate(scenes):
@@ -449,8 +461,23 @@ class VisualEditorEngine:
                     start = float(sh["start"])
                     end = float(sh["end"])
                     dur = max(0.5, end - start)
-                    spd = float(sh.get("speed_factor", 1.0))
-                    eff_dur = dur / spd if spd > 0.05 else dur
+
+                    a_start = float(sh.get("audio_start", sh.get("start", start)))
+                    v_start = float(sh.get("video_start", sh.get("start", start)))
+                    is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
+
+                    # Tốc độ âm thanh thoại: Theo đúng config người dùng (ví dụ 1.2x)
+                    spd_audio = base_speed
+                    eff_dur = round(dur / spd_audio, 3)
+
+                    if is_anchor or abs(v_start - a_start) < 0.05:
+                        # Shot Gốc: Video chạy cùng tốc độ thoại (base_speed) để khớp khẩu hình
+                        spd_video = base_speed
+                        v_read_dur = dur
+                    else:
+                        # Shot B-Roll (không có âm thanh gốc): ĐẨY TỐC ĐỘ LÊN CAO (timelapse / fast-motion)
+                        spd_video = round(base_speed * broll_speed_multiplier, 3)
+                        v_read_dur = round(eff_dur * spd_video, 3)
 
                     z_w = int(sh["z_w"])
                     z_h = int(sh["z_h"])
@@ -459,14 +486,14 @@ class VisualEditorEngine:
                     z_fac = float(sh["zoom_factor"])
                     u_foc = float(sh["u_focus"])
 
-                    spd_tag = f" (Speed {spd:.1f}x)" if abs(spd - 1.0) > 0.05 else ""
+                    spd_tag = f" (Audio {spd_audio:.2f}x | Video {spd_video:.2f}x)"
                     cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x @ u={u_foc:.2f}{spd_tag}")
 
                     fg_filter = f"scale={z_w}:{z_h},crop=1080:{target_fg_h}:{x_off}:{y_off}"
                     if color_fx:
                         fg_filter = f"{fg_filter},{color_fx}"
 
-                    pts_filter = f"setpts=(PTS-STARTPTS)/{spd:.3f}" if abs(spd - 1.0) > 0.05 else "setpts=PTS-STARTPTS"
+                    pts_filter = f"setpts=(PTS-STARTPTS)/{spd_video:.3f}" if abs(spd_video - 1.0) > 0.04 else "setpts=PTS-STARTPTS"
                     vf = (
                         f"[0:v]split=2[bg_in][fg_in];"
                         f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
@@ -475,48 +502,47 @@ class VisualEditorEngine:
                     )
 
                     fade_d = min(0.04, eff_dur * 0.05)
-                    atempo_filter = f"atempo={spd:.3f}," if (0.5 <= spd <= 2.0 and abs(spd - 1.0) > 0.05) else ""
+                    atempo_filter = _get_atempo(spd_audio)
                     af = f"{atempo_filter}asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={eff_dur - fade_d:.3f}:d={fade_d:.3f}"
-
-                    a_start = float(sh.get("audio_start", sh.get("start", start)))
-                    v_start = float(sh.get("video_start", sh.get("start", start)))
-                    is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
 
                     seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
                     if is_anchor or abs(v_start - a_start) < 0.05:
                         cmd = [
                             "ffmpeg", "-y",
                             "-ss", f"{a_start:.3f}",
-                            "-i", source_video,
                             "-t", f"{dur:.3f}",
+                            "-i", source_video,
                             "-filter_complex", vf,
                             "-af", af,
                             "-map", "[vout]", "-map", "0:a",
                             "-c:v", enc_name, *enc_opts,
                             "-c:a", "aac", "-b:a", "192k",
                             "-r", "30",
+                            "-t", f"{eff_dur:.3f}",
                             "-f", "mpegts",
                             seg_ts
                         ]
                     else:
-                        # B-Roll Footage Swap: Video từ v_start, Audio từ a_start
+                        # B-Roll Footage Swap: Video chạy nhanh (spd_video), Audio thoại chạy theo base_speed
                         cmd = [
                             "ffmpeg", "-y",
                             "-ss", f"{v_start:.3f}",
+                            "-t", f"{v_read_dur:.3f}",
                             "-i", source_video,
                             "-ss", f"{a_start:.3f}",
-                            "-i", source_video,
                             "-t", f"{dur:.3f}",
+                            "-i", source_video,
                             "-filter_complex", vf,
                             "-af", af,
                             "-map", "[vout]", "-map", "1:a",
                             "-c:v", enc_name, *enc_opts,
                             "-c:a", "aac", "-b:a", "192k",
                             "-r", "30",
+                            "-t", f"{eff_dur:.3f}",
                             "-f", "mpegts",
                             seg_ts
                         ]
-                    shot_timeout = max(360, int(dur * 8))
+                    shot_timeout = max(360, int(eff_dur * 8))
                     _ff_run(cmd, log_fn=None, timeout=shot_timeout, label=f"sh_{sc_idx}_{sh_idx}")
                     seg_files.append(seg_ts)
 

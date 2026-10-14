@@ -64,50 +64,23 @@ class AudioTransitionDirectorAI:
                 continue
 
             audited_shots = []
-            first_sh_st = float(raw_shots[0]["start"])
-            if sc_idx > 0 and first_sh_st < last_scene_end + 2.0:
-                first_sh_st = last_scene_end + 2.0
-
-            cur_shot_st = first_sh_st
             for sh_k, sh in enumerate(raw_shots):
-                s_dur = max(2.5, float(sh.get("end", 0.0)) - float(sh.get("start", 0.0)))
-                s_en = cur_shot_st + s_dur
-
-                # Kiểm tra Zero Truncation mở rộng cho shot CUỐI CÙNG của cảnh: đảm bảo câu nói kết thúc 100%
-                if sh_k == len(raw_shots) - 1:
-                    try:
-                        from core_directors.scene_rhythm_director_ai import SceneRhythmDirectorAI
-                        sents = SceneRhythmDirectorAI.group_complete_sentences(cues)
-                        for s_idx, s in enumerate(sents):
-                            s_start = float(s["start"])
-                            s_end = float(s["end"])
-                            # Chỉ mở rộng nếu s_en thực sự đang cắt ngang thân câu nói (> 0.25s sau khi câu bắt đầu)
-                            if (s_start + 0.25) <= s_en < s_end:
-                                next_st = float(sents[s_idx + 1]["start"]) if s_idx < len(sents) - 1 else video_total_duration
-                                max_hold = max(s_end, min(s_end + 0.40, next_st - 0.15))
-                                s_en = min(video_total_duration, round(max_hold, 2))
-                                break
-                    except Exception:
-                        for c in cues:
-                            c_st = float(c.get("start", 0.0))
-                            c_en = float(c.get("end", 0.0))
-                            if (c_st + 0.25) <= s_en < c_en:
-                                s_en = min(video_total_duration, round(c_en + 0.35, 2))
-                                break
+                st = round(float(sh["start"]), 2)
+                en = round(float(sh["end"]), 2)
+                dur = max(0.5, en - st)
 
                 item = dict(sh)
-                item["start"] = round(cur_shot_st, 2)
-                item["end"] = round(s_en, 2)
-                item["audio_start"] = item["start"]
-                item["audio_end"] = item["end"]
-                dur = item["end"] - item["start"]
+                item["start"] = st
+                item["end"] = en
+                item["audio_start"] = st
+                item["audio_end"] = en
                 if not item.get("is_anchor", True):
-                    item["video_end"] = round(float(item.get("video_start", item["start"])) + dur, 2)
+                    item["video_start"] = round(float(sh.get("video_start", st)), 2)
+                    item["video_end"] = round(item["video_start"] + dur, 2)
                 else:
-                    item["video_start"] = item["start"]
-                    item["video_end"] = item["end"]
+                    item["video_start"] = st
+                    item["video_end"] = en
                 audited_shots.append(item)
-                cur_shot_st = item["end"]
 
             sc_copy = dict(sc)
             sc_copy["shots"] = audited_shots

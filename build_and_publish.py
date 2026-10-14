@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.129"
+VERSION = "1.3.130"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.129: Tái cấu trúc Ma Trận Cân Bằng 50:50 & Tuyển Chọn B-Roll Cùng Ngữ Cảnh (Context-Aware 50:50 Footage Matrix): Đạt tỷ lệ vàng điện ảnh 50% cú máy Source Gốc (giữ mặt người nói/bối cảnh chính) xen kẽ 50% cú máy B-roll minh họa. Đặc biệt, Đạo diễn tự động khóa phạm vi tìm kiếm B-roll NGAY TRONG KHUNG THỜI GIAN CỦA PART ĐÓ (hoặc phân đoạn lân cận +-45s), đảm bảo 100% hình ảnh B-roll minh họa ăn khớp tuyệt đối với công đoạn xe/máy móc đang làm, chấm dứt hoàn toàn tình trạng nhảy B-roll lạc đề ở cuối video."
+NOTES = "Bản phát hành v1.3.130: Khống chế chuẩn thời lượng ~90s mỗi Part, tích hợp Động cơ Tăng tốc Video theo Cấu hình (Base Speed 1.2x) và Đẩy mạnh tốc độ B-Roll Fast-Motion (Timelapse 2.16x): Part xuất xưởng được kiểm soát chặt chẽ trong khung vàng 85s - 95s; Lời thoại và video chính được tăng tốc chuẩn theo config (ví dụ 1.2x) với thuật toán atempo giữ nguyên cao độ âm thanh; Các cú máy B-roll minh họa không lời thoại được tự động đẩy tốc độ cao (1.8x - 2.2x fast-motion) tạo nhịp điệu dồn dập, loại bỏ hoàn toàn các đoạn chết nhàm chán."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")
