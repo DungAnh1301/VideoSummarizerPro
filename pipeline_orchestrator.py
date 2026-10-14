@@ -75,8 +75,10 @@ class PipelineOrchestrator:
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
 
+        pipeline_t0 = time.time()
+        pipeline_start_clock = time.strftime("%H:%M:%S")
         _log("==================================================================")
-        _log("🚀 KHỞI ĐỘNG QUY TRÌNH SẢN XUẤT HOLLYWOOD AI FILM CREW (CHẾ ĐỘ 2)")
+        _log(f"🚀 KHỞI ĐỘNG QUY TRÌNH SẢN XUẤT HOLLYWOOD AI FILM CREW (Lúc: {pipeline_start_clock})")
         _log("==================================================================")
 
         # -------------------------------------------------------------
@@ -257,9 +259,35 @@ class PipelineOrchestrator:
             exported_parts.append(final_rendered)
             _log(f"🏆 [HOÀN TẤT] {part_prefix} {p_idx} đã xuất xưởng thành công: {final_rendered} ({probe_duration_sec(final_rendered):.1f}s)")
 
-        _log("==================================================================")
-        _log(f"🎉 XUẤT XƯỞNG TOÀN DIỆN {len(exported_parts)} PARTS HOLLYWOOD THÀNH CÔNG!")
+        pipe_total_sec = time.time() - pipeline_t0
+        pipe_end_clock = time.strftime("%H:%M:%S")
+        m_min = int(pipe_total_sec // 60)
+        m_sec = int(pipe_total_sec % 60)
+
+        parts_details = []
+        tot_output_dur = 0.0
+        for ep in exported_parts:
+            if os.path.isfile(ep):
+                dur_s = probe_duration_sec(ep)
+                sz_mb = os.path.getsize(ep) / (1024 * 1024)
+                tot_output_dur += dur_s
+                parts_details.append((os.path.basename(ep), dur_s, sz_mb))
+
+        v_min = int(tot_output_dur // 60)
+        v_sec = int(tot_output_dur % 60)
+        avg_time = pipe_total_sec / max(1, len(exported_parts))
+        speed_ratio = tot_output_dur / max(0.1, pipe_total_sec)
+
+        _log("================================================================================")
+        _log(f"🎉 [TỔNG KẾT HOÀN TẤT] XUẤT XƯỞNG TOÀN DIỆN {len(exported_parts)} PARTS HOLLYWOOD THÀNH CÔNG!")
+        _log(f"⏱️ Bắt đầu lúc: {pipeline_start_clock} | Hoàn tất lúc: {pipe_end_clock}")
+        _log(f"⏳ TỔNG THỜI GIAN LÀM VIỆC: {m_min} phút {m_sec:02d} giây ({pipe_total_sec:.1f} giây)")
+        _log(f"⚡ Tốc độ sản xuất trung bình: {avg_time:.1f}s / Part | Hiệu suất: {speed_ratio:.2f}x Realtime")
+        _log(f"🎬 Tổng thời lượng video thành phẩm: {v_min} phút {v_sec:02d} giây ({tot_output_dur:.1f}s)")
         _log(f"📁 Thư mục lưu trữ: {output_dir}")
-        _log("==================================================================")
+        _log("📦 Bảng chi tiết thành phẩm xuất xưởng:")
+        for name, dur_s, size_mb in parts_details:
+            _log(f"   • {name}: Thời lượng {dur_s:.2f}s | Dung lượng {size_mb:.1f} MB")
+        _log("================================================================================")
 
         return exported_parts

@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.125"
+VERSION = "1.3.126"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.125: Minh bạch hóa 100% thời gian thực thi Chế độ 2 Hollywood: In chi tiết thời lượng từng Part vĩ mô, danh sách 5 phân cảnh và từng cú máy con (start -> end, duration chính xác 0.01s, góc quay, punch zoom), mốc thời gian chuyển cảnh Motion Blur, vị trí đặt Whoosh SFX và thời lượng chuẩn hóa Master Audio."
+NOTES = "Bản phát hành v1.3.126: Bổ sung Bảng Tổng Kết Thời Gian Làm Việc Toàn Diện khi hoàn tất Job Chế độ 2: Ghi rõ thời gian bắt đầu, thời gian kết thúc, TỔNG THỜI GIAN LÀM VIỆC (phút, giây), tốc độ render trung bình (giây/Part), hiệu suất so với thời gian thực (x Realtime), tổng thời lượng video thành phẩm và bảng chi tiết từng file Part (thời lượng, dung lượng MB)."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

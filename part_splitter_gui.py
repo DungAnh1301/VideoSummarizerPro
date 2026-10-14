@@ -1539,9 +1539,9 @@ class PartSplitterFrame(ttk.Frame):
         source_mode = job["source_mode"]
 
 
-        job["status"] = "Đang chuẩn bị..."
-        self.after(0, self._refresh_queue_table)
-        self.log(f"\n🚀 [BẮT ĐẦU JOB {job_id}] Nguồn: {source}")
+        job_t0 = time.time()
+        job_start_clock = time.strftime("%H:%M:%S")
+        self.log(f"\n🚀 [BẮT ĐẦU JOB {job_id}] Bắt đầu lúc: {job_start_clock} | Nguồn: {source}")
 
         work_dir = os.path.abspath(f"temp/part_splitter_{job_id}")
         os.makedirs(work_dir, exist_ok=True)
@@ -1902,12 +1902,42 @@ class PartSplitterFrame(ttk.Frame):
         rendered_results.sort(key=lambda x: x[0])
         final_part_files = [x[1] for x in rendered_results]
 
+        job_total_sec = time.time() - job_t0
+        job_end_clock = time.strftime("%H:%M:%S")
+        m_min = int(job_total_sec // 60)
+        m_sec = int(job_total_sec % 60)
+
+        parts_details = []
+        tot_output_dur = 0.0
+        for f_path in final_part_files:
+            if os.path.isfile(f_path):
+                p_dur = probe_duration_sec(f_path)
+                p_size_mb = os.path.getsize(f_path) / (1024 * 1024)
+                tot_output_dur += p_dur
+                parts_details.append((os.path.basename(f_path), p_dur, p_size_mb))
+
+        v_min = int(tot_output_dur // 60)
+        v_sec = int(tot_output_dur % 60)
+        avg_time = job_total_sec / max(1, len(final_part_files))
+        speed_ratio = tot_output_dur / max(0.1, job_total_sec)
+
         # 8. Hoàn thành job
         job["status"] = "Hoàn thành"
         job["output_dir"] = video_out_dir
-        job["output"] = f"{len(final_part_files)} Parts -> {video_folder_name}"
+        job["output"] = f"{len(final_part_files)} Parts ({m_min}m{m_sec:02d}s)"
         self.after(0, self._refresh_queue_table)
-        self.log(f"🎉 [THÀNH CÔNG] Job {job_id} đã xuất {len(final_part_files)} Parts vào: {video_out_dir}")
+
+        self.log("================================================================================")
+        self.log(f"🎉 [TỔNG KẾT HOÀN TẤT JOB {job_id}] XUẤT XƯỞNG THÀNH CÔNG {len(final_part_files)} PARTS!")
+        self.log(f"⏱️ Thời gian bắt đầu: {job_start_clock} | Kết thúc: {job_end_clock}")
+        self.log(f"⏳ TỔNG THỜI GIAN LÀM VIỆC: {m_min} phút {m_sec:02d} giây ({job_total_sec:.1f} giây)")
+        self.log(f"⚡ Tốc độ sản xuất trung bình: {avg_time:.1f}s / Part | Hiệu suất: {speed_ratio:.2f}x Realtime")
+        self.log(f"🎬 Tổng thời lượng video thành phẩm: {v_min} phút {v_sec:02d} giây ({tot_output_dur:.1f}s)")
+        self.log(f"📁 Thư mục lưu trữ: {video_out_dir}")
+        self.log("📦 Bảng chi tiết thành phẩm xuất xưởng:")
+        for name, dur_s, size_mb in parts_details:
+            self.log(f"   • {name}: Thời lượng {dur_s:.2f}s | Dung lượng {size_mb:.1f} MB")
+        self.log("================================================================================")
 
         if cfg.get("cleanup_temp_after_export"):
             try:
