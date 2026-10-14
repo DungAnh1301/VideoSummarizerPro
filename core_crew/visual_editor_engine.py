@@ -207,13 +207,13 @@ class VisualEditorEngine:
 
         # Bước 1: Quét dữ liệu thị giác thực tế của từng shot trong cảnh 20s
         for sh in shots:
-            st = float(sh["start"])
-            en = float(sh["end"])
-            dur = max(0.5, en - st)
+            v_st = float(sh.get("video_start", sh["start"]))
+            v_en = float(sh.get("video_end", sh["end"]))
+            dur = max(0.5, v_en - v_st)
             sample_times = [
-                st + dur * 0.18,
-                st + dur * 0.45,
-                st + dur * 0.72,
+                v_st + dur * 0.18,
+                v_st + dur * 0.45,
+                v_st + dur * 0.72,
             ]
             shot_faces: List[Dict[str, float]] = []
             shot_motions: List[Tuple[float, float, float]] = []
@@ -478,21 +478,44 @@ class VisualEditorEngine:
                     atempo_filter = f"atempo={spd:.3f}," if (0.5 <= spd <= 2.0 and abs(spd - 1.0) > 0.05) else ""
                     af = f"{atempo_filter}asetpts=PTS-STARTPTS,afade=t=in:ss=0:d={fade_d:.3f},afade=t=out:st={eff_dur - fade_d:.3f}:d={fade_d:.3f}"
 
+                    a_start = float(sh.get("audio_start", sh.get("start", start)))
+                    v_start = float(sh.get("video_start", sh.get("start", start)))
+                    is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
+
                     seg_ts = os.path.join(work_dir, f"sc_{sc_idx:02d}_shot_{sh_idx:02d}.ts")
-                    cmd = [
-                        "ffmpeg", "-y",
-                        "-ss", f"{start:.3f}",
-                        "-i", source_video,
-                        "-t", f"{dur:.3f}",
-                        "-filter_complex", vf,
-                        "-af", af,
-                        "-map", "[vout]", "-map", "0:a",
-                        "-c:v", enc_name, *enc_opts,
-                        "-c:a", "aac", "-b:a", "192k",
-                        "-r", "30",
-                        "-f", "mpegts",
-                        seg_ts
-                    ]
+                    if is_anchor or abs(v_start - a_start) < 0.05:
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-ss", f"{a_start:.3f}",
+                            "-i", source_video,
+                            "-t", f"{dur:.3f}",
+                            "-filter_complex", vf,
+                            "-af", af,
+                            "-map", "[vout]", "-map", "0:a",
+                            "-c:v", enc_name, *enc_opts,
+                            "-c:a", "aac", "-b:a", "192k",
+                            "-r", "30",
+                            "-f", "mpegts",
+                            seg_ts
+                        ]
+                    else:
+                        # B-Roll Footage Swap: Video từ v_start, Audio từ a_start
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-ss", f"{v_start:.3f}",
+                            "-i", source_video,
+                            "-ss", f"{a_start:.3f}",
+                            "-i", source_video,
+                            "-t", f"{dur:.3f}",
+                            "-filter_complex", vf,
+                            "-af", af,
+                            "-map", "[vout]", "-map", "1:a",
+                            "-c:v", enc_name, *enc_opts,
+                            "-c:a", "aac", "-b:a", "192k",
+                            "-r", "30",
+                            "-f", "mpegts",
+                            seg_ts
+                        ]
                     shot_timeout = max(360, int(dur * 8))
                     _ff_run(cmd, log_fn=None, timeout=shot_timeout, label=f"sh_{sc_idx}_{sh_idx}")
                     seg_files.append(seg_ts)

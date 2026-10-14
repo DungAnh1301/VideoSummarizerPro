@@ -173,6 +173,7 @@ Respond ONLY with a valid JSON object matching this schema:
                         if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
                             _log(f"✅ [ĐẠO DIỄN 2] AI Cloud đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
                             sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
+                            sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, log_fn=_log)
                             return {
                                 "part_index": part_index,
                                 "title": title,
@@ -191,6 +192,8 @@ Respond ONLY with a valid JSON object matching this schema:
             target_part_dur=target_part_duration
         )
         sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=75.0)
+        # ÁP DỤNG MA TRẬN ĐẠO DIỄN: 1 CÚ MÁY GIỮ SOURCE GỐC, TOÀN BỘ CÚ MÁY CÒN LẠI TRÁO ĐỔI HÌNH ẢNH B-ROLL
+        sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, log_fn=_log)
 
         tot_dur = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in sanitized if sc.get("shots"))
         tot_shots = sum(len(sc.get("shots", [])) for sc in sanitized)
@@ -208,7 +211,11 @@ Respond ONLY with a valid JSON object matching this schema:
                 punch_str = " 🔥 [PUNCH ZOOM 1.18x]" if sh.get("punch") else ""
                 role = str(sh.get("camera_role", "shot"))
                 pan = str(sh.get("pan", "center")).upper()
-                _log(f"      • Cú máy {k+1}: [{sh['start']:.2f}s -> {sh['end']:.2f}s] ({sh_dur:.2f}s) | Góc: {pan} ({role}){punch_str}")
+                v_st = float(sh.get("video_start", sh["start"]))
+                v_en = float(sh.get("video_end", sh["end"]))
+                is_anc = bool(sh.get("is_anchor", True))
+                tag = "🌟 [GỐC]" if is_anc else f"🔄 [B-ROLL: {v_st:.1f}s]"
+                _log(f"      • Cú máy {k+1}: Audio=[{sh['start']:.2f}s -> {sh['end']:.2f}s] | Video=[{v_st:.2f}s -> {v_en:.2f}s] ({sh_dur:.2f}s) | Góc: {pan} ({role}){punch_str} {tag}")
 
         return {
             "part_index": part_index,
@@ -217,10 +224,107 @@ Respond ONLY with a valid JSON object matching this schema:
         }
 
     @classmethod
-    def _subdivide_long_shots(cls, shots: List[Dict[str, Any]], max_shot_dur: float = 7.5) -> List[Dict[str, Any]]:
-        """Chia nhỏ mọi shot dài hơn max_shot_dur (7.5s) thành các camera cuts 4s - 6s
-        luân chuyển góc máy nhịp nhàng (wide -> speaker_left -> closeup -> speaker_right),
-        đảm bảo 100% video luôn có nhịp cắt hiện đại CapCut và không bao giờ bị đứng hình lê thê!
+    def _apply_footage_swapping_matrix(
+        cls,
+        scenes: List[Dict[str, Any]],
+        cues: List[Dict[str, Any]],
+        total_duration: float,
+        log_fn=None
+    ) -> List[Dict[str, Any]]:
+        """Quy tắc B-Roll Footage Replacement Matrix (Đạo Diễn Chỉ Định):
+        - ÂM THANH: 100% chuẩn liền mạch theo từng phân cảnh (Zero Audio Cut).
+        - HÌNH ẢNH: Trong số N shots do đạo diễn chỉ định (2, 3, hoặc 4 shots):
+          + DUY NHẤT 1 SHOT là giữ Source Gốc (Anchor Shot) để khớp khẩu hình & bối cảnh.
+          + TẤT CẢ CÁC SHOT CÒN LẠI (N - 1 shots) ĐỀU ĐƯỢC TRÁO ĐỔI HÌNH ẢNH bằng các đoạn B-roll/Action từ chỗ khác trong video!
+          + Vị trí shot giữ gốc luân phiên giữa các cảnh (Cảnh 1: Shot 1, Cảnh 2: Shot 2, Cảnh 3: Shot 3...) để robot quét bản quyền không thể đoán trước.
+        """
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
+        broll_pool = []
+        for i in range(len(cues) - 1):
+            gap = cues[i + 1]["start"] - cues[i]["end"]
+            if gap >= 2.0:
+                broll_pool.append({
+                    "start": round(float(cues[i]["end"]), 2),
+                    "end": round(float(cues[i + 1]["start"]), 2),
+                    "dur": round(float(gap), 2)
+                })
+
+        if len(broll_pool) < 25 and total_duration > 30.0:
+            step = total_duration / 35.0
+            for s in range(1, 34):
+                cand_st = round(s * step, 2)
+                broll_pool.append({
+                    "start": cand_st,
+                    "end": round(cand_st + 6.0, 2),
+                    "dur": 6.0
+                })
+
+        pool_ptr = 0
+
+        for sc_idx, sc in enumerate(scenes):
+            shots = sc.get("shots", [])
+            num_shots = len(shots)
+            if not shots:
+                continue
+
+            sc_st = float(shots[0]["start"])
+            sc_en = float(shots[-1]["end"])
+            
+            # Đạo diễn chỉ định vị trí Shot giữ Source Gốc (luân phiên thông minh giữa các cảnh)
+            anchor_idx = sc_idx % num_shots
+
+            _log(f"🎬 [ĐẠO DIỄN CHỈ ĐỊNH CẢNH {sc.get('scene_id', sc_idx+1)}] {num_shots} cú máy | Cú máy {anchor_idx+1} giữ Source Gốc, {num_shots-1} cú máy còn lại TRÁO HÌNH ẢNH B-ROLL:")
+
+            for k, sh in enumerate(shots):
+                st = float(sh["start"])
+                en = float(sh["end"])
+                dur = max(0.5, en - st)
+
+                sh["audio_start"] = round(st, 2)
+                sh["audio_end"] = round(en, 2)
+
+                if k == anchor_idx:
+                    # CÚ MÁY DUY NHẤT GIỮ SOURCE GỐC
+                    sh["is_anchor"] = True
+                    sh["video_start"] = round(st, 2)
+                    sh["video_end"] = round(en, 2)
+                    sh["desc"] = f"{sh.get('desc', 'Shot')} [SOURCE GỐC CHUẨN]"
+                    _log(f"   🌟 Cú máy {k+1}: Audio=[{st:.2f}s -> {en:.2f}s] | Video=[{st:.2f}s -> {en:.2f}s] (SOURCE GỐC CHUẨN)")
+                else:
+                    # CÁC CÚ MÁY CÒN LẠI: TRÁO ĐỔI HÌNH ẢNH B-ROLL TỪ CHỖ KHÁC
+                    sh["is_anchor"] = False
+                    cand = None
+                    if broll_pool:
+                        for _ in range(len(broll_pool)):
+                            c = broll_pool[pool_ptr % len(broll_pool)]
+                            pool_ptr += 1
+                            if abs(c["start"] - sc_st) > 35.0 and c["start"] + dur < total_duration - 1.0:
+                                cand = c
+                                break
+                    if cand is None:
+                        v_st = round((sc_st + 120.0) % max(1.0, total_duration - 10.0), 2)
+                    else:
+                        v_st = round(cand["start"], 2)
+
+                    v_en = round(v_st + dur, 2)
+                    sh["video_start"] = v_st
+                    sh["video_end"] = v_en
+                    sh["desc"] = f"{sh.get('desc', 'Shot')} [B-ROLL ĐỔI HÌNH ẢNH: {v_st:.1f}s -> {v_en:.1f}s]"
+                    _log(f"   🔄 Cú máy {k+1}: Audio=[{st:.2f}s -> {en:.2f}s] | Video=[{v_st:.2f}s -> {v_en:.2f}s] (B-ROLL ĐỔI HÌNH ẢNH)")
+
+        return scenes
+
+    @classmethod
+    def _subdivide_long_shots(cls, shots: List[Dict[str, Any]], max_shot_dur: float = 12.0) -> List[Dict[str, Any]]:
+        """Chỉ chia nhỏ những shot quá dài (> 12.0s) để giữ nhịp tự nhiên 5s - 8s,
+        tuyệt đối không băm vụn cú máy xuống 1-2s gây giật mắt!
         """
         camera_roles_cycle = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
         final_shots = []
@@ -232,8 +336,8 @@ Respond ONLY with a valid JSON object matching this schema:
                 final_shots.append(sh)
                 continue
 
-            # Chia thành N sub-shots cân đối ~4s - 6s
-            num_sub = max(2, int(round(dur / 5.5)))
+            # Chia thành N sub-shots cân đối ~6s - 7.5s
+            num_sub = max(2, int(round(dur / 6.5)))
             sub_step = dur / float(num_sub)
             for k in range(num_sub):
                 sub_st = round(st + k * sub_step, 2)
@@ -318,10 +422,10 @@ Respond ONLY with a valid JSON object matching this schema:
             if last_sc_shots:
                 last_sc_shots[-1]["end"] = round(min(end_bound, last_sc_shots[-1]["end"] + deficit + 1.0), 2)
 
-        # KHÓA CỨNG: Tự động chia nhỏ mọi shot > 7.5s thành các góc máy 4s-6s linh hoạt
+        # KHÓA CỨNG: Tự động chia nhỏ mọi shot > 12.0s
         for sc in cleaned_scenes:
             if sc.get("shots"):
-                sc["shots"] = cls._subdivide_long_shots(sc["shots"], max_shot_dur=7.5)
+                sc["shots"] = cls._subdivide_long_shots(sc["shots"], max_shot_dur=12.0)
 
         return cleaned_scenes
 
@@ -409,36 +513,42 @@ Respond ONLY with a valid JSON object matching this schema:
         - Shot 4: Phản ứng đối phương / Câu kết luận (speaker_right)
         """
         sc_dur = max(6.0, sc_end - sc_start)
-        
+        # Đạo diễn chỉ định số shot linh hoạt dựa trên thời lượng và số câu:
+        if sc_dur < 14.0:
+            target_num_shots = 2
+        elif sc_dur < 22.0:
+            target_num_shots = 3
+        else:
+            target_num_shots = 4 if sc_dur >= 26.0 else 3
+
         # Nếu có danh sách câu hoàn chỉnh trong cảnh, sử dụng ranh giới câu làm điểm cắt shot
         cut_points = [sc_start]
         if scene_sents and len(scene_sents) >= 2:
-            s_starts = [s["start"] for s in scene_sents if sc_start + 3.0 < s["start"] < sc_end - 3.0]
+            s_starts = [s["start"] for s in scene_sents if sc_start + 4.5 < s["start"] < sc_end - 4.0]
             if s_starts:
-                # Lấy tối đa 2-3 điểm cắt câu cách nhau tối thiểu 4.0s
+                # Lấy các điểm cắt câu cách nhau tối thiểu 4.8s theo chỉ định của Đạo diễn
                 last_p = sc_start
                 for st in s_starts:
-                    if st - last_p >= 4.0 and sc_end - st >= 3.5:
+                    if st - last_p >= 4.8 and sc_end - st >= 4.0:
                         cut_points.append(round(st, 2))
                         last_p = st
-                        if len(cut_points) >= 4:
+                        if len(cut_points) >= target_num_shots:
                             break
 
         if len(cut_points) == 1:
-            # Fallback nếu cảnh ít câu: tìm mốc đổi người nói '>>' hoặc ngắt câu
-            num_shots = 4 if sc_dur >= 24.0 else 3
-            ideal_step = sc_dur / float(num_shots)
+            # Fallback nếu cảnh ít câu: tìm mốc đổi người nói '>>' hoặc chia đều theo chỉ định của Đạo diễn
+            ideal_step = sc_dur / float(target_num_shots)
             scene_cues = [
                 c for c in cues
-                if float(c.get("start", 0.0)) > sc_start + 3.2 and float(c.get("start", 0.0)) < sc_end - 3.2
+                if float(c.get("start", 0.0)) > sc_start + 4.0 and float(c.get("start", 0.0)) < sc_end - 4.0
             ]
-            for k in range(1, num_shots):
+            for k in range(1, target_num_shots):
                 target_t = sc_start + k * ideal_step
                 best_t = target_t
                 best_cost = 999.0
                 for c in scene_cues:
                     c_st = float(c.get("start", 0.0))
-                    if c_st <= cut_points[-1] + 3.2 or c_st >= sc_end - 3.0:
+                    if c_st <= cut_points[-1] + 4.2 or c_st >= sc_end - 4.0:
                         continue
                     dist = abs(c_st - target_t)
                     txt = str(c.get("text", "")).strip()
@@ -478,7 +588,7 @@ Respond ONLY with a valid JSON object matching this schema:
                 "camera_role": role,
                 "desc": f"Scene {sc_idx+1} Shot {sh_i+1} ({role})"
             })
-        return cls._subdivide_long_shots(shots, max_shot_dur=7.5)
+        return cls._subdivide_long_shots(shots, max_shot_dur=12.0)
 
     @classmethod
     def _build_heuristic_continuous_scenes(

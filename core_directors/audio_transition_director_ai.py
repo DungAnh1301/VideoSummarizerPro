@@ -98,6 +98,14 @@ class AudioTransitionDirectorAI:
                 item = dict(sh)
                 item["start"] = round(cur_shot_st, 2)
                 item["end"] = round(s_en, 2)
+                item["audio_start"] = item["start"]
+                item["audio_end"] = item["end"]
+                dur = item["end"] - item["start"]
+                if not item.get("is_anchor", True):
+                    item["video_end"] = round(float(item.get("video_start", item["start"])) + dur, 2)
+                else:
+                    item["video_start"] = item["start"]
+                    item["video_end"] = item["end"]
                 audited_shots.append(item)
                 cur_shot_st = item["end"]
 
