@@ -561,6 +561,10 @@ class VisualEditorEngine:
             last_a = next_a
 
         full_chain = ";".join(filter_v_chains + filter_a_chains)
+        _log(f"   🌪️ [CHUYỂN CẢNH HOLLYWOOD] Ghép nối {len(scene_files)} cảnh bằng Motion Blur (xfade=hblur {transition_duration}s) tại {len(transition_timestamps)} điểm nối:")
+        for t_idx, t_pos in enumerate(transition_timestamps):
+            _log(f"      • Điểm nối {t_idx+1}: tại giây {t_pos:.2f}s (Cảnh {t_idx+1} -> Cảnh {t_idx+2})")
+
         cmd_merge = [
             "ffmpeg", "-y",
             *inputs_cmd,
@@ -571,5 +575,6 @@ class VisualEditorEngine:
             output_merged_path
         ]
         _ff_run(cmd_merge, log_fn=log_fn, timeout=600, label="merge_xfade")
-        _log(f"✅ [NHÂN VIÊN 1] Đã hoàn thành ghép nối {len(scene_files)} cảnh: {output_merged_path} ({probe_duration_sec(output_merged_path):.1f}s)")
+        merged_dur = probe_duration_sec(output_merged_path)
+        _log(f"✅ [NHÂN VIÊN 1] Đã hoàn thành ghép nối {len(scene_files)} cảnh: {output_merged_path} (Thời lượng: {merged_dur:.2f}s)")
         return output_merged_path, transition_timestamps

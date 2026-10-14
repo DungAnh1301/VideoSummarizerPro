@@ -191,6 +191,25 @@ Respond ONLY with a valid JSON object matching this schema:
             target_part_dur=target_part_duration
         )
         sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=75.0)
+
+        tot_dur = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in sanitized if sc.get("shots"))
+        tot_shots = sum(len(sc.get("shots", [])) for sc in sanitized)
+        _log(f"📋 [KỊCH BẢN CHI TIẾT PART {part_index}] Dự kiến: {tot_dur:.2f}s ({len(sanitized)} Cảnh, {tot_shots} Cú máy):")
+        for sc in sanitized:
+            shots = sc.get("shots", [])
+            if not shots:
+                continue
+            sc_st = shots[0]["start"]
+            sc_en = shots[-1]["end"]
+            sc_dur = sc_en - sc_st
+            _log(f"   🎬 Cảnh {sc.get('scene_id')}: [{sc_st:.2f}s -> {sc_en:.2f}s] ({sc_dur:.2f}s | {len(shots)} cú máy):")
+            for k, sh in enumerate(shots):
+                sh_dur = float(sh["end"]) - float(sh["start"])
+                punch_str = " 🔥 [PUNCH ZOOM 1.18x]" if sh.get("punch") else ""
+                role = str(sh.get("camera_role", "shot"))
+                pan = str(sh.get("pan", "center")).upper()
+                _log(f"      • Cú máy {k+1}: [{sh['start']:.2f}s -> {sh['end']:.2f}s] ({sh_dur:.2f}s) | Góc: {pan} ({role}){punch_str}")
+
         return {
             "part_index": part_index,
             "title": title,

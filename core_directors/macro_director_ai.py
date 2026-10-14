@@ -181,6 +181,13 @@ Respond ONLY with a valid JSON object matching this schema:
                 "cliffhanger_topic": f"Cliffhanger transition to Part {i + 2}" if i + 1 < part_count else "Final resolution"
             })
 
+        _log(f"📋 [KẾ HOẠCH VĨ MÔ SERIES] Phân bổ {len(parts)} Parts từ video {total_duration/60:.1f} phút:")
+        for p in parts:
+            p_idx = p["part_index"]
+            st, en = p["source_time_range"]
+            dur = en - st
+            _log(f"   • Part {p_idx}: [{st:.1f}s -> {en:.1f}s] (Khung nguồn: {dur/60:.1f} phút | {dur:.0f}s) -> '{p['part_title']}'")
+
         return {
             "series_title": master_title or "Viral Series",
             "genre": genre,

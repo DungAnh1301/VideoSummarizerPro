@@ -403,5 +403,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             work_dir=work_dir
         )
 
-        _log(f"🎉 [NHÂN VIÊN 3] Xuất xưởng kiệt tác Part {part_index} hoàn chỉnh 100%: {output_final} ({probe_duration_sec(output_final):.1f}s)")
+        final_dur = probe_duration_sec(output_final)
+        _log(f"🎉 [NHÂN VIÊN 3] Xuất xưởng kiệt tác {part_prefix} {part_index} hoàn chỉnh 100%: {output_final} (Thời lượng chính xác: {final_dur:.2f}s)")
         return final_result

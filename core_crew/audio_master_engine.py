@@ -106,6 +106,8 @@ class AudioMasterEngine:
             output_path
         ])
 
+        _log(f"🎧 [NHÂN VIÊN 2] Bắt đầu Master Audio: Mix {len(transition_timestamps)} Whoosh SFX tại các mốc: {', '.join(f'{t:.2f}s' for t in transition_timestamps)} + Tension BGM Bed...")
         _ff_run(cmd_audio, log_fn=log_fn, timeout=600, label="audio_master")
-        _log(f"✅ [NHÂN VIÊN 2] Hoàn tất Master Audio chuẩn {target_lufs:.1f} LUFS: {output_path}")
+        mastered_dur = probe_duration_sec(output_path)
+        _log(f"✅ [NHÂN VIÊN 2] Hoàn tất Master Audio chuẩn EBU R128 ({target_lufs:.1f} LUFS): {output_path} (Thời lượng: {mastered_dur:.2f}s)")
         return output_path
