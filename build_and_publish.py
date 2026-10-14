@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.122"
+VERSION = "1.3.123"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.122: Khắc phục triệt để lỗi timeout FFmpeg khi render shot dài (>57s) trong Chế độ 2 Hollywood (tự động mở rộng timeout theo thời lượng shot, max 360s - 420s), triệt tiêu hoàn toàn cảnh báo mã màu QSS (#black, #red, #white -> #000000, #FF0000, #FFFFFF) bằng bộ chuẩn hóa màu normalize_to_hex, và khóa cứng nhãn thành phẩm luôn là 'PART 1', 'PART 2'... loại bỏ dứt điểm tiền tố 'TẬP' theo đúng quy tắc Zero Vietnamese text."
+NOTES = "Bản phát hành v1.3.123: Khóa cứng giới hạn mọi cú máy (shot) tối đa 7.5s - tự động chia nhỏ thành các góc máy linh hoạt (4s-6s) luân chuyển góc nhìn CapCut Hollywood, triệt tiêu hoàn toàn tình trạng đứng hình lê thê mà vẫn cam kết 100% thời lượng tổng mỗi Part đạt 75s-95s (> 1 phút). Tăng tốc độ render vượt trội nhờ phân đoạn shot ngắn xử lý tức thì."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

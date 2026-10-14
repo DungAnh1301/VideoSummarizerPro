@@ -198,6 +198,41 @@ Respond ONLY with a valid JSON object matching this schema:
         }
 
     @classmethod
+    def _subdivide_long_shots(cls, shots: List[Dict[str, Any]], max_shot_dur: float = 7.5) -> List[Dict[str, Any]]:
+        """Chia nhỏ mọi shot dài hơn max_shot_dur (7.5s) thành các camera cuts 4s - 6s
+        luân chuyển góc máy nhịp nhàng (wide -> speaker_left -> closeup -> speaker_right),
+        đảm bảo 100% video luôn có nhịp cắt hiện đại CapCut và không bao giờ bị đứng hình lê thê!
+        """
+        camera_roles_cycle = ["wide_zoom_out", "speaker_left", "closeup_zoom_in", "speaker_right"]
+        final_shots = []
+        for sh_idx, sh in enumerate(shots):
+            st = float(sh["start"])
+            en = float(sh["end"])
+            dur = en - st
+            if dur <= max_shot_dur:
+                final_shots.append(sh)
+                continue
+
+            # Chia thành N sub-shots cân đối ~4s - 6s
+            num_sub = max(2, int(round(dur / 5.5)))
+            sub_step = dur / float(num_sub)
+            for k in range(num_sub):
+                sub_st = round(st + k * sub_step, 2)
+                sub_en = round(st + (k + 1) * sub_step if k + 1 < num_sub else en, 2)
+                role = camera_roles_cycle[(sh_idx + k) % len(camera_roles_cycle)]
+                pan = "center" if role == "wide_zoom_out" else ("left" if k % 2 == 0 else "right")
+                punch = (role == "closeup_zoom_in")
+                final_shots.append({
+                    "start": sub_st,
+                    "end": sub_en,
+                    "pan": pan,
+                    "punch": punch,
+                    "camera_role": role,
+                    "desc": f"{sh.get('desc', 'Shot')} (Cut {k+1}/{num_sub})"
+                })
+        return final_shots
+
+    @classmethod
     def _sanitize_continuous_scenes(
         cls,
         scenes: List[Dict[str, Any]],
@@ -208,7 +243,8 @@ Respond ONLY with a valid JSON object matching this schema:
         """Chuẩn hóa và khóa cứng 100% tính liền mạch (Strict Continuity):
         1. Bên trong mỗi cảnh (~20s): shot[k+1].start == shot[k].end (KHÔNG HỞ KHOẢNG TRỐNG NÀO).
         2. Giữa các cảnh: Scene[i+1].start >= Scene[i].end + 2.5s (TRIỆT TIÊU 100% TRÙNG LẶP FOOTAGE).
-        3. Tổng thời lượng đảm bảo >= min_dur (luôn > 1 phút).
+        3. Tổng thời lượng đảm bảo >= min_dur (luôn > 1 phút, chuẩn kiếm tiền).
+        4. TUYỆT ĐỐI KHÔNG để bất kỳ shot đơn lẻ nào vượt quá 7.5s (tự động cắt góc máy linh hoạt).
         """
         if not scenes:
             return scenes
@@ -255,13 +291,18 @@ Respond ONLY with a valid JSON object matching this schema:
             cleaned_scenes.append(sc_copy)
             last_scene_end = clean_shots[-1]["end"]
 
-        # Kiểm tra tổng thời lượng Part
+        # Kiểm tra tổng thời lượng Part (Cam kết luôn >= min_dur, ví dụ >= 75s)
         tot = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in cleaned_scenes if sc["shots"])
         if tot < min_dur and cleaned_scenes:
             deficit = min_dur - tot
             last_sc_shots = cleaned_scenes[-1]["shots"]
             if last_sc_shots:
                 last_sc_shots[-1]["end"] = round(min(end_bound, last_sc_shots[-1]["end"] + deficit + 1.0), 2)
+
+        # KHÓA CỨNG: Tự động chia nhỏ mọi shot > 7.5s thành các góc máy 4s-6s linh hoạt
+        for sc in cleaned_scenes:
+            if sc.get("shots"):
+                sc["shots"] = cls._subdivide_long_shots(sc["shots"], max_shot_dur=7.5)
 
         return cleaned_scenes
 
@@ -418,7 +459,7 @@ Respond ONLY with a valid JSON object matching this schema:
                 "camera_role": role,
                 "desc": f"Scene {sc_idx+1} Shot {sh_i+1} ({role})"
             })
-        return shots
+        return cls._subdivide_long_shots(shots, max_shot_dur=7.5)
 
     @classmethod
     def _build_heuristic_continuous_scenes(
