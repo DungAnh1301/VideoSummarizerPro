@@ -173,7 +173,7 @@ Respond ONLY with a valid JSON object matching this schema:
                         if isinstance(data, dict) and data.get("scenes") and len(data["scenes"]) >= 4:
                             _log(f"✅ [ĐẠO DIỄN 2] AI Cloud đã phê duyệt {len(data['scenes'])} phân cảnh liền mạch (~20s/cảnh) cho Part {part_index}!")
                             sanitized = cls._sanitize_continuous_scenes(data["scenes"], start_bound, end_bound, min_dur=75.0)
-                            sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, log_fn=_log)
+                            sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, start_bound=start_bound, end_bound=end_bound, log_fn=_log)
                             return {
                                 "part_index": part_index,
                                 "title": title,
@@ -192,8 +192,8 @@ Respond ONLY with a valid JSON object matching this schema:
             target_part_dur=target_part_duration
         )
         sanitized = cls._sanitize_continuous_scenes(scenes, start_bound, end_bound, min_dur=75.0)
-        # ÁP DỤNG MA TRẬN ĐẠO DIỄN: 1 CÚ MÁY GIỮ SOURCE GỐC, TOÀN BỘ CÚ MÁY CÒN LẠI TRÁO ĐỔI HÌNH ẢNH B-ROLL
-        sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, log_fn=_log)
+        # ÁP DỤNG MA TRẬN ĐẠO DIỄN: 50% SOURCE GỐC, 50% B-ROLL CÙNG NGỮ CẢNH PART
+        sanitized = cls._apply_footage_swapping_matrix(sanitized, cues, total_duration, start_bound=start_bound, end_bound=end_bound, log_fn=_log)
 
         tot_dur = sum(sc["shots"][-1]["end"] - sc["shots"][0]["start"] for sc in sanitized if sc.get("shots"))
         tot_shots = sum(len(sc.get("shots", [])) for sc in sanitized)
@@ -229,14 +229,23 @@ Respond ONLY with a valid JSON object matching this schema:
         scenes: List[Dict[str, Any]],
         cues: List[Dict[str, Any]],
         total_duration: float,
+        start_bound: float = 0.0,
+        end_bound: float = 0.0,
         log_fn=None
     ) -> List[Dict[str, Any]]:
-        """Quy tắc B-Roll Footage Replacement Matrix (Đạo Diễn Chỉ Định):
+        """Quy tắc Ma Trận Cân Bằng 50:50 & B-Roll Cùng Ngữ Cảnh (Context-Aware 50:50 Matrix):
         - ÂM THANH: 100% chuẩn liền mạch theo từng phân cảnh (Zero Audio Cut).
-        - HÌNH ẢNH: Trong số N shots do đạo diễn chỉ định (2, 3, hoặc 4 shots):
-          + DUY NHẤT 1 SHOT là giữ Source Gốc (Anchor Shot) để khớp khẩu hình & bối cảnh.
-          + TẤT CẢ CÁC SHOT CÒN LẠI (N - 1 shots) ĐỀU ĐƯỢC TRÁO ĐỔI HÌNH ẢNH bằng các đoạn B-roll/Action từ chỗ khác trong video!
-          + Vị trí shot giữ gốc luân phiên giữa các cảnh (Cảnh 1: Shot 1, Cảnh 2: Shot 2, Cảnh 3: Shot 3...) để robot quét bản quyền không thể đoán trước.
+        - HÌNH ẢNH (Tỷ lệ 50:50 Điện Ảnh):
+          + 50% cú máy giữ SOURCE GỐC (Anchor Shot): Thiết lập bối cảnh, mặt người nói/hành động chính.
+          + 50% cú máy tráo đổi HÌNH ẢNH B-ROLL MINH HỌA (Cutaway Shots) xen kẽ nhịp nhàng.
+            • Cảnh 2 shot: Shot 1 GỐC, Shot 2 B-ROLL (50% : 50%)
+            • Cảnh 3 shot: Shot 1 GỐC, Shot 2 B-ROLL, Shot 3 GỐC (Kẹp B-roll ở giữa, mở và kết bằng người nói)
+            • Cảnh 4 shot: Shot 1 GỐC, Shot 2 B-ROLL, Shot 3 GỐC, Shot 4 B-ROLL (50% : 50%)
+        - ĐẠO DIỄN CHỌN B-ROLL CÙNG NGỮ CẢNH (Context-Aware Localized Pool):
+          + Toàn bộ B-roll được ưu tiên lấy NGAY TRONG KHUNG THỜI GIAN CỦA PART ĐÓ (hoặc phân đoạn lân cận +-45s).
+          + Nhờ vậy, hình ảnh B-roll minh họa 100% đồng nhất: cùng trang phục, cùng bối cảnh, cùng chi tiết máy/xe đang làm!
+          + Tuyệt đối không bao giờ lấy B-roll xa lạ ở tận cuối video (phút 30).
+          + Cách ly an toàn >= 20s so với câu thoại đang nói, và không trùng lặp các mốc B-roll giữa các cảnh.
         """
         def _log(msg: str):
             logger.info(msg)
@@ -246,31 +255,57 @@ Respond ONLY with a valid JSON object matching this schema:
                 except Exception:
                     pass
 
-        broll_pool = []
+        # 1. Xây dựng Kho B-Roll cùng ngữ cảnh của Part (Local Context Pool)
+        w_st = max(25.0, start_bound - 30.0) if start_bound > 0 else 25.0
+        w_en = min(total_duration - 5.0, end_bound + 45.0) if (end_bound > 0 and total_duration > 0) else total_duration
+
+        local_brolls = []
         for i in range(len(cues) - 1):
-            gap = cues[i + 1]["start"] - cues[i]["end"]
-            # Bỏ qua các đoạn trailer teaser mở đầu (< 25s) và chỉ lấy các cú máy êm (gap >= 3.0s)
-            if gap >= 3.0 and float(cues[i]["end"]) >= 25.0:
-                broll_pool.append({
-                    "start": round(float(cues[i]["end"]), 2),
-                    "end": round(float(cues[i + 1]["start"]), 2),
-                    "dur": round(float(gap), 2)
+            g_st = float(cues[i]["end"])
+            g_en = float(cues[i + 1]["start"])
+            gap = g_en - g_st
+            # Ưu tiên các khoảng lặng không lời thoại ngay trong khung thời gian của Part
+            if gap >= 2.0 and g_st >= w_st and g_en <= w_en:
+                local_brolls.append({
+                    "start": round(g_st, 2),
+                    "end": round(g_en, 2),
+                    "dur": round(gap, 2),
+                    "type": "local_gap"
                 })
 
-        # Ưu tiên các đoạn B-roll dài, êm mượt lên đầu
-        broll_pool.sort(key=lambda x: x["dur"], reverse=True)
+        local_brolls.sort(key=lambda x: x["dur"], reverse=True)
 
-        if len(broll_pool) < 25 and total_duration > 30.0:
-            step = total_duration / 35.0
-            for s in range(1, 34):
-                cand_st = round(s * step, 2)
-                broll_pool.append({
-                    "start": cand_st,
-                    "end": round(cand_st + 6.0, 2),
-                    "dur": 6.0
+        # Lấy thêm các mốc visual sampling trong khung Part để làm phong phú nguồn B-roll
+        span = w_en - w_st
+        if span > 20.0:
+            step = max(18.0, span / 18.0)
+            curr = w_st + 12.0
+            while curr < w_en - 6.0:
+                local_brolls.append({
+                    "start": round(curr, 2),
+                    "end": round(curr + 6.0, 2),
+                    "dur": 6.0,
+                    "type": "local_sample"
+                })
+                curr += step
+
+        # Kho mở rộng lân cận (Extended Window) nếu Part quá ít cảnh
+        ext_st = max(25.0, start_bound - 90.0) if start_bound > 0 else 25.0
+        ext_en = min(total_duration - 5.0, end_bound + 120.0) if (end_bound > 0 and total_duration > 0) else total_duration
+        ext_brolls = []
+        for i in range(len(cues) - 1):
+            g_st = float(cues[i]["end"])
+            g_en = float(cues[i + 1]["start"])
+            gap = g_en - g_st
+            if gap >= 2.0 and g_st >= ext_st and g_en <= ext_en:
+                ext_brolls.append({
+                    "start": round(g_st, 2),
+                    "end": round(g_en, 2),
+                    "dur": round(gap, 2),
+                    "type": "ext_gap"
                 })
 
-        pool_ptr = 0
+        used_broll_ranges = []
 
         for sc_idx, sc in enumerate(scenes):
             shots = sc.get("shots", [])
@@ -280,11 +315,12 @@ Respond ONLY with a valid JSON object matching this schema:
 
             sc_st = float(shots[0]["start"])
             sc_en = float(shots[-1]["end"])
-            
-            # Đạo diễn chỉ định vị trí Shot giữ Source Gốc (luân phiên thông minh giữa các cảnh)
-            anchor_idx = sc_idx % num_shots
 
-            _log(f"🎬 [ĐẠO DIỄN CHỈ ĐỊNH CẢNH {sc.get('scene_id', sc_idx+1)}] {num_shots} cú máy | Cú máy {anchor_idx+1} giữ Source Gốc, {num_shots-1} cú máy còn lại TRÁO HÌNH ẢNH B-ROLL:")
+            # Đạo diễn áp dụng tỷ lệ 50:50 xen kẽ (Shot chẵn: Gốc, Shot lẻ: B-roll)
+            num_brolls = num_shots // 2
+            num_anchors = num_shots - num_brolls
+
+            _log(f"🎬 [ĐẠO DIỄN CẢNH {sc.get('scene_id', sc_idx+1)}] {num_shots} cú máy | Tỷ lệ 50:50: {num_anchors} cú máy GỐC CHUẨN, {num_brolls} cú máy B-ROLL CÙNG NGỮ CẢNH ({start_bound:.0f}s - {end_bound:.0f}s):")
 
             for k, sh in enumerate(shots):
                 st = float(sh["start"])
@@ -294,34 +330,55 @@ Respond ONLY with a valid JSON object matching this schema:
                 sh["audio_start"] = round(st, 2)
                 sh["audio_end"] = round(en, 2)
 
-                if k == anchor_idx:
-                    # CÚ MÁY DUY NHẤT GIỮ SOURCE GỐC
+                # TỶ LỆ 50:50 XEN KẼ
+                is_anchor = (k % 2 == 0)
+
+                if is_anchor:
+                    # CÚ MÁY SOURCE GỐC (Khớp mặt người nói & bối cảnh câu chuyện)
                     sh["is_anchor"] = True
                     sh["video_start"] = round(st, 2)
                     sh["video_end"] = round(en, 2)
                     sh["desc"] = f"{sh.get('desc', 'Shot')} [SOURCE GỐC CHUẨN]"
                     _log(f"   🌟 Cú máy {k+1}: Audio=[{st:.2f}s -> {en:.2f}s] | Video=[{st:.2f}s -> {en:.2f}s] (SOURCE GỐC CHUẨN)")
                 else:
-                    # CÁC CÚ MÁY CÒN LẠI: TRÁO ĐỔI HÌNH ẢNH B-ROLL TỪ CHỖ KHÁC
+                    # CÚ MÁY B-ROLL MINH HỌA (Lấy trong cùng Part, cách ly >= 20s, không trùng lặp)
                     sh["is_anchor"] = False
                     cand = None
-                    if broll_pool:
-                        for _ in range(len(broll_pool)):
-                            c = broll_pool[pool_ptr % len(broll_pool)]
-                            pool_ptr += 1
-                            if abs(c["start"] - sc_st) > 35.0 and c["start"] + dur < total_duration - 1.0:
-                                cand = c
-                                break
+
+                    # Ưu tiên 1: Kho B-roll cùng ngữ cảnh Part
+                    for c in local_brolls:
+                        c_st = float(c["start"])
+                        # Cách ly an toàn với cảnh hiện tại
+                        if abs(c_st - sc_st) >= 20.0 and not (sc_st - 5.0 <= c_st <= sc_en + 5.0):
+                            if not any(abs(c_st - u_st) < 6.0 for u_st, u_en in used_broll_ranges):
+                                if c_st + dur < total_duration - 1.0:
+                                    cand = c
+                                    break
+
+                    # Ưu tiên 2: Kho lân cận mở rộng
                     if cand is None:
-                        v_st = round((sc_st + 120.0) % max(1.0, total_duration - 10.0), 2)
+                        for c in ext_brolls:
+                            c_st = float(c["start"])
+                            if abs(c_st - sc_st) >= 25.0 and not (sc_st - 5.0 <= c_st <= sc_en + 5.0):
+                                if not any(abs(c_st - u_st) < 6.0 for u_st, u_en in used_broll_ranges):
+                                    if c_st + dur < total_duration - 1.0:
+                                        cand = c
+                                        break
+
+                    if cand is not None:
+                        v_st = round(float(cand["start"]), 2)
                     else:
-                        v_st = round(cand["start"], 2)
+                        # Dự phòng cục bộ thông minh trong chính Part đó
+                        offset = 35.0 + float(len(used_broll_ranges)) * 18.0
+                        v_st = round((sc_st + offset - w_st) % max(1.0, w_en - w_st - dur) + w_st, 2)
 
                     v_en = round(v_st + dur, 2)
+                    used_broll_ranges.append((v_st, v_en))
+
                     sh["video_start"] = v_st
                     sh["video_end"] = v_en
-                    sh["desc"] = f"{sh.get('desc', 'Shot')} [B-ROLL ĐỔI HÌNH ẢNH: {v_st:.1f}s -> {v_en:.1f}s]"
-                    _log(f"   🔄 Cú máy {k+1}: Audio=[{st:.2f}s -> {en:.2f}s] | Video=[{v_st:.2f}s -> {v_en:.2f}s] (B-ROLL ĐỔI HÌNH ẢNH)")
+                    sh["desc"] = f"{sh.get('desc', 'Shot')} [B-ROLL CÙNG PART: {v_st:.1f}s -> {v_en:.1f}s]"
+                    _log(f"   🔄 Cú máy {k+1}: Audio=[{st:.2f}s -> {en:.2f}s] | Video=[{v_st:.2f}s -> {v_en:.2f}s] (B-ROLL CÙNG PART {start_bound:.0f}s-{end_bound:.0f}s)")
 
         return scenes
 
