@@ -100,6 +100,7 @@ class AutoYouTubePipeline:
         compute_type = "float16" if device == "cuda" else "int8"
         
         logger.info(f"Kích hoạt mô hình Faster-Whisper (device={device}, compute_type={compute_type})...")
+        from faster_whisper import WhisperModel
         model = WhisperModel("base", device=device, compute_type=compute_type)
         
         segments, info = model.transcribe(video_path, beam_size=5, language="en")

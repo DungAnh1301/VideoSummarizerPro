@@ -33,10 +33,10 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "apply_subtle_zoom": True,
         "audio_boost": 6.0,
         "part_label_prefix": "PART",
-        "sub_style_type": "safe_zone_arial",
-        "sub_size": 48,
-        "sub_outline": 3.5,
-        "sub_shadow": 1.5,
+        "sub_style_type": "capcut_word_highlight",
+        "sub_size": 55,
+        "sub_outline": 4.5,
+        "sub_shadow": 2.5,
         "sub_margin_v": 420,
     },
     "Lách Bản Quyền An Toàn (Zoom 106%, Lật Gương)": {
@@ -58,10 +58,10 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "apply_subtle_zoom": True,
         "audio_boost": 6.0,
         "part_label_prefix": "PART",
-        "sub_style_type": "safe_zone_arial",
-        "sub_size": 48,
-        "sub_outline": 3.5,
-        "sub_shadow": 1.5,
+        "sub_style_type": "capcut_word_highlight",
+        "sub_size": 55,
+        "sub_outline": 4.5,
+        "sub_shadow": 2.5,
         "sub_margin_v": 420,
     },
     "Gaming Nhịp Nhanh (1.1x, Sub Nổi)": {
@@ -83,10 +83,10 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "apply_subtle_zoom": True,
         "audio_boost": 6.0,
         "part_label_prefix": "PART",
-        "sub_style_type": "safe_zone_arial",
-        "sub_size": 48,
-        "sub_outline": 3.5,
-        "sub_shadow": 1.5,
+        "sub_style_type": "capcut_word_highlight",
+        "sub_size": 55,
+        "sub_outline": 4.5,
+        "sub_shadow": 2.5,
         "sub_margin_v": 420,
     },
     "Phim & Kể Chuyện (PART X, 1.0x)": {
@@ -108,10 +108,10 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "apply_subtle_zoom": True,
         "audio_boost": 6.0,
         "part_label_prefix": "PART",
-        "sub_style_type": "safe_zone_arial",
-        "sub_size": 48,
-        "sub_outline": 3.5,
-        "sub_shadow": 1.5,
+        "sub_style_type": "capcut_word_highlight",
+        "sub_size": 55,
+        "sub_outline": 4.5,
+        "sub_shadow": 2.5,
         "sub_margin_v": 420,
     }
 }
@@ -215,13 +215,18 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "title_color2": "red",
     "title_outline_color": "none",
     "title_bg_color": "white",
-    "sub_style_type": "safe_zone_arial",
-    "sub_size": 48,
-    "sub_outline": 3.5,
-    "sub_shadow": 1.5,
+    "sub_style_type": "capcut_word_highlight",
+    "sub_size": 55,
+    "sub_outline": 4.5,
+    "sub_shadow": 2.5,
     "sub_margin_v": 420,
     "sub_color": "&H00FFFFFF&",
     "sub_outline_color": "&H00000000&",
+    "target_scene_count": 5,                    # Số phân cảnh cốt lõi mỗi Part (Mặc định: 5)
+    "transition_duration": 0.35,                # Thời lượng chuyển cảnh Motion Blur (s)
+    "zero_truncation": True,                    # Khóa câu thoại hoàn chỉnh không ngắt cụt câu
+    "enable_sfx_bgm": True,                     # Bật Whoosh SFX & Tension BGM Bed
+    "auto_sub": True,                           # Bật bóc sub Whisper & phụ đề động CapCut Highlight
     "gemini_grid_inspector": False,             # Quét lưới AI xóa logo & sub cũ (Tắt mặc định để xuất sạch & nhanh)
     "qc_blur_strength": 75,                     # Độ mờ che logo / sub AI (10% - 100%)
     "cleanup_temp_after_export": False,

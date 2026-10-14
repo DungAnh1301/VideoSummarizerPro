@@ -108,6 +108,12 @@ class PartSplitterFrame(ttk.Frame):
         self.prune_range_label_var = tk.StringVar()
 
         self.part_count_var = tk.IntVar(value=int(c.get("part_count", 6)))
+        self.target_scene_count_var = tk.IntVar(value=int(c.get("target_scene_count", 5)))
+        self.transition_dur_var = tk.DoubleVar(value=float(c.get("transition_duration", 0.35)))
+        self.zero_truncation_var = tk.BooleanVar(value=bool(c.get("zero_truncation", True)))
+        self.enable_sfx_bgm_var = tk.BooleanVar(value=bool(c.get("enable_sfx_bgm", True)))
+        self.motion_blur_var = tk.BooleanVar(value=bool(c.get("motion_blur_transition", True)))
+        self.auto_sub_var = tk.BooleanVar(value=bool(c.get("auto_sub", True)))
 
         # --- Tab 3: Hậu kỳ Video Gốc (Đóng gói chuẩn đối thủ) ---
         self.enable_competitor_layout_var = tk.BooleanVar(value=bool(c.get("enable_competitor_layout", True)))
@@ -345,6 +351,7 @@ class PartSplitterFrame(ttk.Frame):
         # Khung tham số cho Dựng Tinh Hoa Đối Thủ (Hollywood AI Film Crew)
         self.viral_settings_frame = ttk.Frame(self.editor_mode_box)
         self.viral_settings_frame.pack(fill=tk.X, pady=2)
+
         ttk.Label(self.viral_settings_frame, text="Số Part cần chia:").pack(side=tk.LEFT, padx=(2, 4))
         self.part_count_spin = ttk.Spinbox(
             self.viral_settings_frame, from_=2, to=20, increment=1,
@@ -364,13 +371,13 @@ class PartSplitterFrame(ttk.Frame):
         self.genre_cb = ttk.Combobox(
             self.viral_settings_frame, textvariable=self.genre_var,
             values=["reality", "gaming", "storytelling", "movie_recap"],
-            width=12, state="readonly"
+            width=14, state="readonly"
         )
-        self.genre_cb.pack(side=tk.LEFT, padx=(0, 8))
+        self.genre_cb.pack(side=tk.LEFT, padx=(0, 12))
 
         ttk.Label(
             self.viral_settings_frame,
-            text="(4-5 cảnh/Part, Whoosh SFX, BGM Tension & Safe Zone Sub)",
+            text="(⭐ Tự động 100%: Lọc 4-5 cảnh cốt lõi, âm thanh -14 LUFS, Whoosh SFX & Phụ đề CapCut Highlight)",
             foreground="#2563EB", font=("Segoe UI Semibold", 8)
         ).pack(side=tk.LEFT)
 
@@ -620,6 +627,19 @@ class PartSplitterFrame(ttk.Frame):
             self.competitor_top_card_var.set(bool(c.get("competitor_top_card", True)))
             self.competitor_bottom_badge_var.set(bool(c.get("competitor_bottom_badge", True)))
 
+            if hasattr(self, "target_scene_count_var"):
+                self.target_scene_count_var.set(int(c.get("target_scene_count", 5)))
+            if hasattr(self, "transition_dur_var"):
+                self.transition_dur_var.set(float(c.get("transition_duration", 0.35)))
+            if hasattr(self, "zero_truncation_var"):
+                self.zero_truncation_var.set(bool(c.get("zero_truncation", True)))
+            if hasattr(self, "enable_sfx_bgm_var"):
+                self.enable_sfx_bgm_var.set(bool(c.get("enable_sfx_bgm", True)))
+            if hasattr(self, "motion_blur_var"):
+                self.motion_blur_var.set(bool(c.get("motion_blur_transition", True)))
+            if hasattr(self, "auto_sub_var"):
+                self.auto_sub_var.set(bool(c.get("auto_sub", True)))
+
             self.prune_enabled_var.set(bool(c.get("prune_enabled", True)))
             self.prune_mode_var.set(c.get("prune_mode", "percent"))
             self.prune_percent_var.set(float(c.get("prune_percent", 20.0)))
@@ -689,6 +709,19 @@ class PartSplitterFrame(ttk.Frame):
         c["enable_competitor_layout"] = bool(self.enable_competitor_layout_var.get()) if hasattr(self, "enable_competitor_layout_var") else True
         c["competitor_top_card"] = bool(self.competitor_top_card_var.get()) if hasattr(self, "competitor_top_card_var") else True
         c["competitor_bottom_badge"] = bool(self.competitor_bottom_badge_var.get()) if hasattr(self, "competitor_bottom_badge_var") else True
+
+        if hasattr(self, "target_scene_count_var"):
+            c["target_scene_count"] = int(self.target_scene_count_var.get())
+        if hasattr(self, "transition_dur_var"):
+            c["transition_duration"] = float(self.transition_dur_var.get())
+        if hasattr(self, "zero_truncation_var"):
+            c["zero_truncation"] = bool(self.zero_truncation_var.get())
+        if hasattr(self, "enable_sfx_bgm_var"):
+            c["enable_sfx_bgm"] = bool(self.enable_sfx_bgm_var.get())
+        if hasattr(self, "motion_blur_var"):
+            c["motion_blur_transition"] = bool(self.motion_blur_var.get())
+        if hasattr(self, "auto_sub_var"):
+            c["auto_sub"] = bool(self.auto_sub_var.get())
 
         c["prune_enabled"] = bool(self.prune_enabled_var.get())
         c["prune_mode"] = self.prune_mode_var.get()
@@ -1611,6 +1644,12 @@ class PartSplitterFrame(ttk.Frame):
         ai_cfg["min_part_duration_sec"] = needed_raw_per_part
         ai_cfg["source_speed"] = speed_factor
         ai_cfg["speed"] = speed_factor
+        ai_cfg["target_scene_count"] = int(cfg.get("target_scene_count", 5))
+        ai_cfg["transition_duration"] = float(cfg.get("transition_duration", 0.35))
+        ai_cfg["zero_truncation"] = bool(cfg.get("zero_truncation", True))
+        ai_cfg["enable_sfx_bgm"] = bool(cfg.get("enable_sfx_bgm", True))
+        ai_cfg["motion_blur_transition"] = bool(cfg.get("motion_blur_transition", True))
+        ai_cfg["auto_sub"] = bool(cfg.get("auto_sub", True))
 
         editing_mode = str(cfg.get("editing_mode", "viral_condensed")).strip()
         self.log(f"🎬 Chế độ biên tập: {'Dựng Tinh Hoa Đối Thủ (Hollywood AI Film Crew)' if editing_mode == 'viral_condensed' else 'Cắt Khúc Cơ Bản (Classic Linear)'}")

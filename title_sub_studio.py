@@ -745,12 +745,19 @@ class PreviewCanvas9x16(QWidget):
             dist_from_bottom = float(sub_margin_v) * scale
             target_sub_y = (oy + disp_h) - dist_from_bottom
 
-        style_key = cfg.get("sub_style_type", "tiktok_slim")
-        font_family = "Segoe UI Black" if style_key == "classic" else ("Arial" if style_key == "tiktok_slim" else "Segoe UI")
+        style_key = cfg.get("sub_style_type", "capcut_word_highlight")
+        if style_key in ("capcut_word_highlight", "capcut_highlight"):
+            font_family = "Montserrat"
+        elif style_key == "classic":
+            font_family = "Segoe UI Black"
+        elif style_key == "tiktok_slim":
+            font_family = "Arial"
+        else:
+            font_family = "Montserrat"
 
         font = QFont(font_family)
         font.setPixelSize(canvas_font_size)
-        if style_key == "classic":
+        if style_key in ("capcut_word_highlight", "capcut_highlight", "classic"):
             font.setBold(True)
         else:
             font.setBold(False)
@@ -1075,76 +1082,27 @@ class TitleSubStudioDialog(QDialog):
 
         left_layout.addWidget(gb_part)
 
-        # --- NHÓM 3: CẤU HÌNH PHỤ ĐỀ SUBTITLE ĐA PHONG CÁCH ---
-        gb_sub = QGroupBox("💬 CẤU HÌNH PHỤ ĐỀ SUBTITLE (0% LỖI TOFU)")
+        # --- NHÓM 3: BẢNG MÀU PHỤ ĐỀ SUBTITLE (CAPCUT HIGHLIGHT MẶC ĐỊNH) ---
+        gb_sub = QGroupBox("💬 BẢNG MÀU PHỤ ĐỀ SUBTITLE (CAPCUT HIGHLIGHT)")
         gb_sub.setStyleSheet("QGroupBox { color: #89b4fa; }")
         fl_sub = QFormLayout(gb_sub)
-        fl_sub.setSpacing(9)
+        fl_sub.setSpacing(10)
         fl_sub.setContentsMargins(12, 16, 12, 12)
 
-        self.chk_sub = QCheckBox("Tự Động Tạo & Nhúng Phụ Đề (Whisper AI)")
+        self.chk_sub = QCheckBox("Bật Phụ Đề Động Từng Từ (CapCut Word-by-Word Highlight)")
         self.chk_sub.setChecked(self.ts_data.get("auto_sub", self.ts_data.get("enable_sub", True)))
         self.chk_sub.stateChanged.connect(self._schedule_refresh)
         fl_sub.addRow(self.chk_sub)
 
-        # ComboBox 3 Style Presets
-        self.combo_sub_style = QComboBox()
-        for k, v in SUBTITLE_PRESETS.items():
-            self.combo_sub_style.addItem(v["name"], k)
-        curr_style = self.ts_data.get("sub_style_type", "tiktok_slim")
-        idx_style = self.combo_sub_style.findData(curr_style)
-        if idx_style >= 0:
-            self.combo_sub_style.setCurrentIndex(idx_style)
-        self.combo_sub_style.currentIndexChanged.connect(self._on_preset_selected)
-        fl_sub.addRow("Phong Cách (Style):", self.combo_sub_style)
+        lbl_sub_default_notice = QLabel(
+            "✨ <b>Quy chuẩn Viral Tự Động:</b> Font Montserrat ExtraBold 55pt | Viền 4.5px | Bóng 2.5px<br>"
+            "🎯 <b>Safe Zone Tuyệt Đối:</b> Tự động đặt tại mép Safe Zone Y=1500 (không che hình, không bị che bởi UI TikTok)."
+        )
+        lbl_sub_default_notice.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 6px 0;")
+        lbl_sub_default_notice.setWordWrap(True)
+        fl_sub.addRow(lbl_sub_default_notice)
 
-        # 4 Spinbox Thông số Phụ Đề
-        self.sp_sub_size = QSpinBox()
-        self.sp_sub_size.setRange(20, 140)
-        raw_sz_init = int(self.ts_data.get("sub_size", 68) or 68)
-        if raw_sz_init <= 16:
-            raw_sz_init *= 4
-        self.sp_sub_size.setValue(max(20, min(140, raw_sz_init)))
-        self.sp_sub_size.setSuffix(" px")
-        self.sp_sub_size.valueChanged.connect(self._schedule_refresh)
-        fl_sub.addRow("Cỡ Chữ (FontSize):", self.sp_sub_size)
-
-        self.sp_sub_outline = QSpinBox()
-        self.sp_sub_outline.setRange(0, 10)
-        self.sp_sub_outline.setValue(int(self.ts_data.get("sub_outline", 1)))
-        self.sp_sub_outline.setSuffix(" px")
-        self.sp_sub_outline.setToolTip("Độ dày viền nét chữ (Outline)")
-        self.sp_sub_outline.valueChanged.connect(self._schedule_refresh)
-        fl_sub.addRow("Độ Dày Viền (Outline):", self.sp_sub_outline)
-
-        self.sp_sub_shadow = QSpinBox()
-        self.sp_sub_shadow.setRange(0, 6)
-        self.sp_sub_shadow.setValue(int(self.ts_data.get("sub_shadow", 0)))
-        self.sp_sub_shadow.setSuffix(" px")
-        self.sp_sub_shadow.setToolTip("Bóng mờ 3D đổ xuống (Shadow)")
-        self.sp_sub_shadow.valueChanged.connect(self._schedule_refresh)
-        fl_sub.addRow("Bóng 3D (Shadow):", self.sp_sub_shadow)
-
-        if self.is_tiktok_mode:
-            self.sp_sub_margin_v = None
-            lbl_auto_pos = QLabel(
-                "🎯 <b>Vị Trí Phụ Đề Tự Động (Chế độ 3):</b><br>"
-                "• <i>Khi có Sub cũ:</i> Tự động đè chính xác 100% lên dải Blur che sub cũ.<br>"
-                "• <i>Khi không có Sub cũ:</i> Tự động đặt ở dải Blur bên dưới (ngay dưới mép video lõi, không che hình)."
-            )
-            lbl_auto_pos.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 4px 0;")
-            lbl_auto_pos.setWordWrap(True)
-            fl_sub.addRow(lbl_auto_pos)
-        else:
-            self.sp_sub_margin_v = QSpinBox()
-            self.sp_sub_margin_v.setRange(10, 500)
-            self.sp_sub_margin_v.setValue(int(self.ts_data.get("sub_margin_v", 80)))
-            self.sp_sub_margin_v.setSuffix(" px")
-            self.sp_sub_margin_v.setToolTip("Khoảng cách từ mép đáy màn hình đến chữ phụ đề (MarginV)")
-            self.sp_sub_margin_v.valueChanged.connect(self._schedule_refresh)
-            fl_sub.addRow("Lề Đáy (MarginV):", self.sp_sub_margin_v)
-
-        # 2 Ô Màu ASS
+        # 2 Ô Màu ASS giữ lại cho người dùng tùy biến màu sắc
         self.btn_sub_color = _create_styled_color_btn(ass_to_hex(self._sub_color_ass))
         self.btn_sub_color.clicked.connect(lambda: self._choose_sub_color("color"))
         fl_sub.addRow("Màu Chữ Phụ Đề:", self.btn_sub_color)
@@ -1157,6 +1115,17 @@ class TitleSubStudioDialog(QDialog):
         lbl_ass_hint.setStyleSheet("color: #6c7086; font-size: 11px; font-style: italic;")
         lbl_ass_hint.setWordWrap(True)
         fl_sub.addRow(lbl_ass_hint)
+
+        # Các biến ngầm định giữ tương thích toàn diện với hệ thống
+        self.sp_sub_size = QSpinBox()
+        self.sp_sub_size.setValue(int(self.ts_data.get("sub_size", 55) or 55))
+        self.sp_sub_outline = QSpinBox()
+        self.sp_sub_outline.setValue(int(self.ts_data.get("sub_outline", 4)))
+        self.sp_sub_shadow = QSpinBox()
+        self.sp_sub_shadow.setValue(int(self.ts_data.get("sub_shadow", 2)))
+        self.sp_sub_margin_v = None
+        self.combo_sub_style = QComboBox()
+        self.combo_sub_style.addItem("CapCut Word Highlight", "capcut_word_highlight")
 
         left_layout.addWidget(gb_sub)
 
@@ -1423,13 +1392,9 @@ class TitleSubStudioDialog(QDialog):
         self.sp_title_y.setValue(new_y)
         self.sp_title_y.blockSignals(False)
         cfg = self.get_values()
-        sk = self.combo_sub_style.currentData() or "tiktok_slim"
-        preset_info = SUBTITLE_PRESETS.get(sk, {})
         part_pos_desc = "Sau Title (Trên)" if cfg.get("part_position") == "after_title" else f"Dưới Y={cfg.get('part_y_pos')}px"
-        margin_text = f"Lề {self.sp_sub_margin_v.value()}px" if self.sp_sub_margin_v is not None else "Tự đè dải Blur"
         self.lbl_specs.setText(
-            f"Phong cách: {preset_info.get('name', sk)}  |  "
-            f"Cỡ Sub: {self.sp_sub_size.value()}px ({margin_text})  |  "
+            f"Phụ đề: CapCut Word Highlight ({ass_to_hex(self._sub_color_ass)})  |  "
             f"Title Y: {new_y}px (Kéo Chuột Trực Tiếp)  |  "
             f"Vị trí Part: {part_pos_desc}"
         )
@@ -1456,13 +1421,9 @@ class TitleSubStudioDialog(QDialog):
             self.txt_sample_sub.text(),
             part_num=part_num
         )
-        sk = self.combo_sub_style.currentData() or "tiktok_slim"
-        preset_info = SUBTITLE_PRESETS.get(sk, {})
         part_pos_desc = "Sau Title (Trên)" if cfg.get("part_position") == "after_title" else f"Dưới Y={cfg.get('part_y_pos')}px"
-        margin_text = f"Lề {self.sp_sub_margin_v.value()}px" if self.sp_sub_margin_v is not None else "Tự đè dải Blur"
         self.lbl_specs.setText(
-            f"Phong cách: {preset_info.get('name', sk)}  |  "
-            f"Cỡ Sub: {self.sp_sub_size.value()}px ({margin_text})  |  "
+            f"Phụ đề: CapCut Word Highlight ({ass_to_hex(self._sub_color_ass)})  |  "
             f"Title Y: {self.sp_title_y.value()}px  |  "
             f"Vị trí Part: {part_pos_desc}"
         )
@@ -1550,7 +1511,7 @@ class TitleSubStudioDialog(QDialog):
         self._schedule_refresh()
 
     def _reset_to_defaults(self):
-        """Khôi phục về cấu hình TikTok Slim tối ưu mặc định."""
+        """Khôi phục về cấu hình TikTok Slim & CapCut Highlight tối ưu mặc định."""
         self.chk_title.setChecked(True)
         self.txt_title.clear()
         self.sp_title_y.setValue(320)
@@ -1572,10 +1533,7 @@ class TitleSubStudioDialog(QDialog):
         self.sp_part_y.setValue(1600)
         self.sp_part_size.setValue(22)
 
-        idx_slim = self.combo_sub_style.findData("tiktok_slim")
-        self.combo_sub_style.setCurrentIndex(idx_slim if idx_slim >= 0 else 0)
         self.chk_sub.setChecked(True)
-
         self._sub_color_ass = DEFAULT_SUB_COLOR
         self._sub_ol_ass = DEFAULT_SUB_OUTLINE_COLOR
         _apply_color_btn_visuals(self.btn_sub_color, ass_to_hex(DEFAULT_SUB_COLOR))
@@ -1584,13 +1542,10 @@ class TitleSubStudioDialog(QDialog):
         self._schedule_refresh()
 
     def get_values(self) -> Dict[str, Any]:
-        """Thu thập toàn bộ thông số cấu hình Title, Part & Subtitle."""
+        """Thu thập toàn bộ thông số cấu hình Title, Part & Subtitle chuẩn Viral."""
         is_title = self.chk_title.isChecked()
         is_sub = self.chk_sub.isChecked()
-        style_key = self.combo_sub_style.currentData() or "tiktok_slim"
-        preset = SUBTITLE_PRESETS.get(style_key, SUBTITLE_PRESETS["tiktok_slim"])
         outline_val = "none" if self.chk_no_outline.isChecked() else self._title_outline
-
         part_pos = "bottom" if self.rb_part_bottom.isChecked() else "after_title"
 
         result = {
@@ -1609,18 +1564,18 @@ class TitleSubStudioDialog(QDialog):
             "part_position": part_pos,  # "after_title" hoặc "bottom"
             "part_y_pos": self.sp_part_y.value(),
             "part_size": self.sp_part_size.value(),
-            # Phụ đề Subtitle
+            # Phụ đề Subtitle chuẩn Viral mặc định (CapCut Word-by-Word Highlight)
             "auto_sub": is_sub,
             "enable_sub": is_sub,
-            "sub_style_type": style_key,
-            "sub_size": self.sp_sub_size.value(),
-            "sub_outline": self.sp_sub_outline.value(),
-            "sub_shadow": self.sp_sub_shadow.value(),
-            "sub_margin_v": self.sp_sub_margin_v.value() if self.sp_sub_margin_v is not None else 100,
-            "overlay_sub_on_blur_zone": True if self.is_tiktok_mode else self.ts_data.get("overlay_sub_on_blur_zone", True),
+            "sub_style_type": "capcut_word_highlight",
+            "sub_size": 55,
+            "sub_outline": 4.5,
+            "sub_shadow": 2.5,
+            "sub_margin_v": 420,
+            "overlay_sub_on_blur_zone": True,
             "sub_color": self._sub_color_ass,
             "sub_outline_color": self._sub_ol_ass,
-            "sub_uppercase": preset["uppercase"],
+            "sub_uppercase": True,
         }
         return result
 

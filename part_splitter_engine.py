@@ -29,6 +29,7 @@ logger = logging.getLogger("PartSplitterEngine")
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
+ROOT_DIR = str(Path(__file__).resolve().parent)
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -555,24 +556,25 @@ class PartSplitterEngine:
         output_png: str = "",
         config: Dict[str, Any] = None
     ) -> str:
-        """Render Thẻ Trắng bo góc chứa Tiêu đề gốc YouTube chuẩn phong cách đối thủ triệu view:
-        - Nền trắng tinh khôi bo góc mềm mại (radius 22px).
-        - Chữ đen slate-900 nét căng, tự ngắt dòng.
-        - Đường viền xám nhẹ tinh tế.
+        """Render Top Card phong cách Viral Banner hiện đại:
+        - Font: Montserrat-ExtraBold (hoặc Impact/Arial Bold) dày dặn, sắc nét.
+        - Nền dark frosted glass bo góc mềm mại viền vàng/đỏ nổi bật (thay cho hộp trắng đơn điệu).
+        - Highlight từ khóa chính (từ viết hoa hoặc từ kích thích tò mò) bằng màu vàng rực rỡ.
+        - Text trắng viền đổ bóng nổi bần bật trên nền video.
         """
         if not output_png:
             output_png = os.path.join(tempfile.gettempdir(), f"top_card_{time.time_ns()}.png")
 
+        config = config or {}
         clean_title = (title_text or "Video Title").strip()
-        # Loại bỏ các tiền tố kiểu "Part 1:", "Tập 1:" nếu có
         clean_title = re.sub(r'^(?:Part|Tập|Chapter|Phần)\s*\d+[:\-.]*\s*', '', clean_title, flags=re.IGNORECASE).strip()
 
-        card_w = int(video_w * 0.88)  # ~950px
-        font_size = 38 if len(clean_title) < 70 else (34 if len(clean_title) < 120 else 28)
-        
-        # Dùng Arial Bold / Segoe UI Semibold chuẩn 1:1 đối thủ (thay vì Impact thon dài)
+        card_w = int(video_w * 0.90)  # ~972px
+        font_size = 40 if len(clean_title) < 55 else (35 if len(clean_title) < 100 else 28)
+
+        # Ưu tiên font Montserrat ExtraBold / Impact / Arial Bold
         font = None
-        for fn in ["arialbd.ttf", "seguisb.ttf", "segoeui.ttf", "arial.ttf"]:
+        for fn in ["Montserrat-ExtraBold.otf", "Montserrat-Bold.otf", "impact.ttf", "arialbd.ttf", "seguisb.ttf"]:
             fp = os.path.join(FontManager.WINDOWS_FONT_DIR, fn)
             if os.path.isfile(fp):
                 try:
@@ -583,8 +585,7 @@ class PartSplitterEngine:
         if font is None:
             font = FontManager.get_banner_font(clean_title, font_size)
 
-        # Ngắt dòng vừa khít bề rộng card (trừ lề 60px)
-        max_text_w = card_w - 60
+        max_text_w = card_w - 70
         words = clean_title.split()
         lines = []
         cur = []
@@ -594,46 +595,48 @@ class PartSplitterEngine:
             if (bbox[2] - bbox[0]) <= max_text_w or not cur:
                 cur.append(w)
             else:
-                lines.append(" ".join(cur))
+                lines.append(cur)
                 cur = [w]
         if cur:
-            lines.append(" ".join(cur))
-        # Tối đa 3 dòng để không che khuất màn hình
+            lines.append(cur)
         if len(lines) > 3:
-            lines = lines[:2] + [lines[2] + "..."]
-        wrapped_text = "\n".join(lines)
+            lines = lines[:2] + [lines[2] + ["..."]]
 
-        dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-        d_dummy = ImageDraw.Draw(dummy)
-        bbox = d_dummy.multiline_textbbox((0, 0), wrapped_text, font=font, align="center", spacing=10)
-
-        pad_y = 20
-        text_h = bbox[3] - bbox[1]
-        card_h = int(text_h + pad_y * 2 + 10)
+        space_w = font.getbbox(" ")[2] - font.getbbox(" ")[0]
+        line_h = font.getbbox("Ay")[3] - font.getbbox("Ay")[1] + 12
+        pad_y = 22
+        card_h = int(len(lines) * line_h + pad_y * 2)
 
         img = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Vẽ hộp bo góc trắng mềm mại với viền xám nhẹ
+        # Dark sleek frosted glass banner với viền vàng kim loại rực rỡ
         draw.rounded_rectangle(
-            [(0, 0), (card_w, card_h)],
-            radius=22,
-            fill=(255, 255, 255, 250),
-            outline=(226, 232, 240, 255),
-            width=2
+            [(4, 4), (card_w - 4, card_h - 4)],
+            radius=28,
+            fill=(18, 20, 26, 238),
+            outline=(255, 225, 30, 240),
+            width=3
         )
 
-        # Vẽ chữ đen slate-900 ở chính giữa card
-        text_x = (card_w - (bbox[2] - bbox[0])) / 2.0 - bbox[0]
-        text_y = pad_y - bbox[1]
-        draw.multiline_text(
-            (text_x, text_y),
-            wrapped_text,
-            font=font,
-            fill=(15, 23, 42, 255),
-            align="center",
-            spacing=10
-        )
+        cur_y = pad_y
+        for line_words in lines:
+            line_w = sum((font.getbbox(w)[2] - font.getbbox(w)[0]) for w in line_words) + space_w * (len(line_words) - 1)
+            cur_x = (card_w - line_w) / 2.0
+            for w in line_words:
+                w_box = font.getbbox(w)
+                w_w = w_box[2] - w_box[0]
+                clean_word = re.sub(r'[^a-zA-Z0-9]', '', w)
+                is_hl = (clean_word.isupper() and len(clean_word) > 1) or clean_word.lower() in [
+                    "widest", "biggest", "craziest", "extreme", "impossible", "exposed", "caught", "secret"
+                ]
+                col = (255, 225, 0, 255) if is_hl else (255, 255, 255, 255)
+
+                # Đổ bóng chữ tạo độ sâu 3D
+                draw.text((cur_x + 2, cur_y + 2), w, font=font, fill=(0, 0, 0, 220))
+                draw.text((cur_x, cur_y), w, font=font, fill=col)
+                cur_x += w_w + space_w
+            cur_y += line_h
 
         os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
         img.save(output_png, "PNG")
@@ -647,9 +650,9 @@ class PartSplitterEngine:
         video_w: int = 1080,
         output_png: str = ""
     ) -> str:
-        """Render Nút Trắng hình Viên Thuốc in chữ 'PART X' chuẩn đối thủ:
-        - Nền trắng tinh bo tròn dạng pill badge.
-        - Chữ đen in hoa nổi bật chuẩn Arial Bold.
+        """Render Nút 'PART X' chuẩn đồng bộ với Top Card hiện đại:
+        - Nền dark frosted glass bo tròn dạng pill badge.
+        - Viền vàng kim sắc nét, chữ Montserrat ExtraBold trắng sáng.
         """
         if not output_png:
             output_png = os.path.join(tempfile.gettempdir(), f"bottom_badge_{time.time_ns()}.png")
@@ -658,9 +661,9 @@ class PartSplitterEngine:
         if clean_prefix in ("TẬP", "TAP", ""):
             clean_prefix = "PART"
         p_text = f"{clean_prefix} {part_index}"
-        font_size = 40
+        font_size = 38
         font = None
-        for fn in ["arialbd.ttf", "seguisb.ttf", "segoeui.ttf"]:
+        for fn in ["Montserrat-ExtraBold.otf", "Montserrat-Bold.otf", "impact.ttf", "arialbd.ttf"]:
             fp = os.path.join(FontManager.WINDOWS_FONT_DIR, fn)
             if os.path.isfile(fp):
                 try:
@@ -678,30 +681,81 @@ class PartSplitterEngine:
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
-        badge_w = max(240, int(text_w + 70))
-        badge_h = 70
+        badge_w = max(240, int(text_w + 64))
+        badge_h = 68
 
         img = Image.new("RGBA", (badge_w, badge_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Viên thuốc bo tròn bán kính badge_h / 2
+        # Nền tối viền vàng đồng bộ hoàn hảo với Top Card
         draw.rounded_rectangle(
-            [(0, 0), (badge_w, badge_h)],
+            [(2, 2), (badge_w - 2, badge_h - 2)],
             radius=int(badge_h / 2),
-            fill=(255, 255, 255, 252),
-            outline=(226, 232, 240, 255),
-            width=2
+            fill=(18, 20, 26, 238),
+            outline=(255, 225, 30, 240),
+            width=3
         )
 
-        # Vẽ text đen giữa viên thuốc
         tx = (badge_w - text_w) / 2.0 - bbox[0]
         ty = (badge_h - text_h) / 2.0 - bbox[1]
-        draw.text(
-            (tx, ty),
-            p_text,
-            font=font,
-            fill=(15, 23, 42, 255)
+        draw.text((tx + 2, ty + 2), p_text, font=font, fill=(0, 0, 0, 220))
+        draw.text((tx, ty), p_text, font=font, fill=(255, 255, 255, 255))
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
+        img.save(output_png, "PNG")
+        return output_png
+
+    @classmethod
+    def render_outro_cta_banner(
+        cls,
+        line1: str = "Cắt đôi xong rồi... nhưng nối lại kiểu gì?",
+        line2: str = "▶ XEM TIẾP PART 2 NGAY!",
+        video_w: int = 1080,
+        output_png: str = ""
+    ) -> str:
+        """Render Banner Outro/CTA cuối video kích thích người xem click ngay vào kênh."""
+        if not output_png:
+            output_png = os.path.join(tempfile.gettempdir(), f"outro_cta_{time.time_ns()}.png")
+
+        font_path = os.path.join(FontManager.WINDOWS_FONT_DIR, "Montserrat-ExtraBold.otf")
+        if not os.path.isfile(font_path):
+            font_path = os.path.join(FontManager.WINDOWS_FONT_DIR, "arialbd.ttf")
+
+        font_l1 = ImageFont.truetype(font_path, 34)
+        font_l2 = ImageFont.truetype(font_path, 44)
+
+        w = int(video_w * 0.90)  # ~972px
+        h = 200
+
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Hộp sticker bo góc neon nổi bật
+        draw.rounded_rectangle(
+            [(6, 6), (w - 6, h - 6)],
+            radius=32,
+            fill=(15, 17, 23, 245),
+            outline=(255, 225, 0, 255),
+            width=4
         )
+
+        bb1 = font_l1.getbbox(line1)
+        l1_w = bb1[2] - bb1[0]
+        l1_x = (w - l1_w) / 2.0
+        l1_y = 28
+
+        bb2 = font_l2.getbbox(line2)
+        l2_w = bb2[2] - bb2[0]
+        l2_x = (w - l2_w) / 2.0
+        l2_y = 100
+
+        # Dòng 1: Trắng
+        draw.text((l1_x + 2, l1_y + 2), line1, font=font_l1, fill=(0, 0, 0, 220))
+        draw.text((l1_x, l1_y), line1, font=font_l1, fill=(255, 255, 255, 255))
+
+        # Dòng 2: Vàng neon rực rỡ
+        draw.text((l2_x + 3, l2_y + 3), line2, font=font_l2, fill=(0, 0, 0, 220))
+        draw.text((l2_x, l2_y), line2, font=font_l2, fill=(255, 225, 0, 255))
 
         os.makedirs(os.path.dirname(os.path.abspath(output_png)), exist_ok=True)
         img.save(output_png, "PNG")
@@ -1003,10 +1057,45 @@ class PartSplitterEngine:
             curr_v = "v_bot"
             in_idx += 1
 
-        # Audio filter: Chuẩn hóa -14 LUFS đanh rõ
-        audio_filter = "loudnorm=I=-14:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100"
+        # 3.5 Outro / CTA Popup (mặc định tắt để video sạch 100% không dính chữ rác)
+        cta_png = ""
+        enable_cta = bool(config.get("enable_outro_cta", False))
+        total_vid_dur = probe_duration_sec(condensed_video)
+        cta_dur = float(config.get("outro_cta_duration", 2.5))
+        cta_start = max(0.0, total_vid_dur - cta_dur)
 
-        filter_complex_str = ";".join(filter_parts) + f";[0:a]{audio_filter}[aout]"
+        sfx_boom_path = os.path.join(ROOT_DIR, "assets", "sfx", "boom.wav")
+        has_boom = os.path.isfile(sfx_boom_path)
+
+        if enable_cta and total_vid_dur > 5.0:
+            cta_png = os.path.join(work_dir, f"_cta_popup_{part_index}_{time.time_ns()}.png")
+            cls.render_outro_cta_banner(
+                line1=str(config.get("outro_cta_line1", "Cắt đôi xong rồi... nhưng nối lại kiểu gì?")),
+                line2=str(config.get("outro_cta_line2", "▶ XEM TIẾP PART 2 NGAY!")),
+                video_w=1080,
+                output_png=cta_png
+            )
+            if os.path.isfile(cta_png):
+                inputs.extend(["-i", cta_png])
+                filter_parts.append(f"[{curr_v}][{in_idx}:v]overlay=(W-w)/2:(H-h)/2:enable='between(t,{cta_start:.2f},{total_vid_dur:.2f})'[v_cta]")
+                curr_v = "v_cta"
+                in_idx += 1
+
+        # Audio filter: Mix boom SFX khi CTA xuất hiện & Chuẩn hóa -14 LUFS đanh rõ
+        if enable_cta and has_boom and total_vid_dur > 5.0:
+            delay_ms = int(cta_start * 1000)
+            boom_idx = in_idx
+            inputs.extend(["-i", sfx_boom_path])
+            in_idx += 1
+            audio_filter_chain = (
+                f"[{boom_idx}:a]adelay={delay_ms}|{delay_ms},volume=1.8,aformat=channel_layouts=stereo[sfx_delayed];"
+                f"[0:a][sfx_delayed]amix=inputs=2:duration=first:dropout_transition=0[a_mixed];"
+                f"[a_mixed]loudnorm=I=-14:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100[aout]"
+            )
+        else:
+            audio_filter_chain = "[0:a]loudnorm=I=-14:LRA=7:TP=-1.5,aformat=channel_layouts=stereo,aresample=44100[aout]"
+
+        filter_complex_str = ";".join(filter_parts) + f";{audio_filter_chain}"
 
         enc_name, enc_opts = get_best_video_encoder()
         cmd = [
@@ -1023,7 +1112,7 @@ class PartSplitterEngine:
         try:
             _ff_run(cmd, log_fn=log_fn, timeout=1800, label="competitor_pack")
         finally:
-            for p in (top_png, bottom_png):
+            for p in (top_png, bottom_png, cta_png):
                 if p and os.path.isfile(p):
                     try:
                         os.remove(p)

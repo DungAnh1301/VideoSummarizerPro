@@ -158,7 +158,7 @@ class PartDirectorAI:
                 part_info=p_info,
                 cues=transcript_data,
                 total_duration=video_duration_sec,
-                target_scene_count=int(genre_profile.get("scene_count", 5)),
+                target_scene_count=int(config.get("target_scene_count") or genre_profile.get("scene_count", 5)),
                 target_part_duration=float(config.get("target_part_duration", 95.0)),
                 config=config,
                 log_fn=_log

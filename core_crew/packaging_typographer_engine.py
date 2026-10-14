@@ -92,13 +92,12 @@ class PackagingTypographerEngine:
         cls,
         video_path: str,
         model_size: str = "base",
-        log_fn=None
-    ) -> List[Tuple[float, float, str]]:
+        log_fn=None,
+        word_timestamps: bool = True
+    ) -> Tuple[List[Tuple[float, float, str]], List[Any]]:
         """Sử dụng faster-whisper để nhận diện phụ đề trực tiếp từ video thành phẩm.
         - Frame-accurate 100%: Lắng nghe âm thanh thực tế sau khi đã mix/xfade/crossfade.
-        - Khắc phục triệt để hiện tượng lệch timestamp hoặc trôi 5-8s do transition.
-        - Tự động gộp câu hoàn chỉnh, loại bỏ phân mảnh ngắt vụn và lặp từ.
-        - Tự động biến mất chữ khi nhân vật ngừng nói (Zero Hallucination / Zero Lingering).
+        - Trả về danh sách câu thoại và danh sách segment có word timestamps phục vụ hiệu ứng CapCut.
         """
         def _log(msg: str):
             logger.info(msg)
@@ -109,7 +108,7 @@ class PackagingTypographerEngine:
                     pass
 
         if not video_path or not os.path.isfile(video_path):
-            return []
+            return [], []
 
         try:
             from faster_whisper import WhisperModel
@@ -118,27 +117,26 @@ class PackagingTypographerEngine:
             segments, info = model.transcribe(
                 video_path,
                 beam_size=5,
+                word_timestamps=word_timestamps,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=400),
             )
 
+            raw_segs = list(segments)
             results: List[Tuple[float, float, str]] = []
-            for seg in segments:
-                text = (seg.text or "").strip()
-                # Khử ký tự đặc biệt của auto-caption như >>, -, v.v.
-                text = text.lstrip("> -–—").strip()
+            for seg in raw_segs:
+                text = (seg.text or "").strip().lstrip("> -–—").strip()
                 if not text:
                     continue
-                # Khử lặp liên tiếp
                 if results and results[-1][2] == text:
                     continue
                 results.append((float(seg.start), float(seg.end), text))
 
-            _log(f"✅ [WHISPER ENGINE] Nhận diện hoàn tất {len(results)} câu thoại khớp chính xác 100% video!")
-            return results
+            _log(f"✅ [WHISPER ENGINE] Nhận diện hoàn tất {len(results)} câu thoại ({sum(len(s.words or []) for s in raw_segs)} từ) khớp 100% video!")
+            return results, raw_segs
         except Exception as e:
             _log(f"⚠️ [WHISPER ENGINE] Không thể chạy faster-whisper ({e}), chuyển sang chế độ dự phòng timeline.")
-            return []
+            return [], []
 
     @classmethod
     def generate_safe_zone_ass(
@@ -151,13 +149,10 @@ class PackagingTypographerEngine:
         video_path: Optional[str] = None,
         log_fn=None
     ) -> str:
-        """Tạo file phụ đề ASS chuẩn Safe Zone từ danh sách scenes và transcript cues.
-        - Ưu tiên số 1: Nếu có video_path (video đã render), dùng Whisper để nhận diện 100% chuẩn xác.
-        - Dự phòng: Nếu Whisper lỗi hoặc không có video_path, dùng thuật toán ghép timeline có khử đè lấn.
-        - Phụ đề chỉ xuất hiện KHI CÓ LỜI THOẠI THẬT.
-        - Khi kết thúc lời thoại hoặc im lặng: Màn hình HOÀN TOÀN SẠCH CHỮ, không treo chữ lơ lửng.
-        - Khóa cứng tối đa 2 dòng cân đối (wrap_subtitle_text).
-        - WrapStyle: 2 tránh nhảy dòng giật cục.
+        """Tạo file phụ đề ASS chuẩn Safe Zone:
+        - Nâng cấp phong cách CapCut Word-by-Word Highlight: Từ đang nói sáng vàng neon, các từ khác màu trắng viền đen.
+        - Font: Montserrat ExtraBold / Arial Bold 55pt (tăng 15%), viền dày 4.5px, shadow 2.5px.
+        - Safe Zone: MarginV = 420.
         """
         def _log(msg: str):
             logger.info(msg)
@@ -168,10 +163,10 @@ class PackagingTypographerEngine:
                     pass
 
         cfg = config or load_part_config()
-        font_name = str(cfg.get("sub_font_name", "Arial") or "Arial")
-        font_size = int(cfg.get("sub_size", 48) or 48)
-        outline_w = float(cfg.get("sub_outline", 3.5) or 3.5)
-        shadow_d = float(cfg.get("sub_shadow", 1.5) or 1.5)
+        font_name = str(cfg.get("sub_font_name", "Montserrat ExtraBold") or "Montserrat ExtraBold")
+        font_size = int(cfg.get("sub_size", 55) or 55)
+        outline_w = float(cfg.get("sub_outline", 4.5) or 4.5)
+        shadow_d = float(cfg.get("sub_shadow", 2.5) or 2.5)
         margin_v = int(cfg.get("sub_margin_v", 420) or 420)
 
         def _norm_ass_color(col_val: str, default_val: str) -> str:
@@ -184,7 +179,7 @@ class PackagingTypographerEngine:
         outline_col = _norm_ass_color(cfg.get("sub_outline_color"), "H00000000")
 
         ass_header = f"""[Script Info]
-Title: Hollywood Safe Zone Subtitles
+Title: CapCut Word-by-Word Highlight Subtitles
 ScriptType: v4.00+
 WrapStyle: 2
 PlayResX: 1080
@@ -193,13 +188,13 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{primary_col},&H000000FF,{outline_col},&H80000000,-1,0,0,0,100,100,0,0,1,{outline_w},{shadow_d},2,50,50,{margin_v},1
+Style: Default,{font_name},{font_size},{primary_col},&H000000FF,{outline_col},&H90000000,-1,0,0,0,100,100,0,0,1,{outline_w},{shadow_d},2,50,50,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         def _sec_to_ass_time(sec: float) -> str:
-            sec = max(0.0, sec)
+            sec = max(0.0, float(sec))
             h = int(sec // 3600)
             m = int((sec % 3600) // 60)
             s = int(sec % 60)
@@ -209,76 +204,122 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 cs = 0
             return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-        # 1. CHIẾN LƯỢC CHÍNH: Nhận diện trực tiếp qua faster-whisper
+        # 1. CHIẾN LƯỢC CHÍNH: Nhận diện word-timestamps trực tiếp qua faster-whisper
         raw_events: List[Tuple[float, float, str]] = []
+        raw_segments: List[Any] = []
         if video_path and os.path.isfile(video_path):
-            raw_events = cls.transcribe_video_with_whisper(video_path, log_fn=_log)
+            raw_events, raw_segments = cls.transcribe_video_with_whisper(video_path, log_fn=_log, word_timestamps=True)
 
-        # 2. CHIẾN LƯỢC DỰ PHÒNG: Nếu Whisper không có kết quả, tính toán timeline từ scenes & cues
-        if not raw_events:
-            _log("ℹ️ [TYPOGRAPHER] Dùng thuật toán ghép timeline khử đè lấn cho phụ đề...")
-            # Chuẩn hóa & khử chồng lấn các cue nguồn YouTube (YouTube rolling subtitles)
-            clean_cues = []
-            for c in (cues or []):
-                txt = str(c.get("text", "")).strip().lstrip("> -–—").strip()
-                if not txt:
+        final_dialogue_lines: List[str] = []
+
+        # Hiệu ứng Word-by-Word Highlight chuẩn CapCut
+        has_word_data = any(bool(getattr(s, "words", None)) for s in raw_segments)
+        if has_word_data:
+            _log("🌟 [TYPOGRAPHER] Tạo phụ đề CapCut Word-by-Word Highlight (từ đang nói sáng vàng neon)...")
+            for s in raw_segments:
+                text = (s.text or "").strip().lstrip("> -–—").strip()
+                if not text or not s.words:
                     continue
-                st = float(c.get("start", 0.0))
-                en = float(c.get("end", 0.0))
-                if en <= st:
+                words = s.words
+                chunks = []
+                cur_chunk = []
+                cur_len = 0
+                for w in words:
+                    clean_w = w.word.strip()
+                    if not clean_w:
+                        continue
+                    cur_chunk.append(w)
+                    cur_len += len(clean_w) + 1
+                    if cur_len >= 30 or len(cur_chunk) >= 5 or clean_w.endswith((".", "?", "!", ",")):
+                        chunks.append(cur_chunk)
+                        cur_chunk = []
+                        cur_len = 0
+                if cur_chunk:
+                    chunks.append(cur_chunk)
+
+                for chunk in chunks:
+                    chunk_words = [w.word.strip() for w in chunk]
+                    for idx, target_w in enumerate(chunk):
+                        w_st = target_w.start
+                        w_en = target_w.end
+                        if idx + 1 < len(chunk):
+                            w_en = min(target_w.end + 0.08, chunk[idx + 1].start)
+                        if w_en <= w_st:
+                            w_en = w_st + 0.22
+
+                        formatted_words = []
+                        for j, cw in enumerate(chunk_words):
+                            if j == idx:
+                                # Từ đang nói: highlight màu vàng rực rỡ {\c&H0000FFFF&}
+                                formatted_words.append(f"\\N{{\\c&H0000FFFF&}}{cw}{{\\c&H00FFFFFF&}}" if j == 3 and len(chunk_words) > 5 else f"{{\\c&H0000FFFF&}}{cw}{{\\c&H00FFFFFF&}}")
+                            else:
+                                formatted_words.append(f"\\N{cw}" if j == 3 and len(chunk_words) > 5 else cw)
+
+                        line_text = " ".join(formatted_words).replace(" \\N", "\\N").replace("\\N ", "\\N")
+                        final_dialogue_lines.append(f"Dialogue: 0,{_sec_to_ass_time(w_st)},{_sec_to_ass_time(w_en)},Default,,0,0,0,,{line_text}\n")
+
+        # 2. CHIẾN LƯỢC DỰ PHÒNG: Nếu không có word-timestamps, dùng câu hoàn chỉnh
+        if not final_dialogue_lines:
+            if not raw_events:
+                _log("ℹ️ [TYPOGRAPHER] Dùng thuật toán ghép timeline khử đè lấn cho phụ đề...")
+                clean_cues = []
+                for c in (cues or []):
+                    txt = str(c.get("text", "")).strip().lstrip("> -–—").strip()
+                    if not txt:
+                        continue
+                    st = float(c.get("start", 0.0))
+                    en = float(c.get("end", 0.0))
+                    if en <= st:
+                        continue
+                    clean_cues.append({"start": st, "end": en, "text": txt})
+
+                cur_timeline = 0.0
+                for sc_idx, sc in enumerate(scenes):
+                    shots = sc.get("shots", [])
+                    for sh in shots:
+                        sh_st = float(sh["start"])
+                        sh_en = float(sh["end"])
+                        sh_dur = max(0.5, sh_en - sh_st)
+
+                        matching_cues = []
+                        for c in clean_cues:
+                            c_st = float(c["start"])
+                            c_en = float(c["end"])
+                            if c_en > sh_st and c_st < sh_en:
+                                rel_st = max(0.0, c_st - sh_st)
+                                rel_en = min(sh_dur, c_en - sh_st)
+                                if rel_en > rel_st + 0.15:
+                                    matching_cues.append((rel_st, rel_en, c["text"]))
+
+                        matching_cues.sort(key=lambda x: x[0])
+                        for rel_st, rel_en, txt in matching_cues:
+                            raw_events.append((cur_timeline + rel_st, cur_timeline + rel_en, txt))
+
+                        cur_timeline += sh_dur
+
+                    if sc_idx < len(scenes) - 1:
+                        cur_timeline -= transition_duration
+
+            raw_events.sort(key=lambda x: x[0])
+            last_end = 0.0
+            for t_st, t_en, txt in raw_events:
+                if t_st < last_end:
+                    t_st = last_end
+                if t_en <= t_st + 0.2:
                     continue
-                clean_cues.append({"start": st, "end": en, "text": txt})
-
-            # Ghép vào timeline tương đối của các scene & shot
-            cur_timeline = 0.0
-            for sc_idx, sc in enumerate(scenes):
-                shots = sc.get("shots", [])
-                for sh in shots:
-                    sh_st = float(sh["start"])
-                    sh_en = float(sh["end"])
-                    sh_dur = max(0.5, sh_en - sh_st)
-
-                    matching_cues = []
-                    for c in clean_cues:
-                        c_st = float(c["start"])
-                        c_en = float(c["end"])
-                        if c_en > sh_st and c_st < sh_en:
-                            rel_st = max(0.0, c_st - sh_st)
-                            rel_en = min(sh_dur, c_en - sh_st)
-                            if rel_en > rel_st + 0.15:
-                                matching_cues.append((rel_st, rel_en, c["text"]))
-
-                    matching_cues.sort(key=lambda x: x[0])
-                    for rel_st, rel_en, txt in matching_cues:
-                        raw_events.append((cur_timeline + rel_st, cur_timeline + rel_en, txt))
-
-                    cur_timeline += sh_dur
-
-                if sc_idx < len(scenes) - 1:
-                    cur_timeline -= transition_duration
-
-        # Khử đè lấn timestamp giữa các câu thoại và bọc chữ chuẩn 2 dòng
-        raw_events.sort(key=lambda x: x[0])
-        final_dialogues = []
-        last_end = 0.0
-        for t_st, t_en, txt in raw_events:
-            if t_st < last_end:
-                t_st = last_end
-            if t_en <= t_st + 0.2:
-                continue
-            wrapped_txt = cls.wrap_subtitle_text(txt, font_size=font_size, max_width_px=940)
-            if not wrapped_txt:
-                continue
-            final_dialogues.append((t_st, t_en, wrapped_txt))
-            last_end = t_en
+                wrapped_txt = cls.wrap_subtitle_text(txt, font_size=font_size, max_width_px=940)
+                if not wrapped_txt:
+                    continue
+                final_dialogue_lines.append(f"Dialogue: 0,{_sec_to_ass_time(t_st)},{_sec_to_ass_time(t_en)},Default,,0,0,0,,{wrapped_txt}\n")
+                last_end = t_en
 
         os.makedirs(os.path.dirname(os.path.abspath(output_ass_path)), exist_ok=True)
         with open(output_ass_path, "w", encoding="utf-8") as f:
             f.write(ass_header.strip() + "\n")
-            for t_st, t_en, clean_txt in final_dialogues:
-                f.write(f"Dialogue: 0,{_sec_to_ass_time(t_st)},{_sec_to_ass_time(t_en)},Default,,0,0,0,,{clean_txt}\n")
+            for d_line in final_dialogue_lines:
+                f.write(d_line)
 
-        _log(f"✅ [TYPOGRAPHER] Đã xuất file phụ đề ASS Safe Zone ({len(final_dialogues)} câu thoại): {output_ass_path}")
+        _log(f"✅ [TYPOGRAPHER] Đã xuất file phụ đề ASS ({len(final_dialogue_lines)} events): {output_ass_path}")
         return output_ass_path
 
     @classmethod

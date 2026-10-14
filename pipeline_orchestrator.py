@@ -99,11 +99,24 @@ class PipelineOrchestrator:
             video_title = os.path.splitext(os.path.basename(video_path))[0]
             _log(f"📁 [INGEST] Sử dụng file video local: {video_path}")
 
-            # Tìm file srt có sẵn cùng tên
+            # Tìm file srt có sẵn (cùng tên, caption.srt hoặc file srt trong cùng thư mục)
+            custom_srt = config.get("srt_path") or config.get("subtitle_path")
             cand_srt = os.path.splitext(video_path)[0] + ".srt"
-            if os.path.isfile(cand_srt):
+            caption_srt = os.path.join(os.path.dirname(video_path), "caption.srt")
+            dir_srts = glob.glob(os.path.join(os.path.dirname(video_path), "*.srt"))
+
+            if custom_srt and os.path.isfile(custom_srt):
+                srt_path = custom_srt
+                _log(f"   ✓ Đã nhận diện file phụ đề cấu hình: {srt_path}")
+            elif os.path.isfile(cand_srt):
                 srt_path = cand_srt
-                _log(f"   ✓ Đã tìm thấy file phụ đề đi kèm: {srt_path}")
+                _log(f"   ✓ Đã tìm thấy file phụ đề cùng tên: {srt_path}")
+            elif os.path.isfile(caption_srt):
+                srt_path = caption_srt
+                _log(f"   ✓ Đã tìm thấy file phụ đề caption.srt: {srt_path}")
+            elif dir_srts:
+                srt_path = dir_srts[0]
+                _log(f"   ✓ Đã tìm thấy file phụ đề trong thư mục: {srt_path}")
             else:
                 # Nếu không có sub, tự động chạy faster-whisper GPU
                 _log("   ⚠️ Video chưa có phụ đề. Tự động kích hoạt Faster-Whisper GPU CUDA...")
