@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.123"
+VERSION = "1.3.124"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.123: Khóa cứng giới hạn mọi cú máy (shot) tối đa 7.5s - tự động chia nhỏ thành các góc máy linh hoạt (4s-6s) luân chuyển góc nhìn CapCut Hollywood, triệt tiêu hoàn toàn tình trạng đứng hình lê thê mà vẫn cam kết 100% thời lượng tổng mỗi Part đạt 75s-95s (> 1 phút). Tăng tốc độ render vượt trội nhờ phân đoạn shot ngắn xử lý tức thì."
+NOTES = "Bản phát hành v1.3.124: Cân chỉnh hoàn hảo nhịp điệu Hollywood Viral: Khóa cứng thời lượng tổng mỗi Part chuẩn 85s - 90s (> 1 phút, không lê thê), mỗi Part gồm đúng 5 phân cảnh (16s-19s) và MỖI CÚ MÁY CHỈ DÀI 4s - 5.5s luân chuyển góc nhìn liên tục (Toàn cảnh -> Cận trung -> Punch Zoom 1.18x -> Đối thoại). Triệt tiêu 100% tình trạng shot dài đứng hình, tốc độ render GPU nhanh gấp 3 lần."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

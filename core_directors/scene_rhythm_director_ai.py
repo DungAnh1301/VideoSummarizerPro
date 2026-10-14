@@ -499,9 +499,12 @@ Respond ONLY with a valid JSON object matching this schema:
                 w_en = end_bound
 
             cand_sents = [s for s in part_sentences if s["start"] >= w_st and s["end"] <= w_en + 20.0]
-
             best_cluster = []
             best_score = -999.0
+
+            ideal_sc_dur = max(15.0, min(21.0, target_part_dur / float(target_scene_count)))
+            min_sc_dur = max(12.0, ideal_sc_dur - 4.0)
+            max_sc_dur = ideal_sc_dur + 3.5
 
             if cand_sents:
                 for i in range(len(cand_sents)):
@@ -511,22 +514,22 @@ Respond ONLY with a valid JSON object matching this schema:
                         dur = cluster[-1]["end"] - cluster[0]["start"]
                         last_text = cluster[-1]["text"]
 
-                        if 18.0 <= dur <= 32.0 and cls.is_complete_sentence_end(last_text):
+                        if min_sc_dur <= dur <= max_sc_dur and cls.is_complete_sentence_end(last_text):
                             words = sum(len(s["text"].split()) for s in cluster)
-                            diff = abs(dur - 24.0)
+                            diff = abs(dur - ideal_sc_dur)
                             has_dialogue = any(">>" in s["text"] for s in cluster)
-                            score = words - diff * 2.0 + (15.0 if has_dialogue else 0.0)
+                            score = words - diff * 2.5 + (15.0 if has_dialogue else 0.0)
                             if score > best_score:
                                 best_score = score
                                 best_cluster = list(cluster)
-                        elif dur > 32.0:
+                        elif dur > max_sc_dur:
                             break
 
                 if not best_cluster:
                     # Fallback lấy cụm câu hợp lý nhất kết thúc trọn vẹn
                     for k in range(len(cand_sents)):
                         dur = cand_sents[k]["end"] - cand_sents[0]["start"]
-                        if dur >= 15.0 and cls.is_complete_sentence_end(cand_sents[k]["text"]):
+                        if dur >= min_sc_dur and cls.is_complete_sentence_end(cand_sents[k]["text"]):
                             best_cluster = cand_sents[:k + 1]
                             break
                     if not best_cluster:
@@ -543,7 +546,7 @@ Respond ONLY with a valid JSON object matching this schema:
             else:
                 # Trường hợp đoạn video là Action Montage / Trailer (không có lời thoại)
                 sc_start = round(w_st, 2)
-                sc_end = round(min(end_bound, sc_start + 18.0), 2)
+                sc_end = round(min(end_bound, sc_start + ideal_sc_dur), 2)
 
             shots = cls._split_scene_by_dialogue_turns(
                 cues=cues,
