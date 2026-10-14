@@ -249,12 +249,16 @@ Respond ONLY with a valid JSON object matching this schema:
         broll_pool = []
         for i in range(len(cues) - 1):
             gap = cues[i + 1]["start"] - cues[i]["end"]
-            if gap >= 2.0:
+            # Bỏ qua các đoạn trailer teaser mở đầu (< 25s) và chỉ lấy các cú máy êm (gap >= 3.0s)
+            if gap >= 3.0 and float(cues[i]["end"]) >= 25.0:
                 broll_pool.append({
                     "start": round(float(cues[i]["end"]), 2),
                     "end": round(float(cues[i + 1]["start"]), 2),
                     "dur": round(float(gap), 2)
                 })
+
+        # Ưu tiên các đoạn B-roll dài, êm mượt lên đầu
+        broll_pool.sort(key=lambda x: x["dur"], reverse=True)
 
         if len(broll_pool) < 25 and total_duration > 30.0:
             step = total_duration / 35.0
@@ -610,6 +614,14 @@ Respond ONLY with a valid JSON object matching this schema:
             s for s in all_sentences
             if s["start"] >= max(0.0, start_bound - 2.0) and s["end"] <= end_bound + 15.0
         ]
+        # BỘ LỌC CHỐNG RÁC THỊ GIÁC (Anti-Choppy Teaser Guard):
+        # Đoạn 0s - 22s thường là trailer teaser cắt cảnh chớp nhoáng (3-8 cuts trong 2s).
+        # Tự động bỏ qua đoạn teaser giật này để cảnh mở đầu luôn bắt đầu từ mốc video ổn định, êm mượt!
+        if start_bound < 15.0:
+            part_sentences = [
+                s for s in part_sentences
+                if s["start"] >= 22.0 or (s["end"] - s["start"] >= 10.0 and s["start"] >= 15.0)
+            ]
 
         window_len = max(60.0, end_bound - start_bound)
         if window_len < 130.0:
