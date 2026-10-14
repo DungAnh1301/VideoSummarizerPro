@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.131"
+VERSION = "1.3.132"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.131: Đột phá Tốc độ Render (Pure AI Command Driven) & Tích hợp Random Scale Dọc 110%~130%: Loại bỏ hoàn toàn khâu quét khuôn mặt CPU nặng nề, máy tính thuần túy thực thi các lệnh góc máy trực tiếp từ Đạo diễn AI CLI giúp giảm gần 50% tổng thời gian render (Part 1 hoàn thành trong 2.7 phút thay vì 5.3 phút); Bổ sung Động cơ Random Scale Dọc ngẫu nhiên 110% ~ 130% cho từng cú máy kết hợp thuật toán tự động giảm Zoom In, đảm bảo chiều cao video luôn vừa khít 100% với khung hình trung tâm hiện tại (1188px)."
+NOTES = "Bản phát hành v1.3.132: Đạo Diễn AI Tự Quyết Định Số Part (AI Director Dynamic Part Decider): Số part trên config/GUI giờ đây chỉ là con số mong muốn hoặc trần tối đa; Đạo diễn AI tự động phân tích thời lượng video nguồn và nhịp độ câu chuyện để chốt chính xác số Part tối ưu nhất (ví dụ video 4 phút tự động chốt 1 Part, video 8 phút chốt 3 Parts, video 16 phút chốt 5 Parts, video 35 phút chốt 6 Parts), cam kết 100% các Part đều đạt chuẩn ~90s chất lượng cao, không bao giờ bị chia loãng hoặc ngắn vụn."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

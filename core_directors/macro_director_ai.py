@@ -82,20 +82,105 @@ class MacroDirectorAI:
                 except Exception:
                     pass
 
+    @classmethod
+    def decide_macro_part_count(
+        cls,
+        total_duration: float,
+        desired_part_count: int = 6,
+        cues: Optional[List[Dict[str, Any]]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        log_fn=None
+    ) -> int:
+        """Đạo Diễn AI Tự Quyết Định Số Part (AI Director Dynamic Part Decider):
+        - Số part trên config chỉ là con số 'mong muốn' hoặc 'trần tối đa' (Max Target).
+        - Đạo diễn AI căn cứ vào thời lượng video gốc (total_duration), độ phong phú của câu chuyện (cues)
+          và quy tắc ngân sách mỗi Part (~90s xuất xưởng, cần ~140s - 350s nguồn) để tự động CHỐT số Part thực tế.
+        """
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
+        config = config or {}
+        max_desired = int(config.get("max_parts") or config.get("part_count") or desired_part_count or 6)
+        max_desired = max(1, max_desired)
+
+        base_speed = float(config.get("speed") or config.get("source_speed") or config.get("playback_speed") or 1.0)
+        target_part_dur = float(config.get("target_part_duration") or 90.0)
+        raw_budget = target_part_dur * base_speed  # Ví dụ 90s * 1.2 = 108s
+
+        # Để mỗi Part đạt ~90s sau tăng tốc, khung nguồn tối thiểu cần >= 135s (đảm bảo lọc được 4 cảnh trọn vẹn)
+        min_source_window = max(130.0, raw_budget * 1.25)
+        max_safe_parts = max(1, int(total_duration / min_source_window))
+
+        # Phân loại độ dài video nguồn theo tiêu chuẩn điện ảnh:
+        dur_min = total_duration / 60.0
+        if dur_min < 5.0:
+            optimal = 1 if dur_min < 2.5 else 2
+        elif dur_min < 9.0:
+            optimal = 3
+        elif dur_min < 14.0:
+            optimal = 4
+        elif dur_min < 22.0:
+            optimal = 5
+        elif dur_min < 32.0:
+            optimal = 6
+        else:
+            optimal = min(8, max(6, int(dur_min / 4.5)))
+
+        # Áp dụng trần tối đa theo mong muốn của user
+        chosen_parts = min(optimal, max_desired)
+
+        # Chặn an toàn không để video bị loãng dưới ngưỡng 90s
+        if chosen_parts > max_safe_parts:
+            chosen_parts = max_safe_parts
+
+        chosen_parts = max(1, chosen_parts)
+
+        avg_source_per_part = total_duration / float(chosen_parts)
+        _log(
+            f"👑 [ĐẠO DIỄN 1 QUYẾT ĐỊNH SỐ PART] Video gốc: {dur_min:.1f} phút ({total_duration:.1f}s) | "
+            f"Yêu cầu config (mong muốn/max): {max_desired} Parts -> "
+            f"Đạo diễn AI CHỐT CHÍNH THỨC: {chosen_parts} Parts "
+            f"(Khung nguồn: {avg_source_per_part/60:.1f} phút / Part -> Tinh tuyển ~90s chuẩn)!"
+        )
+
+        return chosen_parts
+
+    @classmethod
+    def plan_macro_series(
+        cls,
+        cues: List[Dict[str, Any]],
+        total_duration: float,
+        part_count: int = 6,
+        genre: str = "reality_drama",
+        master_title: str = "",
+        config: Optional[Dict[str, Any]] = None,
+        log_fn=None
+    ) -> Dict[str, Any]:
+        """Tạo Master Series Plan chia N Parts tuyến tính."""
+        def _log(msg: str):
+            logger.info(msg)
+            if callable(log_fn):
+                try:
+                    log_fn(msg)
+                except Exception:
+                    pass
+
         config = config or {}
 
-        # CƠ CHẾ BẢO VỆ MỐC 1 PHÚT: Tự động tính toán số Part an toàn dựa trên thời lượng nguồn
-        # Mỗi Part chuẩn Hollywood cần tối thiểu ~120s nguồn để lọc ra 4-5 cảnh cốt lõi đạt >= 70s - 95s
-        min_source_per_part = float(config.get("min_source_per_part", 125.0))
-        max_safe_parts = max(1, int(total_duration / min_source_per_part))
-        if part_count > max_safe_parts:
-            _log(
-                f"🛡️ [BẢO VỆ MỐC 1 PHÚT] Video nguồn {total_duration:.1f}s ({total_duration/60:.1f} phút) "
-                f"chia {part_count} Parts sẽ khiến video bị ngắn dưới 60s! "
-                f"Hệ thống tự động tái cân bằng từ {part_count} -> {max_safe_parts} Parts "
-                f"để cam kết 100% video đều > 1 phút (chuẩn kiếm tiền & giữ chân người xem)!"
-            )
-            part_count = max_safe_parts
+        # ĐẠO DIỄN AI TỰ CHỐT SỐ PART (Config chỉ đóng vai trò mong muốn hoặc trần tối đa)
+        final_part_count = cls.decide_macro_part_count(
+            total_duration=total_duration,
+            desired_part_count=part_count,
+            cues=cues,
+            config=config,
+            log_fn=_log
+        )
+        part_count = final_part_count
 
         _log(f"👑 [ĐẠO DIỄN 1] Phân tích vĩ mô toàn bộ video ({total_duration:.1f}s, {len(cues)} cues) thành {part_count} Parts...")
 
