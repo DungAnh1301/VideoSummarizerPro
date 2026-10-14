@@ -110,9 +110,10 @@ def probe_video_dimensions(path: str) -> Tuple[int, int]:
     ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=30, creationflags=CREATE_NO_WINDOW)
-        parts = res.stdout.strip().split("x")
-        if len(parts) >= 2:
-            return int(parts[0]), int(parts[1])
+        raw = (res.stdout or "").strip()
+        nums = [int(x) for x in re.findall(r"\d+", raw)]
+        if len(nums) >= 2 and nums[0] > 0 and nums[1] > 0:
+            return nums[0], nums[1]
     except Exception:
         pass
     return 1920, 1080

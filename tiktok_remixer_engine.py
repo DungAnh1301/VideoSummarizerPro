@@ -135,8 +135,10 @@ class TikTokRemixerEngine:
             ]
             flags = 0x08000000 if os.name == "nt" else 0
             res = subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
-            w, h = res.stdout.strip().split("x")
-            return int(w), int(h)
+            raw = (res.stdout or "").strip()
+            nums = [int(x) for x in re.findall(r"\d+", raw)]
+            if len(nums) >= 2 and nums[0] > 0 and nums[1] > 0:
+                return nums[0], nums[1]
         except Exception:
             return 1080, 1920
 

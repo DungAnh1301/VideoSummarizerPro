@@ -586,15 +586,40 @@ class EditorProcessor:
             cmd = [
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=width,height",
-                "-of", "csv=p=0:s=x", video_path
+                "-of", "csv=p=0", video_path
             ]
+            flags = 0x08000000 if os.name == "nt" else 0
             res = subprocess.run(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                creationflags=0x08000000
+                creationflags=flags
             )
-            parts = (res.stdout or "").strip().split("x")
-            if len(parts) == 2:
-                return int(parts[0]), int(parts[1])
+            raw = (res.stdout or "").strip()
+            nums = [int(x) for x in re.findall(r"\d+", raw)]
+            if len(nums) >= 2 and nums[0] > 0 and nums[1] > 0:
+                return nums[0], nums[1]
+        except Exception:
+            pass
+        # Fallback ffprobe json
+        try:
+            import json
+            cmd_json = [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "json", video_path
+            ]
+            flags = 0x08000000 if os.name == "nt" else 0
+            res_json = subprocess.run(
+                cmd_json, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                creationflags=flags
+            )
+            if res_json.returncode == 0 and res_json.stdout:
+                data = json.loads(res_json.stdout)
+                streams = data.get("streams", [])
+                if streams:
+                    w = int(streams[0].get("width") or 0)
+                    h = int(streams[0].get("height") or 0)
+                    if w > 0 and h > 0:
+                        return w, h
         except Exception:
             pass
         return 0, 0

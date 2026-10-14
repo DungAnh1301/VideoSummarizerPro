@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.132"
+VERSION = "1.3.133"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.132: Đạo Diễn AI Tự Quyết Định Số Part (AI Director Dynamic Part Decider): Số part trên config/GUI giờ đây chỉ là con số mong muốn hoặc trần tối đa; Đạo diễn AI tự động phân tích thời lượng video nguồn và nhịp độ câu chuyện để chốt chính xác số Part tối ưu nhất (ví dụ video 4 phút tự động chốt 1 Part, video 8 phút chốt 3 Parts, video 16 phút chốt 5 Parts, video 35 phút chốt 6 Parts), cam kết 100% các Part đều đạt chuẩn ~90s chất lượng cao, không bao giờ bị chia loãng hoặc ngắn vụn."
+NOTES = "Bản phát hành v1.3.133: Khắc phục triệt để lỗi kiểm định và tải video YouTube (Robust Video Probe & Download Resiliency): Sửa lỗi ffprobe kích thước video (1920x1080) bị trả về (0,0) do xuất hiện trường side_data/HDR khiến pipeline báo lỗi cả 3 lần thử; bổ sung cơ chế trích xuất kích thước video đa lớp bằng Regex, ffprobe JSON và ffmpeg banner fallback; bảo vệ bộ hiển thị tiến trình tải luồng đa phân mảnh không bị lỗi mã hóa font ký tự trên Windows console; tự động phát hiện và remux định dạng nếu yt-dlp lưu dưới dạng container khác."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

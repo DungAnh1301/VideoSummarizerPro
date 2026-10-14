@@ -325,15 +325,53 @@ class DownloaderProcessor:
                     "ffprobe", "-v", "error",
                     "-select_streams", "v:0",
                     "-show_entries", "stream=width,height",
-                    "-of", "csv=p=0:s=x",
+                    "-of", "csv=p=0",
                     path,
                 ],
                 check=False,
                 capture=True,
             )
-            parts = (res.stdout or "").strip().split("x")
-            if len(parts) == 2:
-                return int(parts[0]), int(parts[1])
+            raw = (res.stdout or "").strip()
+            nums = [int(x) for x in re.findall(r"\d+", raw)]
+            if len(nums) >= 2 and nums[0] > 0 and nums[1] > 0:
+                return nums[0], nums[1]
+        except Exception:
+            pass
+        # Fallback 1: ffprobe json
+        try:
+            import json
+            res = cls._ff_run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "json",
+                    path,
+                ],
+                check=False,
+                capture=True,
+            )
+            if res.returncode == 0 and res.stdout:
+                data = json.loads(res.stdout)
+                streams = data.get("streams", [])
+                if streams:
+                    w = int(streams[0].get("width") or 0)
+                    h = int(streams[0].get("height") or 0)
+                    if w > 0 and h > 0:
+                        return w, h
+        except Exception:
+            pass
+        # Fallback 2: ffmpeg banner regex
+        try:
+            res = cls._ff_run(
+                ["ffmpeg", "-hide_banner", "-i", path],
+                check=False,
+                capture=True,
+            )
+            text = (res.stderr or "") + (res.stdout or "")
+            m = re.search(r"Video:.*? (\d{2,5})x(\d{2,5})", text)
+            if m:
+                return int(m.group(1)), int(m.group(2))
         except Exception:
             pass
         return 0, 0
@@ -507,8 +545,9 @@ class DownloaderProcessor:
                 p = d.get('_percent_str', '0.0%').strip()
                 s = d.get('_speed_str', '0 B/s').strip()
                 eta = d.get('_eta_str', 'Unknown').strip()
+                th_count = ydl_opts.get("concurrent_fragment_downloads", 1)
                 
-                msg = f"📥 [ĐANG TẢI 16 LUỒNG] Tiến trình: {p} | Tốc độ: {s} | Còn lại: {eta}"
+                msg = f"📥 [ĐANG TẢI {th_count} LUỒNG] Tiến trình: {p} | Tốc độ: {s} | Còn lại: {eta}"
                 
                 stdout_obj = getattr(sys, 'stdout', None)
                 if stdout_obj and hasattr(stdout_obj, 'text_widget'):
@@ -535,13 +574,19 @@ class DownloaderProcessor:
                     except Exception:
                         pass
                 
-                sys.stdout.write(f"\r{msg}   ")
-                sys.stdout.flush()
+                try:
+                    sys.stdout.write(f"\r{msg}   ")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
 
             elif d['status'] == 'finished':
                 if hasattr(cls, "_dl_line_index"):
                     delattr(cls, "_dl_line_index")
-                print("\n✨ [Tải xong phân mảnh, đang tiến hành gộp file MP4...]")
+                try:
+                    print("\n✨ [Tải xong phân mảnh, đang tiến hành gộp file MP4...]")
+                except Exception:
+                    pass
 
         opts = cls.apply_cookies_to_opts(ydl_opts)
         opts['progress_hooks'] = [my_hook]
@@ -556,6 +601,25 @@ class DownloaderProcessor:
                     if os.path.exists(dest_path):
                         os.remove(dest_path)
                     os.replace(prepared, dest_path)
+
+            # Dự phòng: nếu yt-dlp lưu dưới định dạng khác (mkv/webm/ts) do codec đặc thù, tự động remux về mp4
+            if not os.path.exists(dest_path):
+                folder = os.path.dirname(dest_path) or "."
+                for cand in os.listdir(folder):
+                    cand_path = os.path.join(folder, cand)
+                    if cand.startswith("source_video.") and cand.endswith((".mp4", ".mkv", ".webm", ".ts")):
+                        if os.path.abspath(cand_path) != os.path.abspath(dest_path) and os.path.getsize(cand_path) > 1024 * 1024:
+                            try:
+                                cls._ff_run(["ffmpeg", "-y", "-i", cand_path, "-c", "copy", dest_path], check=False)
+                                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+                                    try:
+                                        os.remove(cand_path)
+                                    except OSError:
+                                        pass
+                                    break
+                            except Exception:
+                                pass
+
             return info_dict
 
     @classmethod
@@ -701,13 +765,21 @@ class DownloaderProcessor:
                     success = True
                     info(f"✅ Tải thành công mỹ mãn với {threads} luồng!")
                     break
+                else:
+                    w, h = cls.probe_video_size(dest_path)
+                    dur = cls.probe_duration_sec(dest_path)
+                    exists = os.path.exists(dest_path)
+                    sz = os.path.getsize(dest_path) if exists else 0
+                    last_error = f"File không đạt chuẩn kiểm định (exists={exists}, size={sz}B, {w}x{h}, dur={dur}s)"
+                    info(f"⚠️ [KIỂM ĐỊNH] Thử nghiệm {threads} luồng tải xong nhưng {last_error}")
             except Exception as e:
+                last_error = str(e)
                 info(f"⚠️ Thất bại ở cấu hình {threads} luồng (Đang chuyển cấp dự phòng...): {e}")
                 if "Sign in to confirm your age" in str(e):
                     info("💡 [GỢI Ý] Video này bị giới hạn độ tuổi (18+) của YouTube. Vui lòng bấm nút [🍪 Cookie YouTube] trên thanh tiêu đề để nạp file cookies.txt!")
 
         if not success:
-            raise RuntimeError("❌ Cả 3 lần thử tải video (16 -> 8 -> 1 luồng) đều không thành công!")
+            raise RuntimeError(f"❌ Cả 3 lần thử tải video (16 -> 8 -> 1 luồng) đều không thành công! Chi tiết: {last_error}")
 
         if not info_dict.get("duration"):
             info_dict["duration"] = cls.probe_duration_sec(dest_path)
