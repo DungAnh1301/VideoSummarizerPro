@@ -221,6 +221,12 @@ class PartDirectorAI:
                     pass
 
         config = config or {}
+        raw_pfx = str(part_prefix or "PART").strip()
+        if not raw_pfx or raw_pfx.upper() in ("PART", "TẬP", "TAP") or "TẬP" in raw_pfx.upper() or "TAP" in raw_pfx.upper():
+            part_prefix = "PART"
+        else:
+            part_prefix = raw_pfx.upper()
+
         work_dir = work_dir or os.path.dirname(os.path.abspath(output_final))
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)

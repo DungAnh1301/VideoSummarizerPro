@@ -761,8 +761,8 @@ class PartSplitterFrame(ttk.Frame):
         c["apply_capcut_limiter"] = bool(self.capcut_limiter_var.get())
         c["apply_subtle_zoom"] = bool(self.subtle_zoom_var.get())
         c["random_mirror"] = bool(self.random_mirror_var.get())
-        pfx_val = self.part_prefix_var.get().strip()
-        if not pfx_val or pfx_val.lower() in ("part", "tập", "tap") or "tập" in pfx_val.lower():
+        pfx_val = str(self.part_prefix_var.get()).strip()
+        if not pfx_val or pfx_val.lower() in ("part", "tập", "tap") or "tập" in pfx_val.lower() or "tap" in pfx_val.lower():
             pfx_val = "PART"
             self.part_prefix_var.set("PART")
         c["part_label_prefix"] = pfx_val
@@ -1835,7 +1835,7 @@ class PartSplitterFrame(ttk.Frame):
             job["status"] = "Hậu kỳ CapCut & Banner..."
         self.after(0, self._refresh_queue_table)
         part_prefix = str(cfg.get("part_label_prefix", "PART")).strip() or "PART"
-        if not part_prefix or part_prefix.lower() in ("part", "tập", "tap") or "tập" in part_prefix.lower():
+        if not part_prefix or part_prefix.lower() in ("part", "tập", "tap") or "tập" in part_prefix.lower() or "tap" in part_prefix.lower():
             part_prefix = "PART"
 
         def _render_one_part(i_idx: int, p_item: Any) -> tuple[int, str]:

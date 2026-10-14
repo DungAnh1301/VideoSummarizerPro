@@ -348,6 +348,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
 
+        raw_pfx = str(part_prefix or "PART").strip()
+        if not raw_pfx or raw_pfx.upper() in ("PART", "TẬP", "TAP") or "TẬP" in raw_pfx.upper() or "TAP" in raw_pfx.upper():
+            part_prefix = "PART"
+        else:
+            part_prefix = raw_pfx.upper()
+
         video_for_packaging = audio_mastered_video
 
         # 1. Burn phụ đề nếu có file ASS

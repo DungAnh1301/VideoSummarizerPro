@@ -493,7 +493,8 @@ class VisualEditorEngine:
                         "-f", "mpegts",
                         seg_ts
                     ]
-                    _ff_run(cmd, log_fn=None, timeout=60, label=f"sh_{sc_idx}_{sh_idx}")
+                    shot_timeout = max(360, int(dur * 8))
+                    _ff_run(cmd, log_fn=None, timeout=shot_timeout, label=f"sh_{sc_idx}_{sh_idx}")
                     seg_files.append(seg_ts)
 
                 if not seg_files:
@@ -512,7 +513,7 @@ class VisualEditorEngine:
                     "-c", "copy",
                     sc_video
                 ]
-                _ff_run(concat_cmd, log_fn=None, timeout=120, label=f"sc_{sc_idx}")
+                _ff_run(concat_cmd, log_fn=None, timeout=300, label=f"sc_{sc_idx}")
                 sc_dur = probe_duration_sec(sc_video)
                 scene_files.append(sc_video)
                 scene_durations.append(sc_dur)

@@ -119,17 +119,55 @@ def _extract_frame_geom(cfg: dict) -> tuple[float, float, float, bool]:
 # =====================================================================
 # 1. HỆ THỐNG ĐỔI MÀU KÉP: WEB HEX (#RRGGBB) VS ASS HEX (&HBBGGRR&)
 # =====================================================================
+NAMED_HEX_COLORS = {
+    "black": "#000000",
+    "white": "#FFFFFF",
+    "red": "#FF0000",
+    "green": "#00FF00",
+    "blue": "#0000FF",
+    "yellow": "#FFFF00",
+    "cyan": "#00FFFF",
+    "magenta": "#FF00FF",
+    "gray": "#808080",
+    "grey": "#808080",
+    "none": "#000000",
+}
+
+
+def normalize_to_hex(val: str, default: str = "#FFFFFF") -> str:
+    """Chuẩn hóa mọi định dạng màu (tên màu, ASS &H..., hex thiếu dấu #) về chuẩn #RRGGBB."""
+    if not val:
+        return default
+    s = str(val).strip()
+    s_lower = s.lower().lstrip("#")
+    if s_lower in NAMED_HEX_COLORS:
+        return NAMED_HEX_COLORS[s_lower]
+    if s.upper().startswith("&H"):
+        return ass_to_hex(s, default)
+    if not s.startswith("#"):
+        s = "#" + s
+    if len(s) == 7:
+        try:
+            int(s[1:], 16)
+            return s.upper()
+        except ValueError:
+            pass
+    return default
+
+
 def hex_to_ass(hex_color: str, default: str = "&HFFFFFF&") -> str:
-    """Chuyển RGB Web Hex (#RRGGBB) sang ASS Hex (&HBBGGRR&)."""
+    """Chuyển RGB Web Hex (#RRGGBB) hoặc tên màu sang ASS Hex (&HBBGGRR&)."""
     if not hex_color:
         return default
-    clean = str(hex_color).strip().lstrip("#")
+    clean = str(hex_color).strip().lower().lstrip("#")
+    if clean in NAMED_HEX_COLORS:
+        clean = NAMED_HEX_COLORS[clean].lstrip("#").lower()
     if clean.upper().startswith("&H"):
         clean_ass = clean.upper()
         if not clean_ass.endswith("&"):
             clean_ass += "&"
         return clean_ass
-    if clean.lower().startswith("0x"):
+    if clean.startswith("0x"):
         clean = clean[2:]
     if len(clean) == 6:
         r, g, b = clean[0:2], clean[2:4], clean[4:6]
@@ -149,6 +187,9 @@ def ass_to_hex(ass_color: str, default: str = "#FFFFFF") -> str:
             return f"#{r}{g}{b}".upper()
     if s.startswith("#") and len(s) == 7:
         return s
+    s_lower = s.lower().lstrip("#")
+    if s_lower in NAMED_HEX_COLORS:
+        return NAMED_HEX_COLORS[s_lower]
     return default
 
 
@@ -205,12 +246,7 @@ def _create_styled_color_btn(hex_val: str) -> QPushButton:
 
 
 def _apply_color_btn_visuals(btn: QPushButton, hex_val: str):
-    clean_hex = str(hex_val).strip()
-    if not clean_hex.startswith("#") and not clean_hex.startswith("&H"):
-        clean_hex = "#" + clean_hex
-    display_hex = clean_hex
-    if clean_hex.startswith("&H"):
-        display_hex = ass_to_hex(clean_hex)
+    display_hex = normalize_to_hex(hex_val, default="#FFFFFF")
 
     try:
         col = QColor(display_hex)
@@ -837,10 +873,11 @@ class TitleSubStudioDialog(QDialog):
         self.layout_base_path = APP_DIR / "temp" / "filter_preview" / f"layout_base_{self.app_mode}.jpg"
 
         # Dữ liệu màu sắc nội bộ
-        self._title_color1 = self.ts_data.get("title_color1", "#FFFFFF")
-        self._title_color2 = self.ts_data.get("title_color2", "#FFFFFF")
-        self._title_outline = self.ts_data.get("title_outline_color", "none")
-        self._title_bg = self.ts_data.get("title_bg_color", "#FF2D55")
+        self._title_color1 = normalize_to_hex(self.ts_data.get("title_color1", "#FFFFFF"), "#FFFFFF")
+        self._title_color2 = normalize_to_hex(self.ts_data.get("title_color2", "#FFFFFF"), "#FFFFFF")
+        raw_outline = self.ts_data.get("title_outline_color", "none")
+        self._title_outline = "none" if not raw_outline or str(raw_outline).lower() == "none" else normalize_to_hex(raw_outline, "#000000")
+        self._title_bg = normalize_to_hex(self.ts_data.get("title_bg_color", "#FF2D55"), "#FF2D55")
 
         raw_sc = self.ts_data.get("sub_color", DEFAULT_SUB_COLOR)
         raw_so = self.ts_data.get("sub_outline_color", DEFAULT_SUB_OUTLINE_COLOR)

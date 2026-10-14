@@ -118,10 +118,10 @@ def normalize_config(data, defaults=None):
             payload.setdefault("scale_w", 100.0)
             payload.setdefault("scale_h", 100.0)
             payload.setdefault("title_y_pos", 260)
-            payload.setdefault("title_color1", "black")
-            payload.setdefault("title_color2", "red")
+            payload.setdefault("title_color1", "#000000")
+            payload.setdefault("title_color2", "#FF0000")
             payload.setdefault("title_outline_color", "none")
-            payload.setdefault("title_bg_color", "white")
+            payload.setdefault("title_bg_color", "#FFFFFF")
             payload.setdefault("sub_size", 22)
             payload.setdefault("sub_outline", 3)
             payload.setdefault("sub_margin_v", 100)
@@ -274,10 +274,10 @@ def load_config():
         "scale_w": 100.0,
         "scale_h": 100.0,
         "title_y_pos": 260,
-        "title_color1": "black",
-        "title_color2": "red",
+        "title_color1": "#000000",
+        "title_color2": "#FF0000",
         "title_outline_color": "none",
-        "title_bg_color": "white",
+        "title_bg_color": "#FFFFFF",
         "sub_size": 22,
         "sub_outline": 3,
         "sub_margin_v": 100,

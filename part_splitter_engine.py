@@ -658,7 +658,7 @@ class PartSplitterEngine:
             output_png = os.path.join(tempfile.gettempdir(), f"bottom_badge_{time.time_ns()}.png")
 
         clean_prefix = str(prefix or "PART").strip().upper()
-        if clean_prefix in ("TẬP", "TAP", ""):
+        if not clean_prefix or clean_prefix in ("TẬP", "TAP", "PART") or "TẬP" in clean_prefix or "TAP" in clean_prefix:
             clean_prefix = "PART"
         p_text = f"{clean_prefix} {part_index}"
         font_size = 38
@@ -889,8 +889,9 @@ class PartSplitterEngine:
                 "-f", "mpegts",
                 seg_path
             ]
+            seg_timeout = max(360, int(dur * 8))
             try:
-                _ff_run(seg_cmd, log_fn=None, timeout=60, label=f"seg_{idx}")
+                _ff_run(seg_cmd, log_fn=None, timeout=seg_timeout, label=f"seg_{idx}")
                 seg_files.append(seg_path)
             except Exception:
                 # Fallback sang libx264 veryfast nếu NVENC bận
@@ -907,7 +908,7 @@ class PartSplitterEngine:
                     "-f", "mpegts",
                     seg_path
                 ]
-                _ff_run(seg_cmd_fb, log_fn=None, timeout=120, label=f"seg_{idx}_fb")
+                _ff_run(seg_cmd_fb, log_fn=None, timeout=max(420, int(dur * 10)), label=f"seg_{idx}_fb")
                 seg_files.append(seg_path)
 
         # Nối tất cả các segment vào output_path
@@ -962,6 +963,12 @@ class PartSplitterEngine:
                     pass
 
         config = config or {}
+        raw_pfx = str(part_prefix or "PART").strip()
+        if not raw_pfx or raw_pfx.upper() in ("PART", "TẬP", "TAP") or "TẬP" in raw_pfx.upper() or "TAP" in raw_pfx.upper():
+            part_prefix = "PART"
+        else:
+            part_prefix = raw_pfx.upper()
+
         work_dir = work_dir or os.path.dirname(os.path.abspath(condensed_video))
         os.makedirs(work_dir, exist_ok=True)
         os.makedirs(os.path.dirname(os.path.abspath(output_final)), exist_ok=True)
@@ -1312,7 +1319,12 @@ class PartSplitterEngine:
             if k_src in kwargs and k_dst not in cfg:
                 cfg[k_dst] = kwargs[k_src]
 
-        part_prefix = str(cfg.get("part_label_prefix", "Part"))
+        raw_prefix = str(cfg.get("part_label_prefix", "PART")).strip()
+        if not raw_prefix or raw_prefix.upper() in ("PART", "TẬP", "TAP") or "TẬP" in raw_prefix.upper() or "TAP" in raw_prefix.upper():
+            part_prefix = "PART"
+        else:
+            part_prefix = raw_prefix.upper()
+        cfg["part_label_prefix"] = part_prefix
         speed = max(0.5, min(3.0, float(cfg.get("source_speed") or cfg.get("speed") or 1.05)))
         apply_limiter = bool(cfg.get("apply_capcut_limiter", True))
         audio_boost = float(cfg.get("audio_boost", 20.0) or 20.0)

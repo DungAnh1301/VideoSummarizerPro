@@ -1049,12 +1049,18 @@ class CapCutColorStudioDialog(QDialog):
         return btn
 
     def _update_color_btn_style(self, btn: QPushButton, hex_val: str):
-        col = QColor(hex_val)
+        val = str(hex_val).strip()
+        named = {"black": "#000000", "white": "#FFFFFF", "red": "#FF0000", "green": "#00FF00", "blue": "#0000FF", "yellow": "#FFFF00"}
+        val_hex = named.get(val.lower().lstrip("#"), val if val.startswith("#") else f"#{val}")
+        col = QColor(val_hex)
+        if not col.isValid():
+            col = QColor(val) if QColor(val).isValid() else QColor("#888888")
+            val_hex = col.name()
         text_col = "#000000" if col.lightness() > 128 else "#FFFFFF"
-        btn.setText(hex_val)
+        btn.setText(val_hex.upper())
         btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {hex_val}; color: {text_col};
+                background-color: {val_hex}; color: {text_col};
                 font-weight: bold; border-radius: 4px; border: 1px solid #45475a;
             }}
         """)
