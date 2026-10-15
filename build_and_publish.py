@@ -10,9 +10,9 @@ from datetime import datetime
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-VERSION = "1.3.133"
+VERSION = "1.3.134"
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
-NOTES = "Bản phát hành v1.3.133: Khắc phục triệt để lỗi kiểm định và tải video YouTube (Robust Video Probe & Download Resiliency): Sửa lỗi ffprobe kích thước video (1920x1080) bị trả về (0,0) do xuất hiện trường side_data/HDR khiến pipeline báo lỗi cả 3 lần thử; bổ sung cơ chế trích xuất kích thước video đa lớp bằng Regex, ffprobe JSON và ffmpeg banner fallback; bảo vệ bộ hiển thị tiến trình tải luồng đa phân mảnh không bị lỗi mã hóa font ký tự trên Windows console; tự động phát hiện và remux định dạng nếu yt-dlp lưu dưới dạng container khác."
+NOTES = "Bản phát hành v1.3.134: Động Cơ Random Lật Gương Tự Động Cho Các Cảnh (AI Dynamic Random Mirror & Anti-Copyright): Tích hợp tính năng lật gương ngẫu nhiên (Horizontal Flip) chuyên nghiệp vào Lead Visual Editor Engine; phân bổ cân bằng ~50% số cảnh được lật gương xen kẽ ngẫu nhiên; cảnh thoại chính (Anchor) giữ nguyên hướng lật đồng nhất xuyên suốt câu thoại để không gây giật mặt; các cảnh B-roll/footage minh họa random lật độc lập 50% để tối ưu hóa thị giác và lách bản quyền video triệt để; cả video trung tâm và nền blur đều được lật đồng bộ hoàn hảo trong khi subtitle và title card vẫn giữ thẳng đứng sắc nét."
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 print(f"[BUILD] Bat dau dong goi ban v{VERSION}...")

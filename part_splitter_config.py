@@ -27,7 +27,7 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "zoom_percent": 100.0,
         "scale_w": 100.0,
         "scale_h": 100.0,
-        "random_mirror": False,
+        "random_mirror": True,
         "blur_bg": True,
         "apply_capcut_limiter": True,
         "apply_subtle_zoom": True,
@@ -77,7 +77,7 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "zoom_percent": 100.0,
         "scale_w": 100.0,
         "scale_h": 100.0,
-        "random_mirror": False,
+        "random_mirror": True,
         "blur_bg": True,
         "apply_capcut_limiter": True,
         "apply_subtle_zoom": True,
@@ -102,7 +102,7 @@ DEFAULT_SAVED_CONFIGS: Dict[str, Dict[str, Any]] = {
         "zoom_percent": 100.0,
         "scale_w": 100.0,
         "scale_h": 100.0,
-        "random_mirror": False,
+        "random_mirror": True,
         "blur_bg": True,
         "apply_capcut_limiter": True,
         "apply_subtle_zoom": True,
@@ -166,7 +166,7 @@ DEFAULT_PART_CONFIG: Dict[str, Any] = {
     "audio_boost": 6.0,
     "apply_capcut_limiter": True,               # Áp dụng CapCut Limiter +20dB
     "apply_subtle_zoom": True,                  # Subtle Zoom (1.03x) lách bản quyền
-    "random_mirror": False,                     # Lật gương hình ảnh
+    "random_mirror": True,                      # Lật gương hình ảnh
     "blur_bg": True,
     "zoom_in": False,                           # Chuẩn không zoom
     "zoom_percent": 100.0,                      # Chuẩn 100.0%

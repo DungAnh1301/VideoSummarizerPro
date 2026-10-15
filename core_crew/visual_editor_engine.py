@@ -51,7 +51,9 @@ class VisualEditorEngine:
         cls,
         shots: List[Dict[str, Any]],
         scale_w: int,
-        target_fg_h: int
+        target_fg_h: int,
+        scene_flipped: bool = False,
+        allow_mirror: bool = True,
     ) -> List[Dict[str, Any]]:
         """Đạo Diễn Hình Ảnh Tự Động (Pure AI Command Driven - Tốc độ 0.0001s):
         - BỎ HOÀN TOÀN QUÉT MẶT CPU: Đọc trực tiếp quyết định nghệ thuật từ Kịch bản Đạo diễn AI CLI.
@@ -63,6 +65,9 @@ class VisualEditorEngine:
           + Mỗi shot ngẫu nhiên nhận tỉ lệ kéo giãn dọc v_scale trong khoảng [1.10, 1.30].
           + Đồng thời GIẢM mức Zoom In tương ứng (z_eff = max(0.80, base_zoom / v_scale)) để chiều cao
             sau khi scale luôn vừa khít 100% với khung hình trung tâm hiện tại (target_fg_h).
+        - ĐỘNG CƠ RANDOM LẬT GƯƠNG (Dynamic Horizontal Flip / Anti-Copyright):
+          + Cảnh chính (Anchor): Lật gương ngẫu nhiên theo Scene để khuôn mặt đồng nhất trong cùng câu thoại.
+          + Cảnh B-Roll: Random lật gương độc lập (50% cơ hội) tối ưu độ phong phú thị giác và lách bản quyền.
         """
         import random
         planned: List[Dict[str, Any]] = []
@@ -122,11 +127,26 @@ class VisualEditorEngine:
             y_off = max(0, min(max(0, z_h - target_fg_h), desired_y))
             y_off = y_off - (y_off % 2)
 
+            # 5. Quyết định Lật Gương (Random Mirror):
+            a_start = float(sh.get("audio_start", sh.get("start", 0.0)))
+            v_start = float(sh.get("video_start", sh.get("start", 0.0)))
+            is_anchor = bool(sh.get("is_anchor", abs(v_start - a_start) < 0.05))
+
+            if not allow_mirror:
+                is_flipped = False
+            elif is_anchor:
+                # Shot thoại chính: tuân theo hướng lật thống nhất của Scene
+                is_flipped = scene_flipped
+            else:
+                # Shot B-Roll minh họa: random lật độc lập 50%
+                is_flipped = random.choice([True, False])
+
             sh_plan = dict(sh)
             sh_plan["u_focus"] = round(u_focus, 3)
             sh_plan["v_focus"] = round(v_focus, 3)
             sh_plan["zoom_factor"] = round(base_zoom, 2)
             sh_plan["v_scale"] = v_scale
+            sh_plan["is_flipped"] = is_flipped
             sh_plan["z_w"] = z_w
             sh_plan["z_h"] = z_h
             sh_plan["x_off"] = x_off
@@ -182,7 +202,17 @@ class VisualEditorEngine:
         scene_files = []
         scene_durations = []
 
-        _log(f"🎬 [ĐẠO DIỄN HÌNH ẢNH CLI AI] Thực thi góc máy & Random Scale Dọc (110% - 130%) cho {len(scenes)} phân cảnh...")
+        import random
+        allow_mirror = bool((config or {}).get("random_mirror", True))
+        if allow_mirror and len(scenes) > 1:
+            flips = [True if i % 2 == 1 else False for i in range(len(scenes))]
+            random.shuffle(flips)
+            scene_flips = flips
+        else:
+            scene_flips = [random.choice([True, False]) if allow_mirror else False for _ in scenes]
+
+        mirror_tag = "Bật (Random Mirror ~50%)" if allow_mirror else "Tắt"
+        _log(f"🎬 [ĐẠO DIỄN HÌNH ẢNH CLI AI] Thực thi góc máy, Random Scale Dọc (110% - 130%) & Lật Gương [{mirror_tag}] cho {len(scenes)} phân cảnh...")
 
         base_speed = float(config.get("speed") or config.get("source_speed") or config.get("playback_speed") or 1.0)
         base_speed = max(0.5, min(3.0, base_speed))
@@ -203,11 +233,15 @@ class VisualEditorEngine:
             if not raw_shots:
                 continue
 
-            # Đạo diễn hình ảnh CLI AI lập phương án góc máy & Random Scale Dọc (110% - 130%) cho từng shot
+            sc_flip = scene_flips[sc_idx] if sc_idx < len(scene_flips) else False
+
+            # Đạo diễn hình ảnh CLI AI lập phương án góc máy, Random Scale Dọc (110% - 130%) & Random Lật Gương
             planned_shots = cls.plan_scene_camera_shots(
                 shots=raw_shots,
                 scale_w=scale_w,
                 target_fg_h=target_fg_h,
+                scene_flipped=sc_flip,
+                allow_mirror=allow_mirror,
             )
 
             seg_files = []
@@ -241,18 +275,23 @@ class VisualEditorEngine:
                 z_fac = float(sh["zoom_factor"])
                 u_foc = float(sh["u_focus"])
                 v_sc = float(sh.get("v_scale", 1.0))
+                is_flipped = bool(sh.get("is_flipped", False))
 
+                flip_tag = " | 🪞 Lật gương" if is_flipped else ""
                 spd_tag = f" (Audio {spd_audio:.2f}x | Video {spd_video:.2f}x)"
-                cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x + Dọc {v_sc*100:.0f}% @ u={u_foc:.2f}{spd_tag}")
+                cam_summary.append(f"Shot {sh_idx+1}: Zoom {z_fac:.2f}x + Dọc {v_sc*100:.0f}% @ u={u_foc:.2f}{flip_tag}{spd_tag}")
 
                 fg_filter = f"scale={z_w}:{z_h},crop=1080:{target_fg_h}:{x_off}:{y_off}"
+                if is_flipped:
+                    fg_filter = f"{fg_filter},hflip"
                 if color_fx:
                     fg_filter = f"{fg_filter},{color_fx}"
 
+                bg_flip = ",hflip" if is_flipped else ""
                 pts_filter = f"setpts=(PTS-STARTPTS)/{spd_video:.3f}" if abs(spd_video - 1.0) > 0.04 else "setpts=PTS-STARTPTS"
                 vf = (
                     f"[0:v]split=2[bg_in][fg_in];"
-                    f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6[bg];"
+                    f"[bg_in]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:6{bg_flip}[bg];"
                     f"[fg_in]{fg_filter}[fg];"
                     f"[bg][fg]overlay=0:{y_top_boundary},{pts_filter}[vout]"
                 )
