@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.142"
+VERSION = "1.3.143"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.142: Tự động hóa 100% định vị JS Engine (Deno) nội bộ & Ép định tuyến IPv4: Tích hợp get_deno_path tự phát hiện Deno nội bộ portable/system mà không cần cấu hình thủ công; ép dùng IPv4 chung modem (0.0.0.0) tránh dính blacklist IPv6 riêng của máy con; mặc định player_client sang Android/Web vượt hoàn toàn BotGuard và lỗi LOGIN_REQUIRED trên mọi thiết bị; bổ sung pycryptodomex giải mã luồng bảo mật."
+NOTES = "Bản phát hành v1.3.143: Khôi Phục Luồng Tải Full HD 1080p Cho Video Nguồn Chính: Tách biệt hoàn toàn luồng tải 360p (phục vụ AI Gemini/Whisper phân tích kịch bản) và luồng video gốc (bắt buộc đạt Full HD 1080p trở lên để biên tập, triệt tiêu hoàn toàn hiện tượng video xuất ra bị vỡ hình, mờ hạt); không ép cổng Android ở luồng tải chính."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 

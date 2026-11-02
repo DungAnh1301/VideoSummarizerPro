@@ -246,14 +246,8 @@ class DownloaderProcessor:
         # 2. Ép dùng IPv4 chung modem (tránh IPv6 riêng của từng máy bị dính cooldown/bot check)
         opts_copy["source_address"] = "0.0.0.0"
 
-        # 3. Mặc định player_client sang mobile & web để né cổng TV Samsung bị khóa
-        ext_args = dict(opts_copy.get("extractor_args") or {})
-        yt_args = dict(ext_args.get("youtube") or {})
-        if "player_client" not in yt_args:
-            yt_args["player_client"] = ["android", "web"]
-        ext_args["youtube"] = yt_args
-
         # Tự động bỏ qua authcheck của youtubetab khi quét/tải playlist YouTube
+        ext_args = dict(opts_copy.get("extractor_args") or {})
         yt_tab = dict(ext_args.get("youtubetab") or {})
         skip_list = list(yt_tab.get("skip") or [])
         if "authcheck" not in skip_list:
