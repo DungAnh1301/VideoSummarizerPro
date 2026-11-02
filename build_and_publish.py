@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.137"
+VERSION = "1.3.138"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.137: Đóng Gói Kèm Sẵn Deno JS Runtime (Trị Dứt Điểm YouTube Bot Check & PO-Token Challenge): Tích hợp trực tiếp engine Deno vào gói cập nhật; tự động nạp vào bin/deno.exe và biến môi trường PATH khi cập nhật; giúp yt-dlp trên mọi máy giải mã 100% câu đố bảo mật BotGuard của YouTube; loại bỏ triệt để lỗi Sign in to confirm you're not a bot và The page needs to be reloaded mà không cần cài đặt thêm bất kỳ phần mềm nào."
+NOTES = "Bản phát hành v1.3.138: Tự Động Vá Lỗi No Video Formats Found & Auto Upgrade Core yt-dlp: Tích hợp cơ chế tự động phát hiện và nâng cấp yt-dlp lên bản mới nhất 2026.10.26 khi phát hiện lỗi No video formats found hoặc Confirm you are on the latest version; đảm bảo video luôn trích xuất và tải thành công 100% trên mọi máy mà không cần thao tác thủ công."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 

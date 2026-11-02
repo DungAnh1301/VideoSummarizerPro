@@ -257,6 +257,16 @@ class DownloaderProcessor:
                 return True, "Cookie hợp lệ & phiên đăng nhập hoạt động tốt! (Đã kết nối YouTube thành công)"
         except Exception as e:
             err_msg = str(e)
+            if "No video formats found" in err_msg or "Confirm you are on the latest version" in err_msg:
+                # Tự động nâng cấp yt-dlp khi phát hiện bản cũ không tìm thấy format
+                ok, _ = upgrade_ytdlp_runtime(print)
+                if ok:
+                    try:
+                        with yt_dlp.YoutubeDL(opts) as ydl:
+                            ydl.extract_info(test_url, download=False)
+                            return True, "Đã tự động nâng cấp yt-dlp và xác thực Cookie thành công 100%!"
+                    except Exception as retry_e:
+                        err_msg = str(retry_e)
             if "The page needs to be reloaded" in err_msg:
                 return False, "YouTube báo phiên làm việc này cần xác minh lại (The page needs to be reloaded). Hãy xuất cookie riêng của tab youtube.com trên chính máy này!"
             if "Sign in to confirm your age" in err_msg:
@@ -657,6 +667,12 @@ class DownloaderProcessor:
                     return _execute_extract(opts_no_cookie)
                 except Exception:
                     pass
+
+            if "No video formats found" in err_str or "Confirm you are on the latest version" in err_str:
+                logger.warning("🚀 [AUTO UPGRADE] Phát hiện yt-dlp cũ gây lỗi No video formats found. Đang tự động nâng cấp yt-dlp...")
+                ok, _ = upgrade_ytdlp_runtime(logger.info)
+                if ok:
+                    return _execute_extract(opts)
 
             if "Sign in to confirm you're not a bot" in err_str or "bot" in err_str.lower() or "UNPLAYABLE" in err_str:
                 logger.warning("🛡️ [BOT BYPASS] Kích hoạt chế độ bypass Bot Check của YouTube (tv,mweb,android)...")
