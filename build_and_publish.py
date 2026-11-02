@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.141"
+VERSION = "1.3.142"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.141: Đột Phá Lách Bot Check YouTube Qua Mobile API (iOS / Android Client): Chuyển hướng toàn bộ các truy vấn bị nghi vấn sang luồng API ứng dụng di động; không còn phụ thuộc vào Web Player vốn bị BotGuard kiểm soát ngặt nghèo; triệt tiêu hoàn toàn thông báo Sign in to confirm you're not a bot cả khi kiểm tra cookie lẫn khi tải video hàng loạt."
+NOTES = "Bản phát hành v1.3.142: Tự động hóa 100% định vị JS Engine (Deno) nội bộ & Ép định tuyến IPv4: Tích hợp get_deno_path tự phát hiện Deno nội bộ portable/system mà không cần cấu hình thủ công; ép dùng IPv4 chung modem (0.0.0.0) tránh dính blacklist IPv6 riêng của máy con; mặc định player_client sang Android/Web vượt hoàn toàn BotGuard và lỗi LOGIN_REQUIRED trên mọi thiết bị; bổ sung pycryptodomex giải mã luồng bảo mật."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 

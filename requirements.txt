@@ -5,6 +5,7 @@ nvidia-cublas-cu12
 nvidia-cudnn-cu12
 yt-dlp
 curl_cffi
+pycryptodomex
 opencv-python
 scenedetect
 numpy

@@ -201,16 +201,59 @@ class DownloaderProcessor:
         return ""
 
     @classmethod
+    def get_deno_path(cls) -> str:
+        """
+        Tự động định vị đường dẫn file thực thi Deno JS engine trong dự án hoặc hệ thống.
+        Ưu tiên:
+        1. system_data/js_engine/deno.exe
+        2. bin/deno.exe
+        3. Deno cài sẵn trong PATH hệ thống
+        """
+        candidates = [
+            ROOT_DIR / "system_data" / "js_engine" / "deno.exe",
+            ROOT_DIR / "bin" / "deno.exe",
+            Path("system_data/js_engine/deno.exe"),
+            Path("bin/deno.exe"),
+        ]
+        for c in candidates:
+            try:
+                if c.is_file():
+                    return str(c.resolve())
+            except Exception:
+                pass
+        import shutil
+        sys_which = shutil.which("deno")
+        if sys_which:
+            return sys_which
+        return ""
+
+    @classmethod
     def apply_cookies_to_opts(cls, opts: dict = None) -> dict:
-        """Thêm cấu hình cookiefile vào dict options của yt-dlp nếu tìm thấy file cookie hợp lệ."""
+        """
+        Tự động cấu hình bộ thông số mạng và cookie tối ưu cho yt-dlp:
+        1. Chỉ định chính xác Deno JS Engine để vượt BotGuard / PO-Token
+        2. Ép dùng IPv4 (0.0.0.0) để dùng chung IP sạch của modem
+        3. Mặc định player_client dùng mobile/web để né cổng TV bị siết
+        4. Nạp cookie nếu có
+        """
         opts_copy = dict(opts or {})
-        cookie_path = cls.get_cookie_file_path()
-        if cookie_path and os.path.isfile(cookie_path):
-            opts_copy["cookiefile"] = cookie_path
-            logger.info(f"🍪 [YOUTUBE COOKIE] Áp dụng cookie: {cookie_path}")
+
+        # 1. Tự động cấu hình JS Runtime (Deno) nội bộ
+        deno_path = cls.get_deno_path()
+        if deno_path and os.path.isfile(deno_path):
+            opts_copy["js_runtimes"] = {"deno": {"path": deno_path}}
+
+        # 2. Ép dùng IPv4 chung modem (tránh IPv6 riêng của từng máy bị dính cooldown/bot check)
+        opts_copy["source_address"] = "0.0.0.0"
+
+        # 3. Mặc định player_client sang mobile & web để né cổng TV Samsung bị khóa
+        ext_args = dict(opts_copy.get("extractor_args") or {})
+        yt_args = dict(ext_args.get("youtube") or {})
+        if "player_client" not in yt_args:
+            yt_args["player_client"] = ["android", "web"]
+        ext_args["youtube"] = yt_args
 
         # Tự động bỏ qua authcheck của youtubetab khi quét/tải playlist YouTube
-        ext_args = dict(opts_copy.get("extractor_args") or {})
         yt_tab = dict(ext_args.get("youtubetab") or {})
         skip_list = list(yt_tab.get("skip") or [])
         if "authcheck" not in skip_list:
@@ -218,6 +261,13 @@ class DownloaderProcessor:
         yt_tab["skip"] = skip_list
         ext_args["youtubetab"] = yt_tab
         opts_copy["extractor_args"] = ext_args
+
+        # 4. Áp dụng cookie nếu có
+        if "cookiefile" not in opts_copy:
+            cookie_path = cls.get_cookie_file_path()
+            if cookie_path and os.path.isfile(cookie_path):
+                opts_copy["cookiefile"] = cookie_path
+                logger.info(f"🍪 [YOUTUBE COOKIE] Áp dụng cookie: {cookie_path}")
 
         return opts_copy
 
@@ -250,8 +300,8 @@ class DownloaderProcessor:
             'no_warnings': True,
             'cookiefile': target_path,
             'skip_download': True,
-            'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'web']}},
         }
+        opts = cls.apply_cookies_to_opts(opts)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.extract_info(test_url, download=False)

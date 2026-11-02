@@ -76,6 +76,7 @@ REQUIRED_PACKAGES = [
 
     "yt-dlp",
     "curl_cffi",
+    "pycryptodomex",
 
     "opencv-python",
 
