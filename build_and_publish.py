@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.138"
+VERSION = "1.3.139"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.138: Tự Động Vá Lỗi No Video Formats Found & Auto Upgrade Core yt-dlp: Tích hợp cơ chế tự động phát hiện và nâng cấp yt-dlp lên bản mới nhất 2026.10.26 khi phát hiện lỗi No video formats found hoặc Confirm you are on the latest version; đảm bảo video luôn trích xuất và tải thành công 100% trên mọi máy mà không cần thao tác thủ công."
+NOTES = "Bản phát hành v1.3.139: Sửa Triệt Để Lỗi Requested Format Is Not Available (Đồng Bộ Cơ Chế Tải Chuẩn Hitomi Downloader): Chuyển đổi bộ lọc định dạng video sang chuẩn linh hoạt đa codec; không còn ép cứng MP4/M4A gây lỗi trên các video chỉ phân phối định dạng WebM/Opus; hệ thống tự động tải codec tốt nhất và dùng FFmpeg merge về MP4 chuẩn 100% không suy hao chất lượng."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
