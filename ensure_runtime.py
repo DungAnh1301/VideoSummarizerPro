@@ -75,6 +75,7 @@ REQUIRED_PACKAGES = [
     "nvidia-cudnn-cu12",
 
     "yt-dlp",
+    "curl_cffi",
 
     "opencv-python",
 

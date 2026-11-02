@@ -462,7 +462,7 @@ def apply_update(package: Path, target_version: str, pid: int, runtime_update: b
 
 
 
-            subprocess.run([str(py_exec), "-m", "pip", "install", "-U", "yt-dlp"], cwd=str(root), timeout=120)
+            subprocess.run([str(py_exec), "-m", "pip", "install", "-U", "yt-dlp", "curl_cffi"], cwd=str(root), timeout=120)
 
 
 

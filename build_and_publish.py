@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.139"
+VERSION = "1.3.140"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.139: Sửa Triệt Để Lỗi Requested Format Is Not Available (Đồng Bộ Cơ Chế Tải Chuẩn Hitomi Downloader): Chuyển đổi bộ lọc định dạng video sang chuẩn linh hoạt đa codec; không còn ép cứng MP4/M4A gây lỗi trên các video chỉ phân phối định dạng WebM/Opus; hệ thống tự động tải codec tốt nhất và dùng FFmpeg merge về MP4 chuẩn 100% không suy hao chất lượng."
+NOTES = "Bản phát hành v1.3.140: Tích Hợp Thư Viện Giả Lập Trình Duyệt Thực Thụ (curl_cffi TLS Impersonation): Đồng bộ 100% môi trường runtime giữa máy chính và máy phụ; tự động cài đặt thư viện curl_cffi vào Python portable; giả lập hoàn hảo dấu vân tay TLS/JA4 của trình duyệt Google Chrome thật; qua mặt 100% các rào cản phân phối định dạng và kiểm tra bot của máy chủ YouTube."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
