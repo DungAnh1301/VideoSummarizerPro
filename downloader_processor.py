@@ -539,15 +539,15 @@ class DownloaderProcessor:
     @classmethod
     def high_res_is_usable(cls, path: str) -> bool:
         """
-        Skip-if-valid: file cũ đủ size/duration VÀ height >= 480.
-        File 360p stale KHÔNG skip — thử tải HD lại. Download mới ra 360p thì chấp nhận ở download_high_res_video.
+        Skip-if-valid: file cũ đủ size/duration VÀ height >= 720 (tối thiểu HD, ưu tiên 1080p).
+        File 360p/480p tuyệt đối KHÔNG skip — buộc phải tải lại bản HD.
         """
         if not cls.source_is_usable(path):
             return False
         _w, h = cls.probe_video_size(path)
-        if h <= INVALID_HIGH_MAX_HEIGHT:
+        if h < 720:
             return False
-        return h >= MIN_HIGH_SKIP_HEIGHT
+        return True
 
     @classmethod
     def cleanup_ytdlp_resume_junk(cls, folder: str, log_fn=None) -> int:
@@ -824,8 +824,9 @@ class DownloaderProcessor:
         opts.setdefault("nopart", True)
         opts.setdefault("headers", YT_HEADERS)
         
-        # Chuẩn format linh hoạt (chuẩn Hitomi): ưu tiên 1080p mp4, nhưng nhận mọi codec (WebM/Opus) và tự động merge về MP4
-        opts["format"] = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo+bestaudio/best"
+        # Bắt buộc video nguồn chính phải đạt tối thiểu 1080p (hoặc 720p nếu video gốc chỉ có tối đa 720p).
+        # Tuyệt đối không cho phép fallback về 360p/480p!
+        opts["format"] = "bestvideo[height>=1080]+bestaudio/best[height>=1080]/bestvideo[height>=720]+bestaudio/best[height>=720]"
         opts["format_sort"] = ["res:1080", "ext:mp4:m4a", "fps"]
 
         if cls.high_res_is_usable(dest_path):
@@ -872,8 +873,17 @@ class DownloaderProcessor:
                 info_dict = cls._ytdlp_download_to(url, dest_path, attempt_opts)
                 
                 if cls.source_is_usable(dest_path):
+                    w, h = cls.probe_video_size(dest_path)
+                    if h < 720:
+                        last_error = f"Video tải về chỉ đạt độ phân giải {w}x{h} (dưới chuẩn HD 1080p). Tool từ chối dùng video 360p làm source chính!"
+                        info(f"❌ [CHẤT LƯỢNG KÉM] {last_error}")
+                        try:
+                            os.remove(dest_path)
+                        except OSError:
+                            pass
+                        continue
                     success = True
-                    info(f"✅ Tải thành công mỹ mãn với {threads} luồng!")
+                    info(f"✅ Tải thành công mỹ mãn với {threads} luồng! ({w}x{h})")
                     break
                 else:
                     w, h = cls.probe_video_size(dest_path)
@@ -889,7 +899,7 @@ class DownloaderProcessor:
                     info("💡 [GỢI Ý] Video này bị giới hạn độ tuổi (18+) của YouTube. Vui lòng bấm nút [🍪 Cookie YouTube] trên thanh tiêu đề để nạp file cookies.txt!")
 
         if not success:
-            raise RuntimeError(f"❌ Cả 3 lần thử tải video (16 -> 8 -> 1 luồng) đều không thành công! Chi tiết: {last_error}")
+            raise RuntimeError(f"❌ Cả 3 lần thử tải video chính đều không đạt chuẩn 1080p! Chi tiết: {last_error}")
 
         if not info_dict.get("duration"):
             info_dict["duration"] = cls.probe_duration_sec(dest_path)

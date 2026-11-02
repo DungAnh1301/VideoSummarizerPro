@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.143"
+VERSION = "1.3.144"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.143: Khôi Phục Luồng Tải Full HD 1080p Cho Video Nguồn Chính: Tách biệt hoàn toàn luồng tải 360p (phục vụ AI Gemini/Whisper phân tích kịch bản) và luồng video gốc (bắt buộc đạt Full HD 1080p trở lên để biên tập, triệt tiêu hoàn toàn hiện tượng video xuất ra bị vỡ hình, mờ hạt); không ép cổng Android ở luồng tải chính."
+NOTES = "Bản phát hành v1.3.144: Fix Cứng Chuẩn 1080p Cho Video Nguồn Gốc (Chống Mờ Tuyệt Đối): Khóa chặt format selector yêu cầu video nguồn chính phải đạt tối thiểu 1080p (hoặc 720p nếu video gốc chỉ có 720p); tích hợp cơ chế kiểm định kích thước probe_video_size ngay sau khi tải; lập tức từ chối và báo lỗi nếu video nguồn bị tụt xuống 360p/480p; bảo toàn luồng 360p độc lập chỉ dành riêng cho AI Gemini/Whisper đọc kịch bản."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
