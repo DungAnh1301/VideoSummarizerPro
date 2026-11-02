@@ -250,6 +250,7 @@ class DownloaderProcessor:
             'no_warnings': True,
             'cookiefile': target_path,
             'skip_download': True,
+            'extractor_args': {'youtube': {'player_client': ['ios', 'android', 'web']}},
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -675,15 +676,19 @@ class DownloaderProcessor:
                     return _execute_extract(opts)
 
             if "Sign in to confirm you're not a bot" in err_str or "bot" in err_str.lower() or "UNPLAYABLE" in err_str:
-                logger.warning("🛡️ [BOT BYPASS] Kích hoạt chế độ bypass Bot Check của YouTube (tv,mweb,android)...")
+                logger.warning("🛡️ [BOT BYPASS] Kích hoạt chế độ bypass Bot Check YouTube qua Mobile API (ios,android)...")
                 opts_bypass = dict(opts)
                 ext_args = dict(opts_bypass.get("extractor_args") or {})
                 yt_args = dict(ext_args.get("youtube") or {})
-                yt_args["player_client"] = ["tv", "mweb", "android", "web"]
+                yt_args["player_client"] = ["ios", "android"]
                 ext_args["youtube"] = yt_args
                 opts_bypass["extractor_args"] = ext_args
-                opts_bypass.pop("cookiefile", None)
-                return _execute_extract(opts_bypass)
+                # Thử với cookie trước, nếu không được mới tháo cookie
+                try:
+                    return _execute_extract(opts_bypass)
+                except Exception:
+                    opts_bypass.pop("cookiefile", None)
+                    return _execute_extract(opts_bypass)
 
             raise
 

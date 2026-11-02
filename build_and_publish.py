@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.140"
+VERSION = "1.3.141"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.140: Tích Hợp Thư Viện Giả Lập Trình Duyệt Thực Thụ (curl_cffi TLS Impersonation): Đồng bộ 100% môi trường runtime giữa máy chính và máy phụ; tự động cài đặt thư viện curl_cffi vào Python portable; giả lập hoàn hảo dấu vân tay TLS/JA4 của trình duyệt Google Chrome thật; qua mặt 100% các rào cản phân phối định dạng và kiểm tra bot của máy chủ YouTube."
+NOTES = "Bản phát hành v1.3.141: Đột Phá Lách Bot Check YouTube Qua Mobile API (iOS / Android Client): Chuyển hướng toàn bộ các truy vấn bị nghi vấn sang luồng API ứng dụng di động; không còn phụ thuộc vào Web Player vốn bị BotGuard kiểm soát ngặt nghèo; triệt tiêu hoàn toàn thông báo Sign in to confirm you're not a bot cả khi kiểm tra cookie lẫn khi tải video hàng loạt."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
