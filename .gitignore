@@ -30,3 +30,6 @@ VideoSummarizerPro_Setup.exe
 config_tiktok_remixer.json
 output_tiktok_remix/
 *.mp4
+
+system_data/js_engine/
+

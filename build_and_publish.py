@@ -22,11 +22,11 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 
-VERSION = "1.3.136"
+VERSION = "1.3.137"
 
 REPOSITORY = "DungAnh1301/VideoSummarizerPro"
 
-NOTES = "Bản phát hành v1.3.136: Cơ Chế Vượt Rào Cản YouTube Bot Check (Sign In To Confirm You're Not A Bot) & Sửa Lỗi Kiểm Tra Cookie: Tích hợp chế độ Bypass Bot Check đa tầng tự động chuyển đổi player client (TV, MWeb, Android) khi YouTube gắn cờ IP rate-limit; sửa triệt để nút [Kiểm Tra Cookie Ngay] sang video chuẩn vĩnh cửu YouTube jNQXAC9IVRw, chấm dứt hoàn toàn lỗi Video Unavailable và thông báo xanh thành công 100%."
+NOTES = "Bản phát hành v1.3.137: Đóng Gói Kèm Sẵn Deno JS Runtime (Trị Dứt Điểm YouTube Bot Check & PO-Token Challenge): Tích hợp trực tiếp engine Deno vào gói cập nhật; tự động nạp vào bin/deno.exe và biến môi trường PATH khi cập nhật; giúp yt-dlp trên mọi máy giải mã 100% câu đố bảo mật BotGuard của YouTube; loại bỏ triệt để lỗi Sign in to confirm you're not a bot và The page needs to be reloaded mà không cần cài đặt thêm bất kỳ phần mềm nào."
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
